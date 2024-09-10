@@ -84,9 +84,9 @@ oc-login:  ## Login with oc to existing ARO cluster
 .PHONY: resource-group-delete
 resource-group-delete:  ## Delete the Azure resource group
 	$(call required-environment-variables,ARO_RESOURCE_GROUP)
-	az group delete --name ${ARO_RESOURCE_GROUP} --yes --no-wait
+	az group delete --name ${ARO_RESOURCE_GROUP} --yes
 
 .PHONY: aro-delete
 aro-delete:  ## Delete the ARO cluster
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait
+	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes
