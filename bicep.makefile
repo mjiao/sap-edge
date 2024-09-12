@@ -90,3 +90,8 @@ resource-group-delete:  ## Delete the Azure resource group
 aro-delete:  ## Delete the ARO cluster
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
 	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes
+
+.PHONY: aro-remove
+aro-remove:  ## Remove ARO
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} --template-file bicep/empty.bicep --mode Complete
