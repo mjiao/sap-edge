@@ -3,7 +3,7 @@ ARO_LOCATION?=northeurope
 
 ARO_CLUSTER_NAME?=aro-sapeic
 ARO_DOMAIN?=saponrhel.org
-ARO_VERSION?=4.14.16
+ARO_VERSION?=4.15.35
 
 .PHONY: aro-deploy
 aro-deploy: domain-zone-exists network-deploy  ## Deploy ARO

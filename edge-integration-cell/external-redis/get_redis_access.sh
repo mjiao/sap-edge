@@ -27,7 +27,7 @@ port=$(echo "$secret_data" | jq -r '.data["port"]' | base64 --decode)
 service_name=$(echo "$secret_data" | jq -r '.data["service_name"]' | base64 --decode)
 
 
-service_name_with_ns="${service_name}.${namespace}.svc."
+service_name_with_ns="${service_name}.${namespace}.svc"
 redis_server_name="rec.${namespace}.svc.cluster.local"
 
 # Check if any of the values are empty
