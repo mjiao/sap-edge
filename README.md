@@ -8,7 +8,21 @@ SPDX-License-Identifier: Apache-2.0
 
 # OCP External Services for SAP EIC Test Validation
 
-This repository provides scripts and procedures for setting up test validation external services for SAP EIC on OpenShift Container Platform (OCP). The services covered include PostgreSQL and Redis. This guide will help you install and configure these services, as well as perform cleanup after validation.
+This repository provides scripts and procedures for setting up test validation external services for SAP EIC on the OpenShift Container Platform (OCP). The services covered include PostgreSQL and Redis. This guide will help you install and configure these services, as well as perform cleanup after validation.
+
+**Important Notice**
+
+Please be aware that this repository is intended **for testing purposes only**. The configurations and scripts provided are designed to assist in test validation scenarios and are not recommended for production use.
+
+**Support Information**
+
+Red Hat does not provide support for the Postgres/Redis services configured through this repository. Support is available directly from the respective vendors:
+
+- **PostgreSQL**: Crunchy Data offers enterprise-level support for their PostgreSQL Operator through a subscription-based model. This includes various tiers with different response times, service levels, bug fixes, security patches, updates, and technical support. A subscription is required for using the software in third-party consulting or support services. For more details, refer to their [Terms of Use](https://www.crunchydata.com/legal/terms-of-use).
+
+- **Redis**: Support for this solution is provided directly by the Redis Labs team, as detailed in [Appendix 1 of the Redis Enterprise Software Subscription Agreement](https://redislabs.com/wp-content/uploads/2019/11/redis-enterprise-software-subscription-agreement.pdf). The agreement categorizes support services into Support Services, Customer Success Services, and Consulting Services, offering assistance from basic troubleshooting to advanced consultancy and ongoing optimization tailored to diverse customer needs.
+
+For comprehensive support, please contact Crunchy Data and Redis Labs directly.
 
 ## Prerequisites
 
