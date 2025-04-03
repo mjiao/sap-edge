@@ -253,8 +253,12 @@ kubectl apply -f sap-edge/edge-integration-cell/sap-eic-external-services-app.ya
     ```bash
     oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint.yaml
     ```
-
-4. Argo CD will:
+4. The Argo CD Application Controller requires administrative privileges to manage custom resources (CRs) in the `sap-eic-external-postgres` and `sap-eic-external-redis` namespaces. Grant these privileges by applying the provided RBAC role bindings:
+    ```bash
+    oc apply -f sap-edge/edge-integration-cell/argocd-rbac/argocd-admin-rolebinding-postgres.yaml
+    oc apply -f sap-edge/edge-integration-cell/argocd-rbac/argocd-admin-rolebinding-redis.yaml
+    ```
+5. Argo CD will:
 * Install the Postgres and Redis operators
 * Wait for them to be ready
 * Deploy the respective PostgresCluster and RedisEnterpriseCluster, RedisDB custom resources
