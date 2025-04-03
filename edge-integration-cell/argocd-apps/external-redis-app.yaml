@@ -19,6 +19,7 @@ spec:
     path: edge-integration-cell/external-redis
     directory:
       recurse: true
+    kustomize: {}
   destination:
     server: https://kubernetes.default.svc
     namespace: sap-eic-external-redis
