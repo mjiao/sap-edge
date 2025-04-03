@@ -7,13 +7,13 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: sap-edge-parent
+  name: sap-edge-external-services
   namespace: openshift-gitops
 spec:
   project: default
   source:
     repoURL: https://github.com/redhat-sap/sap-edge.git
-    targetRevision: main
+    targetRevision: fix-redis-cert-test-argocd
     path: edge-integration-cell/argocd-apps
   destination:
     server: https://kubernetes.default.svc
