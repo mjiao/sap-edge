@@ -15,7 +15,6 @@ spec:
     repoURL: https://github.com/redhat-sap/sap-edge.git
     targetRevision: fix-redis-cert-test-argocd
     path: edge-integration-cell/argocd-apps
-    kustomize: {}
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-gitops

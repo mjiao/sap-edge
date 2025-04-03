@@ -17,9 +17,6 @@ spec:
     repoURL: https://github.com/mjiao/sap-edge.git
     targetRevision: fix-redis-cert-test-argocd
     path: edge-integration-cell/external-postgres
-    directory:
-      recurse: true
-    kustomize: {}
   destination:
     server: https://kubernetes.default.svc
     namespace: sap-eic-external-postgres
