@@ -44,3 +44,4 @@ getopt
 unrecognised
 kubeconfig
 gitops
+rolebinding
