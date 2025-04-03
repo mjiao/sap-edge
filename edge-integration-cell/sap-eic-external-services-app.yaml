@@ -7,7 +7,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: sap-edge-parent
+  name: sap-edge-external-services
   namespace: openshift-gitops
 spec:
   project: default
@@ -22,5 +22,5 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      syncOptions:
+    syncOptions:
         - CreateNamespace=true

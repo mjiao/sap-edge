@@ -139,14 +139,14 @@ The following steps will install the Redis Enterprise Operator and use its featu
     ```bash
     oc apply -f sap-edge/edge-integration-cell/redis-operator/subscription.yaml
     ```
-5. Apply the Security Context Constraint (SCC):
+5. Apply the [Security Context Constraint (SCC)](https://redis.io/docs/latest/operate/kubernetes/deployment/openshift/openshift-cli/#install-security-context-constraint):
    - For OpenShift versions 4.16 and later, use
     ```bash
-    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint.yaml
+    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint_v2.yaml
     ```
    - For OpenShift versions earlier than 4.16, use:
     ```bash
-    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint_v2.yaml
+    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint.yaml
     ```
 6. Wait for the Redis operator to be ready:
     ```bash
@@ -244,7 +244,17 @@ Each application includes a **sync wave annotation** to ensure the operator is d
 kubectl apply -f sap-edge/edge-integration-cell/sap-eic-external-services-app.yaml
 ```
 
-3. Argo CD will:
+3. Apply the [Security Context Constraint (SCC)](https://redis.io/docs/latest/operate/kubernetes/deployment/openshift/openshift-cli/#install-security-context-constraint) for the redis deployment:
+   - For OpenShift versions 4.16 and later, use
+    ```bash
+    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint_v2.yaml
+    ```
+   - For OpenShift versions earlier than 4.16, use:
+    ```bash
+    oc apply -f sap-edge/edge-integration-cell/redis-operator/security_context_constraint.yaml
+    ```
+
+4. Argo CD will:
 * Install the Postgres and Redis operators
 * Wait for them to be ready
 * Deploy the respective PostgresCluster and RedisEnterpriseCluster, RedisDB custom resources
