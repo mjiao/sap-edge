@@ -5,7 +5,7 @@
 
 ---
 resources:
-  - postgres-operator-app.yaml
-  - external-postgres-app.yaml
-  - external-redis-operator-app.yaml
-  - external-redis-app.yaml
+  - external-postgres/postgres-operator-app.yaml
+  - external-postgres/external-postgres-app.yaml
+  - external-redis/external-redis-operator-app.yaml
+  - external-redis/external-redis-app.yaml
