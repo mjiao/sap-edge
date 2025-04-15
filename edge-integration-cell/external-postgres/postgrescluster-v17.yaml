@@ -11,8 +11,7 @@ metadata:
   name: eic
   namespace: sap-eic-external-postgres
 spec:
-  image: registry.developers.crunchydata.com/crunchydata/crunchy-postgres:ubi8-14.10-0
-  postgresVersion: 14
+  postgresVersion: 17
   instances:
     - name: instance1
       dataVolumeClaimSpec:
@@ -21,6 +20,11 @@ spec:
         resources:
           requests:
             storage: 50Gi
+  users:
+    - name: eic
+      databases:
+        - eic
+      options: 'SUPERUSER'
   backups:
     pgbackrest:
       global:

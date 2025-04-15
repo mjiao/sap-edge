@@ -78,8 +78,13 @@ reuse-annotate: .venv/bin/activate  ## Run reuse annotate
 		--skip-existing \
 		.
 
+
+.PHONY: install-bicep
+install-bicep:
+	az config set bicep.use_binary_from_path=false && az bicep install && az bicep version
+
 .PHONY: lint-bicep
-lint-bicep:  ## Run bicep lint
+lint-bicep: install-bicep ## Run bicep lint
 	az bicep lint --file bicep/aro.bicep
 	az bicep lint --file bicep/empty.bicep
 	az bicep lint --file bicep/domain-records.bicep

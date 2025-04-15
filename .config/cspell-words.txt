@@ -45,3 +45,9 @@ unrecognised
 kubeconfig
 gitops
 rolebinding
+clustername
+walldorf
+vslen
+testelster
+slvredis
+httpbinipfilter

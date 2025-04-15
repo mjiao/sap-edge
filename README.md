@@ -78,7 +78,7 @@ The following steps will install the Crunchy Postgres Operator and use its featu
     ```bash
     oc apply -f sap-edge/edge-integration-cell/external-postgres/postgrescluster-v15.yaml
     ```
-    - For other versions, replace `v14` with `v15` or `v16`.
+    - For other versions, replace `v15` with `v16` or `v17`.
 7. Wait for Crunchy Postgres to be ready:
     ```bash
     bash sap-edge/edge-integration-cell/external-postgres/wait_for_postgres_ready.sh
