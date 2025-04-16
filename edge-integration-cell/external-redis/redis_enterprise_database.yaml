@@ -10,6 +10,8 @@ kind: RedisEnterpriseDatabase
 metadata:
   name: redb
   namespace: sap-eic-external-redis
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   redisEnterpriseCluster:
     name: rec

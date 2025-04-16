@@ -10,6 +10,8 @@ kind: PostgresCluster
 metadata:
   name: eic
   namespace: sap-eic-external-postgres
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   postgresVersion: 16
   instances:
