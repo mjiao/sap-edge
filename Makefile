@@ -99,3 +99,7 @@ cspell: node_modules  ## Run cspell
 .PHONY: cspell-addwords
 cspell-addwords: node_modules  ## Run cspell
 	@$(NPM) run --silent cspell:addwords >> .config/cspell-words.txt
+
+.PHONY: test-endpoints
+test-endpoints:
+	./edge-integration-cell/test_eic_endpoints.sh $(CLUSTER_NAME) $(AUTH_KEY)
