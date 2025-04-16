@@ -14,7 +14,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/redhat-sap/sap-edge.git
+    repoURL: https://github.com/mjiao/sap-edge.git
     targetRevision: main
     path: edge-integration-cell/redis-operator
   destination:
