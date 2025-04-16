@@ -10,6 +10,8 @@ kind: RedisEnterpriseCluster
 metadata:
   name: rec
   namespace: sap-eic-external-redis
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   bootstrapperImageSpec:
     repository: registry.connect.redhat.com/redislabs/redis-enterprise-operator

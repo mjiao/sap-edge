@@ -10,6 +10,8 @@ kind: Subscription
 metadata:
   name: redis-enterprise-operator-cert
   namespace: sap-eic-external-redis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   channel: production
   installPlanApproval: Automatic

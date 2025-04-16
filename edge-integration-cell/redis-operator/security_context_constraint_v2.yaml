@@ -13,6 +13,7 @@ metadata:
       It provides the same features as restricted-v2 SCC, but allows pods to enable the SYS_RESOURCE capability,
       which is required by Redis Enterprise nodes to manage file descriptor limits and OOM scores for database shards.
       Additionally, it requires pods to run as UID/GID 1001, which are the UID/GID used within the Redis Enterprise node containers.
+    argocd.argoproj.io/sync-wave: "0"
 allowedCapabilities:
   - SYS_RESOURCE
 allowHostDirVolumePlugin: false

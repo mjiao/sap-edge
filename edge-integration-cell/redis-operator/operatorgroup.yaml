@@ -10,6 +10,8 @@ kind: OperatorGroup
 metadata:
   name: redis-sap-eic-opg
   namespace: sap-eic-external-redis
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   targetNamespaces:
     - sap-eic-external-redis
