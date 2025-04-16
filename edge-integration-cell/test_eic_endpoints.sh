@@ -25,7 +25,6 @@ fi
 # Domain construction
 APP_DOMAIN="apps.${CLUSTER_NAME}.ocp.vslen"
 HOST="eic.${APP_DOMAIN}"
-IP="192.168.99.62"
 AUTH_HEADER="Authorization: Basic ${AUTH_KEY}"
 
 # List of endpoints
@@ -46,8 +45,7 @@ for path in "${ENDPOINTS[@]}"; do
   curl -k --request GET \
     --url "https://${HOST}${path}" \
     --header "${AUTH_HEADER}" \
-    --dump-header - \
-    --resolve "${HOST}:443:${IP}"
+    --dump-header -
   echo -e "\n-----------------------------\n"
   sleep 1
 done
