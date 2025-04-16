@@ -42,7 +42,7 @@ echo "Using auth key: ${AUTH_KEY:0:5}...[REDACTED]"
 # Run curl for each endpoint
 for path in "${ENDPOINTS[@]}"; do
   echo "Testing endpoint: $path"
-  curl -k --request GET \
+  curl --insecure --request GET \
     --url "https://${HOST}${path}" \
     --header "${AUTH_HEADER}" \
     --dump-header -
