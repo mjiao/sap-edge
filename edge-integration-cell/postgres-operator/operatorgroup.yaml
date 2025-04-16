@@ -10,6 +10,8 @@ kind: OperatorGroup
 metadata:
   name: crunchy-postgres
   namespace: sap-eic-external-postgres
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   targetNamespaces:
     - sap-eic-external-postgres
