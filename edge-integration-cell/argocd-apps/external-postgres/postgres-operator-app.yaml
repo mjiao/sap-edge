@@ -15,7 +15,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/mjiao/sap-edge.git
-    targetRevision: main
+    targetRevision: fix-redis-cert-argocd-test-mjiao-repo
     path: edge-integration-cell/postgres-operator
   destination:
     server: https://kubernetes.default.svc
