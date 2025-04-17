@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: postgres-operator.crunchydata.com/v1beta1
+kind: PGAdmin
+metadata:
+  name: eic
+  namespace: sap-eic-external-postgres
+spec:
+  users:
+    - username: eic@example.com
+      role: Administrator
+      # Ensure the secret is created beforehand:
+      # kubectl create secret generic pgadmin-password-secret \
+      #   --from-literal=eic-password=$EIC_USER_PASSWORD \
+      #   -n sap-eic-external-postgres
+      # Refer to: https://access.crunchydata.com/documentation/postgres-operator/latest/guides/pgadmin/
+      passwordRef:
+        name: pgadmin-password-secret
+        key: eic-password
+
+  dataVolumeClaimSpec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+
+  serverGroups:
+    - name: supply
+      # An empty selector selects all PostgresClusters in the namespace
+      postgresClusterSelector: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgadmin-service
+  namespace: sap-eic-external-postgres
+  labels:
+    app: pgadmin
+spec:
+  selector:
+    postgres-operator.crunchydata.com/pgadmin: eic
+    postgres-operator.crunchydata.com/role: pgadmin
+  ports:
+    - name: http
+      protocol: TCP
+      port: 5050
+      targetPort: 5050
+  type: ClusterIP
+
+# To expose the pgAdmin service externally, you can create a Route (for OpenShift) or an Ingress (for Kubernetes):
+# For OpenShift:
+# oc expose service pgadmin-service
+# For Kubernetes:
+# Create an Ingress resource with appropriate annotations and host configuration.
