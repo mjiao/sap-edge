@@ -263,6 +263,12 @@ kubectl apply -f sap-edge/edge-integration-cell/sap-eic-external-services-app.ya
 * Wait for them to be ready
 * Deploy the respective PostgresCluster and RedisEnterpriseCluster, RedisDB custom resources
 
+### Running cluster-specific endpoint tests
+
+1. Copy `.tekton-templates/pr-endpoint-run.yaml` to `.tekton/pr-endpoint-run.yaml`
+2. Edit `clusterName` and `authSecret`
+3. Push → the pipeline runs automatically on your PR
+
 # License
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](https://www.apache.org/licenses/LICENSE-2.0) for details.
