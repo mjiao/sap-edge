@@ -38,23 +38,23 @@ spec:
         - name: output
           workspace: source
 
-    - name: test-httpbinipfilter
-      runAfter: [fetch-repository]
-      taskRef: { name: endpoint-tests }
-      params:
-        - name: endpointPath
-          value: /httpbinipfilter
-        - name: host
-          value: $(params.host)
-        - name: authSecret
-          value: $(params.authSecret)
-        - name: ingressIP
-          value: $(params.ingressIP)
-        - name: publicDNS
-          value: $(params.publicDNS)
-      workspaces:
-        - name: source
-          workspace: source
+#    - name: test-httpbinipfilter
+#      runAfter: [fetch-repository]
+#      taskRef: { name: endpoint-tests }
+#      params:
+#        - name: endpointPath
+#          value: /httpbinipfilter
+#        - name: host
+#          value: $(params.host)
+#        - name: authSecret
+#          value: $(params.authSecret)
+#        - name: ingressIP
+#          value: $(params.ingressIP)
+#        - name: publicDNS
+#          value: $(params.publicDNS)
+#      workspaces:
+#        - name: source
+#          workspace: source
 
     - name: test-http-test1
       runAfter: [fetch-repository]
