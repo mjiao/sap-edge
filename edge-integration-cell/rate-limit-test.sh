@@ -79,7 +79,7 @@ echo "--- Triggering requests to activate rate limit for ${ENDPOINT_PATH} ---"
 # --- This loop is non-blocking ---
 echo "--- Launching parallel requests to activate rate limit for ${ENDPOINT_PATH} ---"
 
-for i in {1..8}; do
+for i in {1..6}; do
     echo "Launching background warm-up request #$i..."
     # The "&" sends the command to the background and the loop continues immediately
     curl --silent --output /dev/null --insecure --request GET \
