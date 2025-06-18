@@ -45,34 +45,29 @@ spec:
         set -euo pipefail
 
         # --- 1. Install jq for robust JSON handling ---
-        # ubi-minimal doesn't include jq, so we install it.
         echo "Installing jq..."
         microdnf install -y jq > /dev/null
 
         # --- 2. Prepare Authentication Header ---
-        # The Jira API requires Basic Auth with a Base64 encoded 'email:api_token' string.
-        # The '-n' in echo is crucial to avoid adding a newline character.
         BASIC_AUTH=$(echo -n "$JIRA_USERNAME:$JIRA_API_TOKEN" | base64)
         AUTH_HEADER="Authorization: Basic $BASIC_AUTH"
 
-        # --- 3. Construct the JSON Payload ---
-        # We use jq to safely embed the comment text into the required Jira JSON format.
-        # This correctly handles quotes, newlines, and other special characters.
-        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" \
-          '{ "body": { "type": "doc", "version": 1, "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": $comment_text } ] } ] } }')
+        # --- 3. Construct the JSON Payload (for API v2) ---
+        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" '{body: $comment_text}')
 
-        echo "Jira API Endpoint: $JIRA_HOST/rest/api/3/issue/$(params.jiraIssueKey)/comment"
+        # --- 4. Define the API URL (for API v2) ---
+        API_URL="$JIRA_HOST/rest/api/2/issue/$(params.jiraIssueKey)/comment"
+
+        echo "Jira API Endpoint: $API_URL"
         echo "Payload: $JSON_PAYLOAD"
 
-        # --- 4. Make the API Call using curl ---
-        # --fail causes curl to exit with an error if the HTTP code is not 2xx.
-        # This will automatically fail the Tekton step on an API error.
+        # --- 5. Make the API Call using curl ---
         curl --http1.1 \
              --request POST \
              --header "$AUTH_HEADER" \
              --header "Content-Type: application/json" \
              --header "Accept: application/json" \
-             --url "$JIRA_HOST/rest/api/3/issue/$(params.jiraIssueKey)/comment" \
+             --url "$API_URL" \
              --data "$JSON_PAYLOAD" \
              --fail --show-error --silent
 
