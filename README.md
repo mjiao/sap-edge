@@ -336,7 +336,7 @@ kubectl apply -f jira-secret.yaml -n your-project-namespace
 First, copy the pipeline run template into the `.tekton` directory. This file defines the parameters for your specific test run.
 
 ```bash
-cp .tekton-templates/pr-endpoint-run.yaml .tekton/pr-endpoint-run.yaml
+cp .tekton-templates/pr-endpoint-run-bruhl.yaml .tekton/pr-endpoint-run-bruhl.yaml
 ```
 
 Next, open the newly created `.tekton/pr-endpoint-run.yaml` file and edit the following parameters in the `params` section:
@@ -353,7 +353,7 @@ Next, open the newly created `.tekton/pr-endpoint-run.yaml` file and edit the fo
 Commit and push the `.tekton/pr-endpoint-run.yaml` file as part of your pull request.
 
 ```bash
-git add .tekton/pr-endpoint-run.yaml
+git add .tekton/pr-endpoint-run-bruhl.yaml
 git commit -m "feat: Configure endpoint tests for my feature"
 git push
 ```
