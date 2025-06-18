@@ -14,16 +14,15 @@ spec:
       type: string
     - name: revision
       type: string
-    - name: host
+    - name: clusterInfoSecretName
       type: string
-    - name: authSecret
-      type: string
-    - name: ingressIP
-      type: string
-      default: ""
     - name: publicDNS
       type: string
       default: "false"
+    - name: jiraSecretName
+      type: string
+    - name: jiraIssueKey
+      type: string
   workspaces:
     - name: source
   tasks:
@@ -44,12 +43,8 @@ spec:
 #      params:
 #        - name: endpointPath
 #          value: /httpbinipfilter
-#        - name: host
-#          value: $(params.host)
-#        - name: authSecret
-#          value: $(params.authSecret)
-#        - name: ingressIP
-#          value: $(params.ingressIP)
+#        - name: clusterInfoSecretName
+#          value: $(params.clusterInfoSecretName)
 #        - name: publicDNS
 #          value: $(params.publicDNS)
 #      workspaces:
@@ -62,12 +57,8 @@ spec:
       params:
         - name: endpointPath
           value: /http/test1
-        - name: host
-          value: $(params.host)
-        - name: authSecret
-          value: $(params.authSecret)
-        - name: ingressIP
-          value: $(params.ingressIP)
+        - name: clusterInfoSecretName
+          value: $(params.clusterInfoSecretName)
         - name: publicDNS
           value: $(params.publicDNS)
       workspaces:
@@ -80,12 +71,8 @@ spec:
       params:
         - name: endpointPath
           value: /http/testelster
-        - name: host
-          value: $(params.host)
-        - name: authSecret
-          value: $(params.authSecret)
-        - name: ingressIP
-          value: $(params.ingressIP)
+        - name: clusterInfoSecretName
+          value: $(params.clusterInfoSecretName)
         - name: publicDNS
           value: $(params.publicDNS)
       workspaces:
@@ -98,12 +85,8 @@ spec:
       params:
         - name: endpointPath
           value: /slvredis
-        - name: host
-          value: $(params.host)
-        - name: authSecret
-          value: $(params.authSecret)
-        - name: ingressIP
-          value: $(params.ingressIP)
+        - name: clusterInfoSecretName
+          value: $(params.clusterInfoSecretName)
         - name: publicDNS
           value: $(params.publicDNS)
       workspaces:
@@ -116,12 +99,30 @@ spec:
       params:
         - name: endpointPath
           value: /slvredis
-        - name: host
-          value: $(params.host)
-        - name: authSecret
-          value: $(params.authSecret)
-        - name: ingressIP
-          value: $(params.ingressIP)
+        - name: clusterInfoSecretName
+          value: $(params.clusterInfoSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
       workspaces:
         - name: source
           workspace: source
+
+    - name: update-jira-ticket
+      runAfter:
+        - test-httpbinipfilter
+        - test-http-test1
+        - test-http-testelster
+        - test-slvredis
+#        - test-ratelimit-slvredis
+      taskRef:
+        name: jira-add-comment-custom
+      params:
+        - name: jiraSecretName
+        - value: $(params.jiraSecretName)
+        - name: jiraIssueKey
+          value: $(params.jiraIssueKey)
+        - name: comment
+          value: |
+            ✅ All endpoint tests passed successfully!
+            - **Host:** $(params.host)
+            - **Revision:** $(params.revision)

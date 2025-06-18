@@ -20,12 +20,12 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
-    - name: host
-      value: "eic.apps.bruhl.ocp.vslen"
-    - name: authSecret
-      value: "endpoint-auth"
-    - name: ingressIP
-      value: "192.168.99.65"
+    - name: clusterInfoSecretName
+      value: "cluster-info-brhul"
+    - name: jiraSecretName
+      value: "jira-secret"
+    - name: jiraIssueKey
+      value: "SAPOCP-1586"
   workspaces:
     - name: source
       volumeClaimTemplate:
