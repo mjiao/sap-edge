@@ -8,30 +8,72 @@ set -euo pipefail
 # This script tests that an endpoint correctly returns a 429 status
 # after being called several times in quick succession.
 
-# --- Argument parsing and validation (similar to the other script) ---
+# --- Function to display usage ---
+usage() {
+  cat <<EOF
+Usage: $0 --host <hostname> [OPTIONS] <endpoint_path>
+
+Tests that an endpoint correctly returns a 429 status
+
+Required Arguments:
+  <endpoint_path>             The path of the endpoint to test (e.g., /http/test1).
+
+Options:
+  -H, --host <hostname>       The full hostname to test.
+  -k, --auth-key <key>        The basic authentication key. (Env: AUTH_KEY)
+  -i, --ingress-ip <ip>       The Ingress IP for internal resolution mode. (Env: INGRESS_IP)
+  -p, --public-dns            Use public DNS for resolution (disables --resolve).
+  -h, --help                  Show this help message.
+EOF
+  exit 1
+}
+
+
+# --- Argument Parsing ---
 HOST="${HOST:-}"
 AUTH_KEY="${AUTH_KEY:-}"
 INGRESS_IP="${INGRESS_IP:-}"
+USE_PUBLIC_DNS=false
 ENDPOINT_PATH=""
 
-# Simplified parsing for this specific script's needs in Tekton
+# Parse flags first, then grab the final argument as the endpoint path
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --host) HOST="$2"; shift 2 ;;
+    -H|--host) HOST="$2"; shift 2 ;;
+    -k|--auth-key) AUTH_KEY="$2"; shift 2 ;;
+    -i|--ingress-ip) INGRESS_IP="$2"; shift 2 ;;
+    -p|--public-dns) USE_PUBLIC_DNS=true; shift 1 ;;
+    -h|--help) usage ;;
+    # If it's not a flag, it must be the endpoint path
+    -*) echo "❌ Unknown option: $1" >&2; usage ;;
     *) ENDPOINT_PATH="$1"; shift 1 ;;
   esac
 done
 
-[[ -z "$HOST" ]] && { echo "❌ --host is required."; exit 1; }
-[[ -z "$ENDPOINT_PATH" ]] && { echo "❌ endpoint_path is required."; exit 1; }
-[[ -z "$AUTH_KEY" ]] && { echo "❌ AUTH_KEY env var is required."; exit 1; }
-
-CURL_OPTS=()
-if [[ -n "$INGRESS_IP" ]]; then
-  CURL_OPTS+=("--resolve" "${HOST}:443:${INGRESS_IP}")
+# --- Configuration Validation ---
+[[ -z "$HOST" ]] && { echo "❌ The --host argument is required." >&2; usage; }
+[[ -z "$ENDPOINT_PATH" ]] && { echo "❌ The endpoint_path argument is required." >&2; usage; }
+[[ -z "$AUTH_KEY" ]] && { echo "❌ No AUTH_KEY provided." >&2; exit 1; }
+if ! $USE_PUBLIC_DNS && [[ -z "$INGRESS_IP" ]]; then
+  echo "❌ No INGRESS_IP provided for internal resolution mode." >&2
+  exit 1
 fi
 
-# --- Main Test Execution ---
+# --- Main Execution ---
+echo "--------------------------------------------------"
+echo "Target Host:    $HOST"
+echo "Endpoint Path:  $ENDPOINT_PATH"
+
+CURL_OPTS=()
+if $USE_PUBLIC_DNS; then
+  echo "Resolution:     Public DNS (--public-dns)"
+else
+  echo "Resolution:     Internal via --resolve ($INGRESS_IP)"
+  CURL_OPTS+=("--resolve" "${HOST}:443:${INGRESS_IP}")
+fi
+echo "--------------------------------------------------"
+
+
 echo "--- Triggering requests to activate rate limit for ${ENDPOINT_PATH} ---"
 
 # Fire 6 requests quickly to ensure the limit (more than 5) is hit.

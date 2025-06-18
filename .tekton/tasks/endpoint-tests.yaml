@@ -10,13 +10,8 @@ metadata:
   name: endpoint-tests
 spec:
   params:
-    - name: host
+    - name: clusterInfoSecretName
       type: string
-    - name: authSecret
-      type: string
-    - name: ingressIP
-      type: string
-      default: ""
     - name: publicDNS
       type: string
       default: "false"
@@ -30,10 +25,12 @@ spec:
       image: registry.access.redhat.com/ubi9/ubi-minimal # Smaller image is sufficient
       workingDir: $(workspaces.source.path)
       env:
-        - name: AUTH_KEY
-          valueFrom: { secretKeyRef: { name: $(params.authSecret), key: auth_key } }
+        - name: HOST
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: host } }
         - name: INGRESS_IP
-          value: $(params.ingressIP)
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: ingressIP } }
+        - name: AUTH_KEY
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: authKey } }
       script: |
         #!/usr/bin/env bash
         set -euo pipefail

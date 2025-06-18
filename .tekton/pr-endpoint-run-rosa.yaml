@@ -20,12 +20,12 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
-    - name: host
-      value: "rh-ocp-rosa-testing.apps.sapeic-cluster.dng6.p1.openshiftapps.com"
-    - name: authSecret
-      value: "endpoint-auth"
-    - name: ingressIP
-      value: "18.157.194.46"
+    - name: clusterInfoSecretName
+      value: "cluster-info-rosa"
+    - name: jiraSecretName
+      value: "jira-secret"
+    - name: jiraIssueKey
+      value: "SAPOCP-1588"
   workspaces:
     - name: source
       volumeClaimTemplate:

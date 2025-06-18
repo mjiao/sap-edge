@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: jira-add-comment-custom
+spec:
+  description: >-
+    This task adds a comment to a Jira issue using the official Jira REST API with curl.
+  params:
+    - name: jiraSecretName
+      type: string
+      description: The name of the Kubernetes Secret holding Jira credentials.
+    - name: jiraIssueKey
+      type: string
+      description: The issue key to comment on (e.g., PROJ-123).
+    - name: comment
+      type: string
+      description: The text content of the comment to add.
+  steps:
+    - name: post-comment
+      image: registry.access.redhat.com/ubi9/ubi-minimal
+      env:
+        - name: JIRA_HOST
+          valueFrom:
+            secretKeyRef:
+              name: $(params.jiraSecretName)
+              key: serverURL
+        - name: JIRA_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: $(params.jiraSecretName)
+              key: username
+        - name: JIRA_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.jiraSecretName)
+              key: apiToken
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # --- 1. Install jq for robust JSON handling ---
+        # ubi-minimal doesn't include jq, so we install it.
+        echo "Installing jq..."
+        microdnf install -y jq > /dev/null
+
+        # --- 2. Prepare Authentication Header ---
+        # The Jira API requires Basic Auth with a Base64 encoded 'email:api_token' string.
+        # The '-n' in echo is crucial to avoid adding a newline character.
+        BASIC_AUTH=$(echo -n "$JIRA_USERNAME:$JIRA_API_TOKEN" | base64)
+        AUTH_HEADER="Authorization: Basic $BASIC_AUTH"
+
+        # --- 3. Construct the JSON Payload ---
+        # We use jq to safely embed the comment text into the required Jira JSON format.
+        # This correctly handles quotes, newlines, and other special characters.
+        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" \
+          '{ "body": { "type": "doc", "version": 1, "content": [ { "type": "paragraph", "content": [ { "type": "text", "text": $comment_text } ] } ] } }')
+
+        echo "Jira API Endpoint: $JIRA_HOST/rest/api/3/issue/$(params.jiraIssueKey)/comment"
+        echo "Payload: $JSON_PAYLOAD"
+
+        # --- 4. Make the API Call using curl ---
+        # --fail causes curl to exit with an error if the HTTP code is not 2xx.
+        # This will automatically fail the Tekton step on an API error.
+        curl --request POST \
+             --header "$AUTH_HEADER" \
+             --header "Content-Type: application/json" \
+             --header "Accept: application/json" \
+             --url "$JIRA_HOST/rest/api/3/issue/$(params.jiraIssueKey)/comment" \
+             --data "$JSON_PAYLOAD" \
+             --fail --show-error --silent
+
+        echo "✅ Successfully added comment to Jira issue $(params.jiraIssueKey)."

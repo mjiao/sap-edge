@@ -20,13 +20,11 @@ spec:
       value: "{{ repo_url }}"     # PaC fills with PR repo URL
     - name: revision
       value: "{{ revision }}"     # PaC fills with PR repo URL
-    - name: host   # ✏️ to be edited in each PR
+    - name: clusterInfoSecretName   # ✏️ to be edited in each PR
       value: "<replace-me>"
-    - name: authSecret    # ✏️ reference an existing secret
-      value: "endpoint-auth"
-    - name: ingressIP     # ✏️ to be edited in each PR
+    - name: jiraSecretName
       value: "<replace-me>"
-    - name: publicDNS     # ✏️ to be edited in each PR if the eic endpoint is publicly accessible
+    - name: jiraIssueKey
       value: "<replace-me>"
   workspaces:
     - name: source

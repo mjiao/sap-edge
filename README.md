@@ -267,36 +267,105 @@ oc apply -f sap-edge/edge-integration-cell/sap-eic-external-services-app.yaml
 
 You can run endpoint tests in two ways:
 
-#### Option 1: CI/CD via Tekton
+Option 1: CI/CD via Tekton
 
-1. Copy the pipeline template:
+This guide explains how to configure and run the automated endpoint test pipeline for your pull request. The pipeline is triggered automatically when the `.tekton/pr-endpoint-run.yaml` file is present in your branch.
 
-   ```bash
-   cp .tekton-templates/pr-endpoint-run.yaml .tekton/pr-endpoint-run.yaml
-   ```
+#### Prerequisites: Ensuring Secrets Exist
 
-2. Edit the following fields in the copied file:
-   - `host`: The full hostname of the SAP EIC endpoint to test.
-   - `authSecret`: Authentication secret (example command below for creating the secret)
-   - `ingressIP`: External ingress IP of the cluster
-   - `publicDNS`: Whether using public DNS for resolution. For external hosts.
+Before the pipeline can run, the OpenShift project where your pipeline executes must contain the necessary secrets. If they do not exist, you will need to create them.
 
-   Example to create the auth secret:
+##### 1. Cluster Information Secret
 
-   ```bash
-   oc create secret generic endpoint-auth \
-     --type=Opaque \
-     --from-literal=auth_key="QW5RPQ=="
-   ```
+This secret holds the configuration for the specific cluster environment you are targeting.
 
-3. Commit and push the changes — the pipeline will trigger automatically on your PR.
+**Example `cluster-info-secret.yaml`:**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  # The name you will use for the 'clusterInfoSecretName' parameter
+  name: cluster-info-bruhl
+type: Opaque
+stringData:
+  # The target hostname
+  host: "eic.apps.bruhl.ocp.vslen"
+  # The ingress IP for internal resolution. Leave empty if using publicDNS.
+  ingressIP: "192.168.99.65"
+   # The auth key to access the SAP EIC ingress gateway.
+  authKey: "IUKNNVkj8@"
+```
+*Note: The authentication key for the gateway is managed in a separate secret, referenced by the `authSecret` parameter in your `PipelineRun`.*
+
+**To apply the secret, run:**
+```bash
+kubectl apply -f cluster-info-secret.yaml -n your-project-namespace
+```
+
+##### 2. Jira Integration Secret
+
+This secret holds the credentials needed to update a Jira ticket upon successful completion of the pipeline.
+
+**Example `jira-secret.yaml`:**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  # The name you will use for the 'jiraSecretName' parameter
+  name: jira-credentials
+type: Opaque
+stringData:
+  # The base URL of your Jira instance (e.g., https://your-org.atlassian.net)
+  serverURL: "https://your-jira-instance.com"
+  # The email of the user to authenticate as
+  username: "your-email@example.com"
+  # Your Jira API token (NEVER use your password)
+  apiToken: "your-super-secret-api-token"
+```
+
+**To apply the secret, run:**
+```bash
+kubectl apply -f jira-secret.yaml -n your-project-namespace
+```
+
+---
+#### Pipeline Configuration Steps
+
+##### Step 1: Create and Edit the PipelineRun File
+
+First, copy the pipeline run template into the `.tekton` directory. This file defines the parameters for your specific test run.
+
+```bash
+cp .tekton-templates/pr-endpoint-run.yaml .tekton/pr-endpoint-run.yaml
+```
+
+Next, open the newly created `.tekton/pr-endpoint-run.yaml` file and edit the following parameters in the `params` section:
+
+| Parameter               | Description                                                                                             | Example Value               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `clusterInfoSecretName` | **(Required)** The name of the Kubernetes Secret containing the `host` and `ingressIP` for your target.    | `"cluster-info-bruhl"`      |
+| `publicDNS`             | Set to `"true"` to disable `--resolve` and use public DNS. Set to `"false"` for internal resolution. | `"false"`                   |
+| `jiraSecretName`        | The name of the Kubernetes Secret containing your Jira `serverURL`, `username`, and `apiToken`.         | `"jira-credentials"`        |
+| `jiraIssueKey`          | The Jira ticket key to update with the pipeline results (e.g., PROJ-123).                               | `"PROJ-456"`                |
+
+##### Step 2: Trigger the Pipeline
+
+Commit and push the `.tekton/pr-endpoint-run.yaml` file as part of your pull request.
+
+```bash
+git add .tekton/pr-endpoint-run.yaml
+git commit -m "feat: Configure endpoint tests for my feature"
+git push
+```
+
+Once pushed, the OpenShift Pipeline will be triggered automatically. You can view its progress and results directly on your pull request in your Git repository.
 
 #### Option 2: Run Locally
 
 To run the same tests locally (outside the CI/CD pipeline), set the required environment variables and execute the `make test-endpoint` command:
 
 ```bash
-export CLUSTER_NAME=<your-cluster-name>
+export HOST=<your-eic-host-name>
 export AUTH_KEY=<your-auth-key>
 export INGRESS_IP=<your-ingress-ip>
 
@@ -305,7 +374,7 @@ make test-endpoint
 
 **Environment Variables:**
 
-* CLUSTER_NAME: Name of the target cluster
+* HOST: The target EIC hostname
 * AUTH_KEY: Authentication key (as used in the Tekton secret)
 * INGRESS_IP: External ingress IP of the cluster
 

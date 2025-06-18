@@ -13,15 +13,13 @@ spec:
     This task tests an endpoint for a 429 rate limit exceeded error
     by calling it multiple times in quick succession.
   params:
-    - name: host
+    - name: clusterInfoSecretName
       type: string
-    - name: authSecret
-      type: string
-    - name: ingressIP
-      type: string
-      default: ""
     - name: endpointPath
       type: string
+    - name: publicDNS
+      type: string
+      default: "false"
   workspaces:
     - name: source
   steps:
@@ -29,22 +27,29 @@ spec:
       image: registry.access.redhat.com/ubi9/ubi-minimal
       workingDir: $(workspaces.source.path)
       env:
-        - name: AUTH_KEY
-          valueFrom: { secretKeyRef: { name: $(params.authSecret), key: auth_key } }
+        - name: HOST
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: host } }
         - name: INGRESS_IP
-          value: $(params.ingressIP)
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: ingressIP } }
+        - name: AUTH_KEY
+          valueFrom: { secretKeyRef: { name: $(params.clusterInfoSecretName), key: authKey } }
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-
-        # Path to the new test script
+       
         TEST_SCRIPT="./edge-integration-cell/rate-limit-test.sh"
+
+        SCRIPT_ARGS=("--host" "$(params.host)")
+
+        if [[ "$(params.publicDNS)" == "true" ]]; then
+          SCRIPT_ARGS+=("--public-dns")
+        fi
 
         if [[ ! -f "$TEST_SCRIPT" ]]; then
           echo "❌ Test script not found at $TEST_SCRIPT"
           exit 1
         fi
         chmod +x "$TEST_SCRIPT"
-
+        
         echo "▶️ Running rate limit test for endpoint: $(params.endpointPath)"
-        $TEST_SCRIPT --host "$(params.host)" "$(params.endpointPath)"
+        $TEST_SCRIPT "${SCRIPT_ARGS[@]}" "$(params.endpointPath)"
