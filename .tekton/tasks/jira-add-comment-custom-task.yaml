@@ -67,7 +67,8 @@ spec:
         # --- 4. Make the API Call using curl ---
         # --fail causes curl to exit with an error if the HTTP code is not 2xx.
         # This will automatically fail the Tekton step on an API error.
-        curl --request POST \
+        curl --http1.1 \
+             --request POST \
              --header "$AUTH_HEADER" \
              --header "Content-Type: application/json" \
              --header "Accept: application/json" \
