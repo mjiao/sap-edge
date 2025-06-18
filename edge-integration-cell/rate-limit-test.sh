@@ -86,7 +86,7 @@ for i in {1..6}; do
         -H "Authorization: Basic ${AUTH_KEY}" \
         "${CURL_OPTS[@]}" \
         --url "https://${HOST}${ENDPOINT_PATH}" &
-    sleep 0.5
+    sleep 0.1
 done
 
 # --- ADDED: wait command ---
