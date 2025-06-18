@@ -123,6 +123,17 @@ spec:
           value: $(params.jiraIssueKey)
         - name: comment
           value: |
-            ✅ All endpoint tests passed successfully!
-            - **Host Secret:** $(params.clusterInfoSecretName)
-            - **Revision:** $(params.revision)
+            h2. ✅ Endpoint Tests Passed
+
+            All automated endpoint tests passed successfully.
+
+            *Details:*
+            * *Repository:* $(params.repoUrl)
+            * *Revision:* $(params.revision)
+            * *Target Cluster Secret:* $(params.clusterInfoSecretName)
+
+            *Executed Tests:*
+            * test-http-test1
+            * test-http-testelster
+            * test-slvredis
+            * test-ratelimit-slvredis
