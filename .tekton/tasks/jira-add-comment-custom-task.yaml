@@ -44,31 +44,26 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        # --- 1. Install jq for robust JSON handling ---
         echo "Installing jq..."
         microdnf install -y jq > /dev/null
 
-        # --- 2. Prepare Authentication Header ---
-        BASIC_AUTH=$(echo -n "$JIRA_USERNAME:$JIRA_API_TOKEN" | base64)
-        AUTH_HEADER="Authorization: Basic $BASIC_AUTH"
+        AUTH_HEADER="Authorization: Bearer $JIRA_API_TOKEN"
 
-        # --- 3. Construct the JSON Payload (for API v2) ---
-        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" '{body: $comment_text}')
+        # Create the JSON payload for the "Edit Issue" endpoint
+        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" \
+          '{ "update": { "comment": [ { "add": { "body": $comment_text } } ] } }')
 
-        # --- 4. Define the API URL (for API v2) ---
-        API_URL="$JIRA_HOST/rest/api/2/issue/$(params.jiraIssueKey)/comment"
+        # The URL points to the issue itself
+        API_URL="$JIRA_HOST/rest/api/2/issue/$(params.jiraIssueKey)"
 
         echo "Jira API Endpoint: $API_URL"
-        echo "Payload: $JSON_PAYLOAD"
 
-        # --- 5. Make the API Call using curl ---
-        curl --http1.1 \
-             --request POST \
+        # Make the API Call using PUT and the Bearer token auth
+        curl --request PUT \
              --header "$AUTH_HEADER" \
              --header "Content-Type: application/json" \
-             --header "Accept: application/json" \
              --url "$API_URL" \
              --data "$JSON_PAYLOAD" \
              --fail --show-error --silent
 
-        echo "✅ Successfully added comment to Jira issue $(params.jiraIssueKey)."
+        echo "✅ Successfully added comment to Jira issue $(params.jiraIssueKey) via Edit Issue API."
