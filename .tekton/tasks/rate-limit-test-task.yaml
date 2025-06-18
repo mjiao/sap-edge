@@ -39,7 +39,7 @@ spec:
        
         TEST_SCRIPT="./edge-integration-cell/rate-limit-test.sh"
 
-        SCRIPT_ARGS=("--host" "$(params.host)")
+        SCRIPT_ARGS=("--host" "$HOST")
 
         if [[ "$(params.publicDNS)" == "true" ]]; then
           SCRIPT_ARGS+=("--public-dns")
