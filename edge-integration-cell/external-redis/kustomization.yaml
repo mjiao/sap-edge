@@ -5,5 +5,5 @@
 
 ---
 resources:
-  - redis_enterprise_cluster.yaml
+  - redis_enterprise_cluster_ha.yaml
   - redis_enterprise_database.yaml
