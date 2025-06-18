@@ -109,11 +109,11 @@ spec:
 
     - name: update-jira-ticket
       runAfter:
-        - test-httpbinipfilter
+#        - test-httpbinipfilter
         - test-http-test1
         - test-http-testelster
         - test-slvredis
-#        - test-ratelimit-slvredis
+        - test-ratelimit-slvredis
       taskRef:
         name: jira-add-comment-custom
       params:
