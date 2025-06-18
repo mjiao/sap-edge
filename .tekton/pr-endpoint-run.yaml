@@ -7,7 +7,7 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: endpoint-tests-
+  generateName: endpoint-tests-bruhl-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
@@ -21,7 +21,7 @@ spec:
     - name: revision
       value: "{{ revision }}"
     - name: clusterInfoSecretName
-      value: "cluster-info-brhul"
+      value: "cluster-info-bruhl"
     - name: publicDNS
       value: "false"
     - name: jiraSecretName

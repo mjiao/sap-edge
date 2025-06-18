@@ -293,7 +293,7 @@ stringData:
   # The ingress IP for internal resolution. Leave empty if using publicDNS.
   ingressIP: "192.168.99.65"
    # The auth key to access the SAP EIC ingress gateway.
-  authKey: "IUKNNVkj8@"
+  authKey: "EIC AUTH KEY"
 ```
 *Note: The authentication key for the gateway is managed in a separate secret, referenced by the `authSecret` parameter in your `PipelineRun`.*
 
