@@ -76,17 +76,23 @@ echo "--------------------------------------------------"
 
 echo "--- Triggering requests to activate rate limit for ${ENDPOINT_PATH} ---"
 
-# Fire 6 requests quickly to ensure the limit (more than 5) is hit.
-# These are "warm-up" requests; we don't check their results.
-for i in {1..10}; do
-    echo "Sending warm-up request #$i..."
+# --- This loop is non-blocking ---
+echo "--- Launching parallel requests to activate rate limit for ${ENDPOINT_PATH} ---"
+
+for i in {1..8}; do
+    echo "Launching background warm-up request #$i..."
+    # The "&" sends the command to the background and the loop continues immediately
     curl --silent --output /dev/null --insecure --request GET \
         -H "Authorization: Basic ${AUTH_KEY}" \
         "${CURL_OPTS[@]}" \
-        --url "https://${HOST}${ENDPOINT_PATH}" || true # Allow failure
-    sleep 0.1
+        --url "https://${HOST}${ENDPOINT_PATH}" &
 done
 
+# --- ADDED: wait command ---
+# This command blocks until all background jobs launched by this script have finished.
+# This ensures the warm-up is complete before we send the final test request.
+wait
+echo "--- All warm-up requests have completed. ---"
 echo "--- Sending final request to check for 429 status ---"
 
 # Create a temporary file to store the response body
