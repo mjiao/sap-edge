@@ -124,5 +124,5 @@ spec:
         - name: comment
           value: |
             ✅ All endpoint tests passed successfully!
-            - **Host:** $(params.host)
+            - **Host Secret:** $(params.clusterInfoSecretName)
             - **Revision:** $(params.revision)
