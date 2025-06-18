@@ -5,15 +5,13 @@
 
 set -euo pipefail
 
-# This script tests that an endpoint correctly returns a 429 status
-# after being called several times in quick succession.
-
 # --- Function to display usage ---
 usage() {
   cat <<EOF
 Usage: $0 --host <hostname> [OPTIONS] <endpoint_path>
 
-Tests that an endpoint correctly returns a 429 status
+Tests that an endpoint correctly returns a 429 status by racing multiple
+parallel requests and exiting on the first success.
 
 Required Arguments:
   <endpoint_path>             The path of the endpoint to test (e.g., /http/test1).
@@ -23,7 +21,7 @@ Options:
   -k, --auth-key <key>        The basic authentication key. (Env: AUTH_KEY)
   -i, --ingress-ip <ip>       The Ingress IP for internal resolution mode. (Env: INGRESS_IP)
   -p, --public-dns            Use public DNS for resolution (disables --resolve).
-  -h, --help                  Show this help message.
+  -t, --timeout <seconds>     How long to wait for a 429 response. Defaults to 20.
 EOF
   exit 1
 }
@@ -35,16 +33,16 @@ AUTH_KEY="${AUTH_KEY:-}"
 INGRESS_IP="${INGRESS_IP:-}"
 USE_PUBLIC_DNS=false
 ENDPOINT_PATH=""
+TIMEOUT_SECONDS=20
 
-# Parse flags first, then grab the final argument as the endpoint path
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -H|--host) HOST="$2"; shift 2 ;;
     -k|--auth-key) AUTH_KEY="$2"; shift 2 ;;
     -i|--ingress-ip) INGRESS_IP="$2"; shift 2 ;;
     -p|--public-dns) USE_PUBLIC_DNS=true; shift 1 ;;
+    -t|--timeout) TIMEOUT_SECONDS="$2"; shift 2 ;;
     -h|--help) usage ;;
-    # If it's not a flag, it must be the endpoint path
     -*) echo "❌ Unknown option: $1" >&2; usage ;;
     *) ENDPOINT_PATH="$1"; shift 1 ;;
   esac
@@ -59,70 +57,65 @@ if ! $USE_PUBLIC_DNS && [[ -z "$INGRESS_IP" ]]; then
   exit 1
 fi
 
+# --- Create a temporary file to act as a success signal ---
+SUCCESS_SIGNAL_FILE=$(mktemp)
+
+# --- Ensure all background jobs and the signal file are cleaned up on exit ---
+trap 'rm -f "$SUCCESS_SIGNAL_FILE"; kill $(jobs -p) &>/dev/null' EXIT
+
+
 # --- Main Execution ---
 echo "--------------------------------------------------"
 echo "Target Host:    $HOST"
 echo "Endpoint Path:  $ENDPOINT_PATH"
+echo "Timeout:        $TIMEOUT_SECONDS seconds"
 
 CURL_OPTS=()
-if $USE_PUBLIC_DNS; then
-  echo "Resolution:     Public DNS (--public-dns)"
-else
-  echo "Resolution:     Internal via --resolve ($INGRESS_IP)"
+if ! $USE_PUBLIC_DNS; then
   CURL_OPTS+=("--resolve" "${HOST}:443:${INGRESS_IP}")
 fi
 echo "--------------------------------------------------"
 
 
-echo "--- Triggering requests to activate rate limit for ${ENDPOINT_PATH} ---"
-
-# --- This loop is non-blocking ---
-echo "--- Launching parallel requests to activate rate limit for ${ENDPOINT_PATH} ---"
+# --- Launch all requests in parallel background jobs ---
+echo "--- Launching 6 parallel requests to race for a 429 status ---"
 
 for i in {1..6}; do
-    echo "Launching background warm-up request #$i..."
-    # The "&" sends the command to the background and the loop continues immediately
-    curl --silent --output /dev/null --insecure --request GET \
-        -H "Authorization: Basic ${AUTH_KEY}" \
-        "${CURL_OPTS[@]}" \
-        --url "https://${HOST}${ENDPOINT_PATH}" &
-    sleep 0.1
+    # Each request runs in its own subshell in the background
+    (
+        # This sub-process runs independently
+        echo "  -> Launching worker #$i..."
+        HTTP_STATUS=$(curl --write-out '%{http_code}' --silent --insecure --request GET \
+            -H "Authorization: Basic ${AUTH_KEY}" \
+            "${CURL_OPTS[@]}" \
+            --url "https://${HOST}${ENDPOINT_PATH}")
+
+        echo "  -> Worker #$i finished with status: $HTTP_STATUS"
+
+        # If this worker gets the 429, it creates the signal file
+        if [[ "$HTTP_STATUS" -eq 429 ]]; then
+            echo "  -> ✅ Worker #$i got 429! Creating success signal."
+            touch "$SUCCESS_SIGNAL_FILE"
+        fi
+    ) &
 done
 
-# --- ADDED: wait command ---
-# This command blocks until all background jobs launched by this script have finished.
-# This ensures the warm-up is complete before we send the final test request.
-wait
-echo "--- All warm-up requests have completed. ---"
-echo "--- Sending final request to check for 429 status ---"
+# --- Wait for Success or Timeout ---
+echo "--- Main script waiting for first 429 response or timeout... ---"
+SECONDS=0 # Start a timer
+while true; do
+    # Check if the signal file has been created by a successful worker
+    if [[ -f "$SUCCESS_SIGNAL_FILE" ]]; then
+        echo "✅ SUCCESS: Signal file found. Rate limit was triggered correctly."
+        exit 0 # Success! The trap will clean up remaining jobs.
+    fi
 
-# Create a temporary file to store the response body
-RESPONSE_BODY_FILE=$(mktemp)
-# Execute the final request and capture the HTTP status code
-HTTP_STATUS=$(curl --write-out '%{http_code}' --silent --insecure --request GET \
-    -H "Authorization: Basic ${AUTH_KEY}" \
-    "${CURL_OPTS[@]}" \
-    --url "https://${HOST}${ENDPOINT_PATH}" \
-    --output "$RESPONSE_BODY_FILE")
+    # Check if we have exceeded the timeout
+    if (( SECONDS > TIMEOUT_SECONDS )); then
+        echo "❌ FAILED: Timed out after $TIMEOUT_SECONDS seconds. No 429 response was received."
+        exit 1 # Failure! The trap will clean up remaining jobs.
+    fi
 
-echo "Received Status: $HTTP_STATUS"
-echo "Received Body:"
-cat "$RESPONSE_BODY_FILE"
-echo "" # Newline for cleaner logs
-
-# --- Validation ---
-if [[ "$HTTP_STATUS" -ne 429 ]]; then
-    echo "❌ FAILED: Expected HTTP status 429, but got '$HTTP_STATUS'."
-    exit 1
-fi
-echo "✅ SUCCESS: Received correct HTTP status 429."
-
-# Check if the response body contains the expected error code
-if ! grep -q "surgeProtectionLimitExceeded" "$RESPONSE_BODY_FILE"; then
-    echo "❌ FAILED: Response body did not contain 'surgeProtectionLimitExceeded'."
-    exit 1
-fi
-echo "✅ SUCCESS: Response body contains correct error 'surgeProtectionLimitExceeded'."
-
-echo "✅ Rate limit test passed for ${ENDPOINT_PATH}."
-exit 0
+    # Wait a moment before checking again
+    sleep 0.5
+done

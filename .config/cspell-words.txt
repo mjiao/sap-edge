@@ -54,3 +54,4 @@ httpbinipfilter
 tekton
 mktemp
 bruhl
+subshell
