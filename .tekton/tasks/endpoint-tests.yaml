@@ -38,7 +38,7 @@ spec:
         # Assuming the script is in the root of the repo, adjust if needed
         TEST_SCRIPT="./edge-integration-cell/test_eic_endpoints.sh"
 
-        SCRIPT_ARGS=("--host" "$(params.host)")
+        SCRIPT_ARGS=("--host" "$HOST")
 
         if [[ "$(params.publicDNS)" == "true" ]]; then
           SCRIPT_ARGS+=("--public-dns")
