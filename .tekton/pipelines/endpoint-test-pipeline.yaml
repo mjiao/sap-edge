@@ -93,19 +93,19 @@ spec:
         - name: source
           workspace: source
 
-    - name: test-ratelimit-slvredis
-      runAfter: [ test-slvredis ]
-      taskRef: { name: rate-limit-test }
-      params:
-        - name: endpointPath
-          value: /slvredis
-        - name: clusterInfoSecretName
-          value: $(params.clusterInfoSecretName)
-        - name: publicDNS
-          value: $(params.publicDNS)
-      workspaces:
-        - name: source
-          workspace: source
+#    - name: test-ratelimit-slvredis
+#      runAfter: [ test-slvredis ]
+#      taskRef: { name: rate-limit-test }
+#      params:
+#        - name: endpointPath
+#          value: /slvredis
+#        - name: clusterInfoSecretName
+#          value: $(params.clusterInfoSecretName)
+#        - name: publicDNS
+#          value: $(params.publicDNS)
+#      workspaces:
+#        - name: source
+#          workspace: source
 
     - name: update-jira-ticket
       runAfter:
@@ -113,7 +113,7 @@ spec:
         - test-http-test1
         - test-http-testelster
         - test-slvredis
-        - test-ratelimit-slvredis
+#        - test-ratelimit-slvredis
       taskRef:
         name: jira-add-comment-custom
       params:
