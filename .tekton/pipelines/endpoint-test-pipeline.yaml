@@ -118,7 +118,7 @@ spec:
         name: jira-add-comment-custom
       params:
         - name: jiraSecretName
-        - value: $(params.jiraSecretName)
+          value: $(params.jiraSecretName)
         - name: jiraIssueKey
           value: $(params.jiraIssueKey)
         - name: comment

@@ -22,6 +22,8 @@ spec:
       value: "{{ revision }}"
     - name: clusterInfoSecretName
       value: "cluster-info-brhul"
+    - name: publicDNS
+      value: "false"
     - name: jiraSecretName
       value: "jira-secret"
     - name: jiraIssueKey
