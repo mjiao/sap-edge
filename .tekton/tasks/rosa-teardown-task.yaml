@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-teardown
+spec:
+  params:
+    - name: rosaClusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: rosaTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing ROSA token"
+      default: "rosa-token-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: teardown-rosa
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ROSA_CLUSTER_NAME
+          value: "$(params.rosaClusterName)"
+      envFrom:
+        - secretRef:
+            name: $(params.awsSecretName)
+        - secretRef:
+            name: $(params.rosaTokenSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Use values from aws-credentials-secret
+        export AWS_ACCESS_KEY_ID="$awsAccessKeyId"
+        export AWS_SECRET_ACCESS_KEY="$awsSecretAccessKey"
+        export AWS_DEFAULT_REGION="$awsDefaultRegion"
+        export ROSA_TOKEN="$rosaToken"
+        
+        echo "📦 Installing ROSA CLI..."
+        curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz | tar -xz
+        sudo mv rosa /usr/local/bin/
+        
+        echo "📦 Installing AWS CLI..."
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        
+        echo "📦 Installing Terraform..."
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+        sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+        sudo apt-get update
+        sudo apt-get install -y terraform
+        
+        echo "📦 Installing make and jq..."
+        dnf install -y make jq unzip
+        
+        echo "🔐 Logging into ROSA..."
+        rosa login --token="$ROSA_TOKEN"
+        
+        echo "🗑️ Deleting ROSA cluster..."
+        if rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" >/dev/null 2>&1; then
+          rosa delete cluster --cluster "$ROSA_CLUSTER_NAME" --yes
+          echo "⏳ Waiting for cluster deletion to complete..."
+          while rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" >/dev/null 2>&1; do
+            echo "Still deleting cluster... waiting 30 seconds"
+            sleep 30
+          done
+          echo "✅ ROSA cluster deleted successfully"
+        else
+          echo "ℹ️ ROSA cluster does not exist, skipping deletion"
+        fi
+        
+        echo "🗑️ Destroying Terraform infrastructure..."
+        cd terraform
+        terraform init
+        terraform destroy -auto-approve \
+          -var="cluster_name=$ROSA_CLUSTER_NAME" \
+          -var="region=$AWS_DEFAULT_REGION" \
+          -var="deploy_postgres=true" \
+          -var="deploy_redis=true" \
+          -var="postgres_admin_password=dummy"
+        
+        echo "✅ ROSA teardown completed successfully!" 

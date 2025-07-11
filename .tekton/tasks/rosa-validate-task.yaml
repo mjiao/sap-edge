@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-validate
+spec:
+  params:
+    - name: rosaClusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: rosaTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing ROSA token"
+      default: "rosa-token-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: validate-rosa
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ROSA_CLUSTER_NAME
+          value: "$(params.rosaClusterName)"
+      envFrom:
+        - secretRef:
+            name: $(params.awsSecretName)
+        - secretRef:
+            name: $(params.rosaTokenSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Use values from secrets
+        export AWS_ACCESS_KEY_ID="$awsAccessKeyId"
+        export AWS_SECRET_ACCESS_KEY="$awsSecretAccessKey"
+        export AWS_DEFAULT_REGION="$awsDefaultRegion"
+        export ROSA_TOKEN="$rosaToken"
+        
+        echo "📦 Installing ROSA CLI..."
+        curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz | tar -xz
+        sudo mv rosa /usr/local/bin/
+        
+        echo "📦 Installing OC CLI..."
+        curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz
+        sudo mv oc /usr/local/bin/
+        
+        echo "🔐 Logging into ROSA..."
+        rosa login --token="$ROSA_TOKEN"
+        
+        echo "🔍 Validating ROSA cluster..."
+        
+        # Check cluster status
+        CLUSTER_STATUS=$(rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" --output json | jq -r '.state')
+        echo "Cluster Status: $CLUSTER_STATUS"
+        
+        if [[ "$CLUSTER_STATUS" != "ready" ]]; then
+          echo "❌ Cluster is not ready. Status: $CLUSTER_STATUS"
+          exit 1
+        fi
+        
+        # Get cluster admin credentials
+        echo "📋 Getting cluster admin credentials..."
+        rosa create admin --cluster "$ROSA_CLUSTER_NAME" --password "TempPass123!" >/dev/null
+        
+        # Get API URL
+        API_URL=$(rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" --output json | jq -r '.api.url')
+        echo "API URL: $API_URL"
+        
+        # Login to cluster
+        echo "🔐 Logging into cluster..."
+        oc login "$API_URL" -u "cluster-admin" -p "TempPass123!" --insecure-skip-tls-verify=true
+        
+        # Validate cluster components
+        echo "🔍 Validating cluster components..."
+        
+        # Check nodes
+        echo "📊 Checking nodes..."
+        oc get nodes
+        
+        # Check cluster operators
+        echo "🔧 Checking cluster operators..."
+        oc get clusteroperators
+        
+        # Check for any degraded operators
+        DEGRADED_OPERATORS=$(oc get clusteroperators -o json | jq -r '.items[] | select(.status.conditions[] | select(.type=="Degraded" and .status=="True")) | .metadata.name')
+        if [[ -n "$DEGRADED_OPERATORS" ]]; then
+          echo "⚠️ Found degraded operators: $DEGRADED_OPERATORS"
+        else
+          echo "✅ All cluster operators are healthy"
+        fi
+        
+        # Check cluster version
+        echo "📋 Checking cluster version..."
+        oc get clusterversion
+        
+        echo "✅ ROSA cluster validation completed successfully!" 

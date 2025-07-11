@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aws-services-info
+spec:
+  params:
+    - name: rosaClusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: get-aws-services-info
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ROSA_CLUSTER_NAME
+          value: "$(params.rosaClusterName)"
+      envFrom:
+        - secretRef:
+            name: $(params.awsSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Use values from aws-credentials-secret
+        export AWS_ACCESS_KEY_ID="$awsAccessKeyId"
+        export AWS_SECRET_ACCESS_KEY="$awsSecretAccessKey"
+        export AWS_DEFAULT_REGION="$awsDefaultRegion"
+        
+        echo "📦 Installing AWS CLI..."
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        
+        echo "📦 Installing Terraform and jq..."
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+        sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+        sudo apt-get update
+        sudo apt-get install -y terraform jq unzip
+        
+        echo "=== AWS Services Information ==="
+        
+        # Get Terraform outputs
+        cd terraform
+        terraform init >/dev/null 2>&1
+        
+        if terraform output -json >/dev/null 2>&1; then
+          terraform output -json | jq -r '
+            "VPC ID: " + (.vpc_id.value // "Not deployed") + "\n" +
+            "PostgreSQL Endpoint: " + (.postgres_endpoint.value // "Not deployed") + "\n" +
+            "PostgreSQL Database: sapeic\n" +
+            "PostgreSQL Admin: postgres\n" +
+            "Redis Endpoint: " + (.redis_endpoint.value // "Not deployed") + "\n" +
+            "Redis Port: " + (.redis_port.value // "Not deployed")
+          '
+        else
+          echo "Terraform state not available, checking AWS resources directly..."
+          
+          # Check RDS PostgreSQL
+          POSTGRES_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier "${ROSA_CLUSTER_NAME}-postgres" --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "Not deployed")
+          echo "PostgreSQL Endpoint: $POSTGRES_ENDPOINT"
+          echo "PostgreSQL Database: sapeic"
+          echo "PostgreSQL Admin: postgres"
+          
+          # Check ElastiCache Redis
+          REDIS_ENDPOINT=$(aws elasticache describe-cache-clusters --cache-cluster-id "${ROSA_CLUSTER_NAME}-redis" --query "CacheClusters[0].ConfigurationEndpoint.Address" --output text 2>/dev/null || echo "Not deployed")
+          REDIS_PORT=$(aws elasticache describe-cache-clusters --cache-cluster-id "${ROSA_CLUSTER_NAME}-redis" --query "CacheClusters[0].ConfigurationEndpoint.Port" --output text 2>/dev/null || echo "Not deployed")
+          echo "Redis Endpoint: $REDIS_ENDPOINT"
+          echo "Redis Port: $REDIS_PORT"
+        fi 

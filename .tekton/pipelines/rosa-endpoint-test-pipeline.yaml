@@ -1,0 +1,159 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: rosa-endpoint-test-pipeline
+spec:
+  params:
+    - name: rosaRegion
+      type: string
+      description: "ROSA region"
+      default: "us-east-1"
+    - name: rosaClusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: rosaVersion
+      type: string
+      description: "ROSA version"
+      default: "4.15.35"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: rosaTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing ROSA token"
+      default: "rosa-token-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "aws-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy RDS PostgreSQL (true/false)"
+      default: "true"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy ElastiCache Redis (true/false)"
+      default: "true"
+  workspaces:
+    - name: source
+  tasks:
+    - name: rosa-deploy
+      taskRef:
+        name: rosa-deploy
+      params:
+        - name: rosaRegion
+          value: "$(params.rosaRegion)"
+        - name: rosaClusterName
+          value: "$(params.rosaClusterName)"
+        - name: rosaVersion
+          value: "$(params.rosaVersion)"
+        - name: awsSecretName
+          value: "$(params.awsSecretName)"
+        - name: rosaTokenSecretName
+          value: "$(params.rosaTokenSecretName)"
+        - name: postgresAdminPasswordSecretName
+          value: "$(params.postgresAdminPasswordSecretName)"
+        - name: deployPostgres
+          value: "$(params.deployPostgres)"
+        - name: deployRedis
+          value: "$(params.deployRedis)"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: manual-approval
+      taskRef:
+        name: manual-approval-gate
+      runAfter:
+        - rosa-deploy
+
+    - name: rosa-kubeconfig
+      taskRef:
+        name: rosa-kubeconfig
+      params:
+        - name: rosaClusterName
+          value: "$(params.rosaClusterName)"
+        - name: awsSecretName
+          value: "$(params.awsSecretName)"
+        - name: rosaTokenSecretName
+          value: "$(params.rosaTokenSecretName)"
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - manual-approval
+
+    - name: aws-services-info
+      taskRef:
+        name: aws-services-info
+      params:
+        - name: rosaClusterName
+          value: "$(params.rosaClusterName)"
+        - name: awsSecretName
+          value: "$(params.awsSecretName)"
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - rosa-kubeconfig
+
+    - name: endpoint-tests
+      taskRef:
+        name: endpoint-tests
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - aws-services-info
+
+    - name: rate-limit-test
+      taskRef:
+        name: rate-limit-test
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - endpoint-tests
+
+    - name: rosa-validate
+      taskRef:
+        name: rosa-validate
+      params:
+        - name: rosaClusterName
+          value: "$(params.rosaClusterName)"
+        - name: awsSecretName
+          value: "$(params.awsSecretName)"
+        - name: rosaTokenSecretName
+          value: "$(params.rosaTokenSecretName)"
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - rate-limit-test
+
+    - name: rosa-teardown
+      taskRef:
+        name: rosa-teardown
+      params:
+        - name: rosaClusterName
+          value: "$(params.rosaClusterName)"
+        - name: awsSecretName
+          value: "$(params.awsSecretName)"
+        - name: rosaTokenSecretName
+          value: "$(params.rosaTokenSecretName)"
+      workspaces:
+        - name: source
+          workspace: source
+      runAfter:
+        - rosa-validate
+      when:
+        - input: "$(params.autoTeardown)"
+          operator: in
+          values: ["true", "True", "TRUE"] 

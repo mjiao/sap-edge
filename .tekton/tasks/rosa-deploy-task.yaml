@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-deploy
+spec:
+  params:
+    - name: rosaRegion
+      type: string
+      description: "ROSA region"
+      default: "us-east-1"
+    - name: rosaClusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: rosaVersion
+      type: string
+      description: "ROSA version"
+      default: "4.15.35"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: rosaTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing ROSA token"
+      default: "rosa-token-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "aws-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy RDS PostgreSQL (true/false)"
+      default: "true"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy ElastiCache Redis (true/false)"
+      default: "true"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-rosa
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ROSA_REGION
+          value: "$(params.rosaRegion)"
+        - name: ROSA_CLUSTER_NAME
+          value: "$(params.rosaClusterName)"
+        - name: ROSA_VERSION
+          value: "$(params.rosaVersion)"
+        - name: DEPLOY_POSTGRES
+          value: "$(params.deployPostgres)"
+        - name: DEPLOY_REDIS
+          value: "$(params.deployRedis)"
+      envFrom:
+        - secretRef:
+            name: $(params.awsSecretName)
+        - secretRef:
+            name: $(params.rosaTokenSecretName)
+        - secretRef:
+            name: $(params.postgresAdminPasswordSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Use values from aws-credentials-secret and map to uppercase for terraform.makefile
+        export AWS_ACCESS_KEY_ID="$awsAccessKeyId"
+        export AWS_SECRET_ACCESS_KEY="$awsSecretAccessKey"
+        export AWS_DEFAULT_REGION="$awsDefaultRegion"
+        export ROSA_TOKEN="$rosaToken"
+        
+        # PostgreSQL admin password is already available as environment variable from envFrom
+        echo "🔐 PostgreSQL admin password available from secret mount..."
+        
+        echo "📦 Installing ROSA CLI..."
+        # Install ROSA CLI
+        curl -sSL https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz | tar -xz
+        sudo mv rosa /usr/local/bin/
+        
+        echo "📦 Installing AWS CLI..."
+        # Install AWS CLI
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        
+        echo "📦 Installing Terraform..."
+        # Install Terraform
+        curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+        sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+        sudo apt-get update
+        sudo apt-get install -y terraform
+        
+        echo "📦 Installing make, jq, and other utilities..."
+        dnf install -y make jq unzip
+        
+        echo "🔐 Logging into ROSA..."
+        rosa login --token="$ROSA_TOKEN"
+        
+        echo "🔍 Checking AWS services status..."
+        # Check if AWS services (RDS PostgreSQL and ElastiCache Redis) exist
+        SERVICES_NEED_DEPLOYMENT=false
+        
+        if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
+          echo "📊 Checking RDS PostgreSQL status..."
+          POSTGRES_EXISTS=$(aws rds describe-db-instances --db-instance-identifier "${ROSA_CLUSTER_NAME}-postgres" --query "DBInstances[0].DBInstanceIdentifier" --output text 2>/dev/null || echo "")
+          if [[ -n "$POSTGRES_EXISTS" && "$POSTGRES_EXISTS" != "None" ]]; then
+            echo "✅ RDS PostgreSQL already exists: $POSTGRES_EXISTS"
+          else
+            echo "📦 RDS PostgreSQL needs to be created"
+            SERVICES_NEED_DEPLOYMENT=true
+          fi
+        fi
+
+        if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
+          echo "📊 Checking ElastiCache Redis status..."
+          REDIS_EXISTS=$(aws elasticache describe-cache-clusters --cache-cluster-id "${ROSA_CLUSTER_NAME}-redis" --query "CacheClusters[0].CacheClusterId" --output text 2>/dev/null || echo "")
+          if [[ -n "$REDIS_EXISTS" && "$REDIS_EXISTS" != "None" ]]; then
+            echo "✅ ElastiCache Redis already exists: $REDIS_EXISTS"
+          else
+            echo "📦 ElastiCache Redis needs to be created"
+            SERVICES_NEED_DEPLOYMENT=true
+          fi
+        fi
+        
+        # Check if cluster already exists and is in a failed state
+        echo "🔍 Checking existing cluster status..."
+        if rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" >/dev/null 2>&1; then
+          CLUSTER_STATUS=$(rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" --output json | jq -r '.state')
+          echo "Found existing cluster with status: $CLUSTER_STATUS"
+          
+          if [[ "$CLUSTER_STATUS" == "error" ]]; then
+            echo "🗑️ Cluster is in error state, cleaning up..."
+            rosa delete cluster --cluster "$ROSA_CLUSTER_NAME" --yes
+            echo "⏳ Waiting for failed cluster deletion..."
+            sleep 30
+          elif [[ "$CLUSTER_STATUS" == "ready" ]]; then
+            echo "✅ Cluster already exists and is ready!"
+            if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+              echo "📦 Some AWS services need to be created, proceeding with deployment..."
+              # Continue to deployment section to create missing services
+            else
+              echo "✅ All services are ready, exiting successfully!"
+              exit 0
+            fi
+          else
+            echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
+            while true; do
+              CLUSTER_STATUS=$(rosa describe cluster --cluster "$ROSA_CLUSTER_NAME" --output json | jq -r '.state')
+              echo "Cluster status: $CLUSTER_STATUS"
+              
+              if [[ "$CLUSTER_STATUS" == "ready" ]]; then
+                echo "✅ Cluster is ready!"
+                if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+                  echo "📦 Some AWS services need to be created, proceeding with deployment..."
+                  # Continue to deployment section to create missing services
+                  break
+                else
+                  echo "✅ All services are ready, exiting successfully!"
+                  exit 0
+                fi
+              elif [[ "$CLUSTER_STATUS" == "error" ]]; then
+                echo "❌ Cluster deployment failed, cleaning up..."
+                rosa delete cluster --cluster "$ROSA_CLUSTER_NAME" --yes
+                sleep 30
+                break
+              else
+                echo "⏳ Still provisioning... waiting 60 seconds"
+                sleep 60
+              fi
+            done
+          fi
+        fi
+        
+        if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+          echo "🚀 Deploying AWS services only..."
+          # Deploy only the AWS services using Terraform
+          cd terraform
+          terraform init
+          terraform apply -auto-approve \
+            -var="cluster_name=$ROSA_CLUSTER_NAME" \
+            -var="region=$ROSA_REGION" \
+            -var="deploy_postgres=${DEPLOY_POSTGRES}" \
+            -var="deploy_redis=${DEPLOY_REDIS}" \
+            -var="postgres_admin_password=$POSTGRES_ADMIN_PASSWORD"
+        else
+          echo "🚀 Deploying ROSA cluster..."
+          make -f terraform.makefile rosa-deploy
+        fi
+
+        echo "✅ ROSA deployment completed successfully!" 
