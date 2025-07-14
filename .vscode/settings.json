@@ -1,8 +1,0 @@
-{
-    "yaml.schemas": {
-        "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/ansible.json#/$defs/tasks": [
-            "file:///Users/mjiao/go/src/github.com/mjiao/sap-edge/.tekton/tasks/aro-deploy-task.yaml",
-            "file:///Users/mjiao/go/src/github.com/mjiao/sap-edge/.tekton/tasks/aro-cleanup-failed-task.yaml"
-        ]
-    }
-}
