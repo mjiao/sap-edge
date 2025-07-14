@@ -21,15 +21,15 @@ spec:
     - name: revision
       value: "{{ revision }}"
     - name: clusterConfigMapName
-      value: "cluster-info-bruhl"
+      value: "cluster-info-leimen"
     - name: eicAuthSecretName
-      value: "azure-tenant-auth-secret"
+      value: "eic-auth-secret"
     - name: publicDNS
       value: "false"
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "SAPOCP-1586"
+      value: "SAPOCP-1542"
   workspaces:
     - name: source
       volumeClaimTemplate:
