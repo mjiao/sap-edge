@@ -6,40 +6,76 @@ SPDX-FileContributor: Manjun Jiao (@mjiao)
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# OCP External Services for SAP EIC Test Validation
+# SAP Edge Integration Cell (EIC) - External Services & ARO Pipeline
 
-This repository provides scripts and procedures for setting up test validation external services for SAP EIC on the OpenShift Container Platform (OCP). The services covered include PostgreSQL and Redis. This guide will help you install and configure these services, as well as perform cleanup after validation.
+This repository provides comprehensive tooling for deploying and testing SAP Edge Integration Cell (EIC) external services and Azure Red Hat OpenShift (ARO) clusters. It includes automated CI/CD pipelines, GitOps configurations, and manual deployment procedures.
+
+## 📋 Table of Contents
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [External Services Setup](#external-services-setup)
+  - [PostgreSQL](#postgresql)
+  - [Redis](#redis)
+  - [GitOps with Argo CD](#gitops-with-argo-cd)
+- [ARO Pipeline](#aro-pipeline)
+  - [Pipeline Structure](#pipeline-structure)
+  - [Prerequisites](#prerequisites-for-aro-pipeline)
+  - [Running the Pipeline](#running-the-aro-pipeline)
+  - [Parameters Reference](#pipeline-parameters)
+  - [Monitoring & Cleanup](#monitoring--cleanup)
+- [Endpoint Testing](#endpoint-testing)
+- [Support & Operations](#support--operations)
+- [License](#license)
+
+## 🎯 Overview
+
+This repository provides scripts and procedures for setting up test validation external services for SAP EIC on the OpenShift Container Platform (OCP). The services covered include:
+
+- **PostgreSQL** (via Crunchy Data Operator)
+- **Redis** (via Redis Enterprise Operator)  
+- **Azure Red Hat OpenShift (ARO)** deployment and testing pipeline
+- **Automated CI/CD pipelines** using Tekton
+- **GitOps workflows** using Argo CD
 
 > **Note:** These services may be optional for a proof of concept (PoC) setup.
-> If you don’t enable or configure the external Postgres and Redis during the SAP Edge Integration Cell (EIC) installation, EIC will automatically deploy self-contained Postgres and Redis pods within its own service namespace.
+> If you don't enable or configure the external Postgres and Redis during the SAP Edge Integration Cell (EIC) installation, EIC will automatically deploy self-contained Postgres and Redis pods within its own service namespace.
 
-**Important Notice**
+## ⚠️ Important Notice
 
 Please be aware that this repository is intended **for testing purposes only**. The configurations and scripts provided are designed to assist in test validation scenarios and are not recommended for production use.
 
-**Support Information**
+## 🚀 Quick Start
 
-Red Hat does not provide support for the Postgres/Redis services configured through this repository. Support is available directly from the respective vendors:
+### For External Services Only
+```bash
+# Clone the repository
+git clone https://github.com/redhat-sap/sap-edge.git
+cd sap-edge
 
-- **PostgreSQL**: Crunchy Data offers enterprise-level support for their PostgreSQL Operator through a subscription-based model. This includes various tiers with different response times, service levels, bug fixes, security patches, updates, and technical support. A subscription is required for using the software in third-party consulting or support services. For more details, refer to their [Terms of Use](https://www.crunchydata.com/legal/terms-of-use).
+# Deploy via GitOps (recommended)
+oc apply -f edge-integration-cell/sap-eic-external-services-app.yaml
 
-- **Redis**: Support for this solution is provided directly by the Redis Labs team, as detailed in [Appendix 1 of the Redis Enterprise Software Subscription Agreement](https://redislabs.com/wp-content/uploads/2019/11/redis-enterprise-software-subscription-agreement.pdf). The agreement categorizes support services into Support Services, Customer Success Services, and Consulting Services, offering assistance from basic troubleshooting to advanced consultancy and ongoing optimization tailored to diverse customer needs.
+# Or deploy manually - see detailed sections below
+```
 
-For comprehensive support, please contact [Crunchy Data](https://www.crunchydata.com/contact) and [Redis Labs](https://redis.io/meeting/) directly.
+### For ARO Pipeline
+```bash
+# 1. Create required secrets (see ARO Pipeline section)
+# 2. Copy and customize pipeline run
+cp .tekton/aro-endpoint-test-run.yaml .tekton/my-aro-test.yaml
+# 3. Edit parameters and apply
+oc apply -f .tekton/my-aro-test.yaml
+```
 
-**Operations**
+## 📋 Prerequisites
 
-For operational guidance on Crunchy Postgres and Redis, refer to the official documentation:
+- Access to an OpenShift Container Platform cluster using an account with `cluster-admin` permissions
+- Installed command line tools: `oc`, `jq`, `git`
+- For ARO Pipeline: Azure subscription with appropriate permissions
+- For GitOps: OpenShift GitOps Operator installed
 
-- [Redis on Kubernetes](https://redis.io/docs/latest/operate/kubernetes/)
-- [Crunchy Postgres Operator Quickstart](https://access.crunchydata.com/documentation/postgres-operator/latest/quickstart)
-
-## Prerequisites
-
-- Access to an OpenShift Container Platform cluster using an account with `cluster-admin` permissions.
-- Installed `oc`, `jq`, and `git` command line tools on your local system.
-
-## Shared Storage
+## 🔧 Shared Storage
 
 When ODF (OpenShift Data Foundation) is installed, set the shared file system parameters as follows:
 
@@ -49,6 +85,8 @@ When ODF (OpenShift Data Foundation) is installed, set the shared file system pa
 | Shared File System Storage Class | ocs-storagecluster-cephfs   |
 
 Additionally, set the ODF `ocs-storagecluster-ceph-rbd` storage class as default for RWO/RWX Block volumes to meet most block storage requirements for various services running on OpenShift.
+
+# External Services Setup
 
 ## PostgreSQL
 
@@ -204,9 +242,9 @@ oc delete scc redis-enterprise-scc-v2
 # For OpenShift versions 4.16 and later
 oc delete scc redis-enterprise-scc
 oc delete namespace sap-eic-external-redis
-````
+```
 
-## 🚀 Argo CD GitOps Setup
+## 🚀 GitOps with Argo CD
 
 This project supports automated deployment of external **Postgres** and **Redis** services using **Argo CD** and a GitOps workflow.
 
@@ -262,6 +300,334 @@ oc apply -f sap-edge/edge-integration-cell/sap-eic-external-services-app.yaml
 * Install the Postgres and Redis operators
 * Wait for them to be ready
 * Deploy the respective PostgresCluster and RedisEnterpriseCluster, RedisDB custom resources
+
+# ARO Pipeline
+
+## 🚀 Azure Red Hat OpenShift (ARO) Pipeline
+
+This project provides a comprehensive CI/CD pipeline for deploying and testing Azure Red Hat OpenShift (ARO) clusters using Tekton. The pipeline automates the entire lifecycle from cluster deployment to endpoint testing and cleanup.
+
+### Infrastructure as Code with Bicep
+
+The project now supports deploying Azure Database for PostgreSQL and Azure Cache for Redis directly through Bicep templates, providing better infrastructure-as-code practices and consistent deployment.
+
+#### Quick Deployment with Bicep
+
+```bash
+# Set required environment variables
+export CLIENT_ID="your-azure-client-id"
+export CLIENT_SECRET="your-azure-client-secret"
+export PULL_SECRET='{"auths":{"registry.redhat.io":{"auth":"..."}}}'
+
+# Create PostgreSQL admin password secret
+oc create secret generic azure-postgres-admin-password \
+  --from-literal=password="your-secure-password"
+
+# Deploy ARO with Azure services
+make -f bicep.makefile aro-deploy
+```
+
+#### Bicep Configuration
+
+The Bicep templates support the following parameters:
+
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `deployPostgres` | Deploy Azure Database for PostgreSQL | `true` | ❌ |
+| `deployRedis` | Deploy Azure Cache for Redis | `true` | ❌ |
+| `postgresAdminPassword` | PostgreSQL admin password | - | ✅ (if PostgreSQL enabled) |
+| `postgresSkuName` | PostgreSQL SKU (dev mode: Standard_B1ms) | `Standard_B1ms` | ❌ |
+| `postgresTier` | PostgreSQL tier (dev mode: Burstable) | `Burstable` | ❌ |
+| `redisSku` | Redis SKU (dev mode: Basic) | `Basic` | ❌ |
+| `redisSize` | Redis size (dev mode: C0) | `C0` | ❌ |
+
+#### Using Makefile with Bicep
+
+```bash
+# Create PostgreSQL admin password secret first
+oc create secret generic azure-postgres-admin-password \
+  --from-literal=password="your-secure-password"
+
+# Deploy ARO with Azure services
+make aro-deploy DEPLOY_POSTGRES=true DEPLOY_REDIS=true POSTGRES_ADMIN_PASSWORD="your-password"
+
+# Get Azure services information
+make aro-services-info
+
+# Deploy only ARO (without Azure services)
+make aro-deploy DEPLOY_POSTGRES=false DEPLOY_REDIS=false
+```
+
+## Pipeline Structure
+
+The ARO pipeline consists of several Tekton tasks and a complete pipeline definition. **Azure services (PostgreSQL and Redis) are now deployed via Bicep templates** as part of the ARO deployment, providing better infrastructure-as-code practices.
+
+#### Pipeline Tasks
+
+| Task Name | Purpose | Location |
+|-----------|---------|----------|
+| `aro-deploy` | Deploys ARO cluster with Azure services via Bicep | `.tekton/tasks/aro-deploy-task.yaml` |
+| `aro-validate-and-get-access` | Validates cluster, generates kubeconfig, and retrieves Azure services info | `.tekton/tasks/aro-validate-and-get-access-task.yaml` |
+| `aro-teardown` | Cleans up ARO cluster and resources | `.tekton/tasks/aro-teardown-task.yaml` |
+| `aro-cleanup-failed` | Handles cleanup of failed deployments | `.tekton/tasks/aro-cleanup-failed-task.yaml` |
+
+#### Pipeline Definition
+
+The complete pipeline is defined in `.tekton/pipelines/aro-endpoint-test-pipeline.yaml` and includes:
+
+1. **Repository Fetch**: Clones the source code
+2. **ARO Deployment**: Creates ARO cluster with Azure services via Bicep
+3. **Cluster Validation & Access**: Validates cluster readiness, generates kubeconfig, and retrieves Azure services information
+4. **Manual Approval**: Pause for review before testing
+5. **Endpoint Testing**: Runs comprehensive API endpoint tests
+6. **Rate Limit Testing**: Validates rate limiting functionality
+7. **Manual Approval**: Pause for review before cleanup
+8. **Cluster Teardown**: Removes all ARO resources (Azure services cleaned up automatically)
+
+## Prerequisites for ARO Pipeline
+
+Before running the ARO pipeline, ensure you have:
+
+1. **Azure Subscription**: With appropriate permissions for ARO deployment
+2. **Domain Zone**: DNS zone configured in Azure for your domain
+3. **Kubernetes Secrets**: Required secrets created in your OpenShift project
+
+#### Required Secrets
+
+##### 1. Azure Service Principal Secret
+
+Create a secret containing your Azure service principal credentials, ARO resource group, and ARO domain:
+
+```bash
+# Method 1: Using oc with literal values
+oc create secret generic azure-sp-secret \
+  --from-literal=clientId="your-client-id" \
+  --from-literal=clientSecret="your-client-secret" \
+  --from-literal=tenantId="your-tenant-id" \
+  --from-literal=aroResourceGroup="your-aro-resource-group" \
+  --from-literal=aroDomain="your-domain.com"
+
+# Method 2: Using YAML file
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-sp-secret
+type: Opaque
+stringData:
+  clientId: "your-client-id"
+  clientSecret: "your-client-secret"
+  tenantId: "your-tenant-id"
+  aroResourceGroup: "your-aro-resource-group"
+  aroDomain: "your-domain.com"
+EOF
+```
+
+##### 2. Red Hat Pull Secret
+
+Create a secret containing your Red Hat pull secret:
+
+```bash
+# Method 1: Using oc with file
+oc create secret generic redhat-pull-secret \
+  --from-file=pullSecret=path/to/pull-secret.txt
+
+# Method 2: Using oc with literal (single line JSON)
+oc create secret generic redhat-pull-secret \
+  --from-literal=pullSecret='{"auths":{"registry.redhat.io":{"auth":"..."}}}'
+
+# Method 3: Using YAML file
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redhat-pull-secret
+type: Opaque
+stringData:
+  pullSecret: |
+    {
+      "auths": {
+        "registry.redhat.io": {
+          "auth": "your-base64-encoded-auth"
+        }
+      }
+    }
+EOF
+```
+
+##### 3. EIC Authentication Secret
+
+Create a secret for EIC gateway authentication:
+
+```bash
+# Method 1: Using oc with literal values
+oc create secret generic eic-auth-secret \
+  --from-literal=authKey="your-eic-auth-key"
+
+# Method 2: Using YAML file
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: eic-auth-secret
+type: Opaque
+stringData:
+  authKey: "your-eic-auth-key"
+EOF
+```
+
+##### 4. PostgreSQL Admin Password Secret
+
+Create a secret containing the PostgreSQL admin password for Azure Database. This secret is mounted directly as an environment variable in the pipeline:
+
+```bash
+# Method 1: Using oc with literal values
+oc create secret generic azure-postgres-admin-password \
+  --from-literal=password="your-secure-postgres-password"
+
+# Method 2: Using YAML file
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-postgres-admin-password
+type: Opaque
+stringData:
+  password: "your-secure-postgres-password"
+EOF
+```
+
+**Note**: The secret must contain a key named `password` which will be available as the `$POSTGRES_ADMIN_PASSWORD` environment variable in the pipeline.
+
+##### 5. Azure Services Configuration (Optional)
+
+Azure services (PostgreSQL and Redis) are now deployed via Bicep templates as part of the ARO deployment. The PostgreSQL admin password is mounted directly as an environment variable from a Kubernetes secret and passed to the Bicep deployment.
+
+**Note**: If you want to deploy Azure services via Bicep, ensure your Azure service principal has the necessary permissions to create PostgreSQL and Redis resources.
+
+## Running the ARO Pipeline
+
+#### Option 1: Using the Pipeline Template
+
+1. **Copy the pipeline run template**:
+   ```bash
+   cp .tekton/aro-endpoint-test-run.yaml .tekton/my-aro-test-run.yaml
+   ```
+
+2. **Edit the pipeline parameters**:
+   ```yaml
+   params:
+     - name: repoUrl
+       value: "https://github.com/redhat-sap/sap-edge.git"
+     - name: revision
+       value: "main"
+     - name: aroClusterName
+       value: "my-aro-cluster"
+     - name: aroVersion
+       value: "4.15.35"
+     - name: azureSecretName
+       value: "azure-sp-secret"
+     - name: pullSecretName
+       value: "redhat-pull-secret"
+     - name: eicAuthSecretName
+       value: "eic-auth-secret"
+     - name: postgresAdminPasswordSecretName
+       value: "azure-postgres-admin-password"
+     - name: deployPostgres
+       value: "true"
+     - name: deployRedis
+       value: "true"
+     - name: publicDNS
+       value: "false"
+   ```
+   
+   **Note**: `aroResourceGroup` and `aroDomain` are now configured in the `azure-sp-secret` instead of as parameters.
+
+3. **Apply the pipeline run**:
+   ```bash
+   oc apply -f .tekton/my-aro-test-run.yaml
+   ```
+
+#### Option 2: Manual Task Execution
+
+You can also run individual tasks manually by creating TaskRuns:
+
+```bash
+# First, apply the task definitions
+oc apply -f .tekton/tasks/aro-deploy-task.yaml
+oc apply -f .tekton/tasks/aro-validate-and-get-access-task.yaml
+oc apply -f .tekton/tasks/aro-teardown-task.yaml
+
+# Then create TaskRuns (example for deploy task)
+cat <<EOF | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: aro-deploy-
+spec:
+  taskRef:
+    name: aro-deploy
+  params:
+    - name: aroClusterName
+      value: "my-aro-cluster"
+    - name: azureSecretName
+      value: "azure-sp-secret"
+    - name: pullSecretName
+      value: "redhat-pull-secret"
+  workspaces:
+    - name: source
+      emptyDir: {}
+EOF
+
+# Note: aroResourceGroup and aroDomain are now in the azure-sp-secret
+```
+
+## Pipeline Parameters
+
+| Parameter | Description | Default Value | Required |
+|-----------|-------------|---------------|----------|
+| `repoUrl` | Git repository URL | - | ✅ |
+| `revision` | Git branch/tag/commit | - | ✅ |
+| `aroLocation` | Azure region | `northeurope` | ❌ |
+| `aroClusterName` | ARO cluster name | - | ✅ |
+| `aroVersion` | OpenShift version | `4.15.35` | ❌ |
+| `azureSecretName` | Azure credentials secret (includes resource group & domain) | `azure-sp-secret` | ❌ |
+| `pullSecretName` | Red Hat pull secret | `redhat-pull-secret` | ❌ |
+| `eicAuthSecretName` | EIC auth secret | - | ✅ |
+| `postgresAdminPasswordSecretName` | Name of the Kubernetes Secret containing PostgreSQL admin password (mounted directly as env var) | `azure-postgres-admin-password` | ✅ (if PostgreSQL enabled) |
+| `deployPostgres` | Whether to deploy PostgreSQL (true/false) | `true` | ❌ |
+| `deployRedis` | Whether to deploy Redis (true/false) | `true` | ❌ |
+| `publicDNS` | Use public DNS resolution | `false` | ❌ |
+
+**Note**: `aroResourceGroup` and `aroDomain` are now stored in the `azureSecretName` secret instead of being passed as parameters.
+
+## Monitoring & Cleanup
+
+The pipeline includes automatic cleanup, but you can also manually clean up resources:
+
+```bash
+# Clean up failed deployments
+oc apply -f .tekton/tasks/aro-cleanup-failed-task.yaml
+
+# Or use the makefile
+make aro-delete-cluster ARO_RESOURCE_GROUP=my-rg ARO_CLUSTER_NAME=my-cluster
+make aro-resource-group-delete ARO_RESOURCE_GROUP=my-rg
+```
+
+### Monitoring Pipeline Progress
+
+Monitor your pipeline execution:
+
+```bash
+# List pipeline runs
+oc get pipelineruns
+
+# Watch pipeline progress
+oc logs -f pipelinerun/aro-endpoint-test-xxxxx
+
+# Check task status
+oc get taskruns
+```
 
 ### Running Cluster-Specific Endpoint Tests
 
@@ -334,7 +700,7 @@ stringData:
 
 **To apply the secret, run:**
 ```bash
-kubectl apply -f jira-secret.yaml -n your-project-namespace
+oc apply -f jira-secret.yaml -n your-project-namespace
 ```
 
 ---
@@ -389,6 +755,56 @@ make test-endpoint
 * INGRESS_IP: External ingress IP of the cluster
 
 _**Note**: Ensure your test script is configured to read these environment variables. If not, some modifications may be necessary._
+
+## 🛠️ Support & Operations
+
+### Support Information
+
+Red Hat does not provide support for the Postgres/Redis services configured through this repository. Support is available directly from the respective vendors:
+
+- **PostgreSQL**: Crunchy Data offers enterprise-level support for their PostgreSQL Operator through a subscription-based model. This includes various tiers with different response times, service levels, bug fixes, security patches, updates, and technical support. A subscription is required for using the software in third-party consulting or support services. For more details, refer to their [Terms of Use](https://www.crunchydata.com/legal/terms-of-use).
+
+- **Redis**: Support for this solution is provided directly by the Redis Labs team, as detailed in [Appendix 1 of the Redis Enterprise Software Subscription Agreement](https://redislabs.com/wp-content/uploads/2019/11/redis-enterprise-software-subscription-agreement.pdf). The agreement categorizes support services into Support Services, Customer Success Services, and Consulting Services, offering assistance from basic troubleshooting to advanced consultancy and ongoing optimization tailored to diverse customer needs.
+
+For comprehensive support, please contact [Crunchy Data](https://www.crunchydata.com/contact) and [Redis Labs](https://redis.io/meeting/) directly.
+
+### Operations Documentation
+
+For operational guidance on Crunchy Postgres and Redis, refer to the official documentation:
+
+- [Redis on Kubernetes](https://redis.io/docs/latest/operate/kubernetes/)
+- [Crunchy Postgres Operator Quickstart](https://access.crunchydata.com/documentation/postgres-operator/latest/quickstart)
+
+### Troubleshooting
+
+#### Common Issues
+
+1. **Pipeline Stuck on Manual Approval**
+   ```bash
+   # Check approval task status
+   oc get taskruns | grep approval
+   
+   # Approve manually (if using approval task)
+   oc patch taskrun <approval-taskrun-name> --type merge -p '{"spec":{"status":"TaskRunCancelled"}}'
+   ```
+
+2. **Secret Not Found Errors**
+   ```bash
+   # Verify secrets exist
+   oc get secrets | grep -E "(azure-sp-secret|redhat-pull-secret|eic-auth-secret)"
+   
+   # Check secret contents
+   oc describe secret azure-sp-secret
+   ```
+
+3. **ARO Deployment Timeout**
+   ```bash
+   # Check ARO cluster status in Azure
+   az aro show --name <cluster-name> --resource-group <rg-name> --query provisioningState
+   
+   # Check pipeline logs
+   oc logs -f pipelinerun/<pipeline-run-name>
+   ```
 
 # License
 

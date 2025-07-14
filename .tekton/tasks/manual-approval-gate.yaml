@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# This file enables the manual approval gate feature in OpenShift Pipelines.
+# As a cluster administrator, apply this file once to the cluster to install
+# the manual approval gate controller.
+#
+# For more information, see the OpenShift Pipelines documentation:
+# https://docs.redhat.com/en/documentation/red_hat_openshift_pipelines/1.15/html/creating_cicd_pipelines/using-manual-approval
+---
+apiVersion: operator.tekton.dev/v1alpha1
+kind: ManualApprovalGate
+metadata:
+  name: manual-approval-gate
+spec:
+  targetNamespace: openshift-pipelines
