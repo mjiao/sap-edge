@@ -1,0 +1,245 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-deploy
+spec:
+  params:
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "azure-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy PostgreSQL (true/false)"
+      default: "true"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy Redis (true/false)"
+      default: "true"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-aro
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ARO_LOCATION
+          value: "$(params.aroLocation)"
+        - name: ARO_CLUSTER_NAME
+          value: "$(params.aroClusterName)"
+        - name: ARO_VERSION
+          value: "$(params.aroVersion)"
+        - name: DEPLOY_POSTGRES
+          value: "$(params.deployPostgres)"
+        - name: DEPLOY_REDIS
+          value: "$(params.deployRedis)"
+      envFrom:
+        - secretRef:
+            name: $(params.azureSecretName)
+        - secretRef:
+            name: $(params.pullSecretName)
+        - secretRef:
+            name: $(params.postgresAdminPasswordSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Use values from azure-sp-secret and map to uppercase for bicep.makefile
+        export ARO_RESOURCE_GROUP="$aroResourceGroup"
+        export ARO_DOMAIN="$aroDomain"
+        export CLIENT_ID="$clientId"
+        export CLIENT_SECRET="$clientSecret"
+        export TENANT_ID="$tenantId"
+        export PULL_SECRET="$pullSecret"
+        
+        # PostgreSQL admin password is already available as environment variable from envFrom
+        echo "🔐 PostgreSQL admin password available from secret mount..."
+        
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
+        
+        echo "🔐 Logging into Azure..."
+        az login --service-principal -u "$CLIENT_ID" -p "$CLIENT_SECRET" --tenant "$TENANT_ID"
+        
+        echo "🔍 Checking Azure services status..." 
+        # Set fixed PostgreSQL server name
+        POSTGRES_SERVER_NAME="postgres-${ARO_CLUSTER_NAME}"
+        
+        # Initialize deployment flags
+        CLUSTER_EXISTS=false
+        SERVICES_NEED_DEPLOYMENT=false
+        
+        # Check if cluster already exists
+        echo "🔍 Checking existing cluster status..."
+        if az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
+          CLUSTER_EXISTS=true
+          CLUSTER_STATUS=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "provisioningState" -o tsv)
+          echo "Found existing cluster with status: $CLUSTER_STATUS"
+          
+          if [[ "$CLUSTER_STATUS" == "Failed" ]]; then
+            echo "🗑️ Cluster is in failed state, cleaning up..."
+            az aro delete --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --yes --no-wait
+            echo "⏳ Waiting for failed cluster deletion..."
+            sleep 30
+            CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
+          elif [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
+            echo "✅ Cluster already exists and is ready!"
+            # Check if services need deployment only when cluster exists and is ready
+            echo "🔍 Checking Azure services status..."
+            
+            if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
+              echo "📊 Checking PostgreSQL server status..."
+              POSTGRES_EXISTS=$(az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME" --query "name" -o tsv 2>/dev/null || true)
+              if [[ -n "$POSTGRES_EXISTS" ]]; then
+                echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
+              else
+                echo "📦 PostgreSQL server needs to be created"
+                SERVICES_NEED_DEPLOYMENT=true
+              fi
+            fi
+
+            if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
+              echo "📊 Checking Redis cache status..."
+              REDIS_EXISTS=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+              if [[ -n "$REDIS_EXISTS" ]]; then
+                echo "✅ Redis cache already exists: $REDIS_EXISTS"
+              else
+                echo "📦 Redis cache needs to be created"
+                SERVICES_NEED_DEPLOYMENT=true
+              fi
+            fi
+            
+            if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
+              echo "✅ All services are ready, exiting successfully!"
+              exit 0
+            fi
+          else
+            echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
+            while true; do
+              CLUSTER_STATUS=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "provisioningState" -o tsv)
+              echo "Cluster status: $CLUSTER_STATUS"
+              
+              if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
+                echo "✅ Cluster is ready!"
+                # Check services after cluster becomes ready
+                echo "🔍 Checking Azure services status..."
+                
+                if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
+                  echo "📊 Checking PostgreSQL server status..."
+                  POSTGRES_EXISTS=$(az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME" --query "name" -o tsv 2>/dev/null || true)
+                  if [[ -n "$POSTGRES_EXISTS" ]]; then
+                    echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
+                  else
+                    echo "📦 PostgreSQL server needs to be created"
+                    SERVICES_NEED_DEPLOYMENT=true
+                  fi
+                fi
+
+                if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
+                  echo "📊 Checking Redis cache status..."
+                  REDIS_EXISTS=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+                  if [[ -n "$REDIS_EXISTS" ]]; then
+                    echo "✅ Redis cache already exists: $REDIS_EXISTS"
+                  else
+                    echo "📦 Redis cache needs to be created"
+                    SERVICES_NEED_DEPLOYMENT=true
+                  fi
+                fi
+                
+                if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
+                  echo "✅ All services are ready, exiting successfully!"
+                  exit 0
+                fi
+                break
+              elif [[ "$CLUSTER_STATUS" == "Failed" ]]; then
+                echo "❌ Cluster deployment failed, cleaning up..."
+                az aro delete --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --yes --no-wait
+                sleep 30
+                CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
+                break
+              else
+                echo "⏳ Still provisioning... waiting 60 seconds"
+                sleep 60
+              fi
+            done
+          fi
+        else
+          echo "📋 No existing cluster found - will deploy full ARO cluster"
+        fi
+        
+        echo "🏗️ Creating resource group (idempotent)..."
+        az group create --name "$ARO_RESOURCE_GROUP" --location "$ARO_LOCATION" --query name -o tsv || echo "Resource group already exists"
+        
+        echo "📦 Installing make, libicu, and jq..."
+        dnf install -y make libicu jq
+        
+        # Deployment decision logic based on cluster existence
+        if [[ "$CLUSTER_EXISTS" == "true" && "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+          echo "🚀 Deploying Azure services only (cluster exists)..."
+          # Deploy only the Azure services using public Bicep with retry logic
+          RETRY_COUNT=0
+          MAX_RETRIES=3
+          while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+            if az deployment group create --resource-group "$ARO_RESOURCE_GROUP" \
+              --template-file bicep/azure-services.bicep \
+              --parameters \
+              clusterName="$ARO_CLUSTER_NAME" \
+              location="$ARO_LOCATION" \
+              deployPostgres="${DEPLOY_POSTGRES}" \
+              deployRedis="${DEPLOY_REDIS}" \
+              postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD"; then
+              echo "✅ Azure services deployment succeeded"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "❌ Deployment attempt $RETRY_COUNT failed"
+              if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+                echo "⏳ Retrying in 30 seconds..."
+                sleep 30
+              else
+                echo "💥 All deployment attempts failed"
+                exit 1
+              fi
+            fi
+          done
+        elif [[ "$CLUSTER_EXISTS" == "false" ]]; then
+          echo "🚀 Deploying full ARO cluster with public services..."
+          make -f bicep.makefile aro-deploy
+
+          echo "🔄 Creating domain records for ARO..."
+          make -f bicep.makefile domain-records
+        else
+          echo "✅ Both cluster and services already exist - nothing to deploy!"
+        fi
+
+        echo "✅ ARO deployment completed successfully!" 

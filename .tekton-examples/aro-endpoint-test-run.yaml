@@ -7,25 +7,43 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: endpoint-tests-
+  generateName: aro-endpoint-test-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/task: "git-clone"
 spec:
   pipelineRef:
-    name: endpoint-test-pipeline
+    name: aro-endpoint-test-pipeline
   params:
     - name: repoUrl
-      value: "{{ repo_url }}"     # PaC fills with PR repo URL
+      value: "{{ repo_url }}"
     - name: revision
-      value: "{{ revision }}"     # PaC fills with PR repo URL
-    - name: clusterInfoSecretName   # ✏️ to be edited in each PR
-      value: "<replace-me>"
+      value: "{{ revision }}"
+    - name: aroLocation
+      value: "northeurope"
+    - name: aroClusterName
+      value: "sapeic"
+    - name: aroVersion
+      value: "4.17.27"
+    - name: azureSecretName
+      value: "azure-sp-secret"
+    - name: pullSecretName
+      value: "mj-pull-secret"
+    - name: eicAuthSecretName
+      value: "eic-auth-secret"
+    - name: postgresAdminPasswordSecretName
+      value: "azure-postgres-admin-password"
+    - name: deployPostgres
+      value: "true"
+    - name: deployRedis
+      value: "true"
+    - name: publicDNS
+      value: "false"
     - name: jiraSecretName
-      value: "<replace-me>"
+      value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "<replace-me>"
+      value: "SAPOCP-1590"
   workspaces:
     - name: source
       volumeClaimTemplate:

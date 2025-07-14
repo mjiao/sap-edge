@@ -1,0 +1,295 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: aro-endpoint-test-pipeline
+spec:
+  params:
+    - name: repoUrl
+      type: string
+    - name: revision
+      type: string
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+    - name: eicAuthSecretName
+      type: string
+      description: "EIC authentication secret name"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "azure-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy PostgreSQL (true/false)"
+      default: "true"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy Redis (true/false)"
+      default: "true"
+    - name: publicDNS
+      type: string
+      description: "Use public DNS"
+      default: "false"
+    - name: jiraSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Jira credentials"
+    - name: jiraIssueKey
+      type: string
+      description: "Jira issue key to update with test results"
+  workspaces:
+    - name: source
+  tasks:
+    - name: fetch-repository
+      taskRef: { name: git-clone }
+      params:
+        - name: url
+          value: $(params.repoUrl)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: output
+          workspace: source
+
+    - name: deploy-aro
+      runAfter: [fetch-repository]
+      taskRef: { name: aro-deploy }
+      params:
+        - name: aroLocation
+          value: $(params.aroLocation)
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: aroVersion
+          value: $(params.aroVersion)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: pullSecretName
+          value: $(params.pullSecretName)
+        - name: postgresAdminPasswordSecretName
+          value: $(params.postgresAdminPasswordSecretName)
+        - name: deployPostgres
+          value: $(params.deployPostgres)
+        - name: deployRedis
+          value: $(params.deployRedis)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: validate-and-get-access
+      runAfter: [deploy-aro]
+      taskRef: { name: aro-validate-and-get-access }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: postgresAdminPasswordSecretName
+          value: $(params.postgresAdminPasswordSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Manual approval step - this will pause the pipeline
+    - name: manual-approval
+      runAfter: [validate-and-get-access]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+        - name: description
+          value: "ARO cluster and Azure services (PostgreSQL/Redis) are deployed via Bicep. Please approve to run endpoint tests."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '60m'
+
+    - name: test-httpbinipfilter
+      runAfter: [manual-approval]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /httpbinipfilter
+        - name: clusterConfigMapName
+          value: "cluster-info-$(params.aroClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-test1
+      runAfter: [manual-approval]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/test1
+        - name: clusterConfigMapName
+          value: "cluster-info-$(params.aroClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-testelster
+      runAfter: [manual-approval]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/testelster
+        - name: clusterConfigMapName
+          value: "cluster-info-$(params.aroClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-slvredis
+      runAfter: [manual-approval]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-$(params.aroClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-ratelimit-slvredis
+      runAfter: [test-slvredis]
+      taskRef: { name: rate-limit-test }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-$(params.aroClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: update-jira-ticket
+      runAfter:
+        - test-httpbinipfilter
+        - test-http-test1
+        - test-http-testelster
+        - test-slvredis
+        - test-ratelimit-slvredis
+      taskRef:
+        name: jira-add-comment-custom
+      params:
+        - name: jiraSecretName
+          value: $(params.jiraSecretName)
+        - name: jiraIssueKey
+          value: $(params.jiraIssueKey)
+        - name: comment
+          value: |
+            h2. ✅ ARO Deployment & Testing Pipeline Completed
+
+            ARO cluster deployment and all automated endpoint tests have completed successfully.
+
+            *ARO Cluster Configuration:*
+            * *Cluster Name:* $(params.aroClusterName)
+            * *Location:* $(params.aroLocation)
+            * *ARO Version:* $(params.aroVersion)
+            * *PostgreSQL Deployment:* $(params.deployPostgres)
+            * *Redis Deployment:* $(params.deployRedis)
+
+            *Pipeline Status:*
+            * Repository cloned: ✅
+            * ARO deployment: ✅ Completed
+            * Validation and access setup: ✅ Completed
+            * Endpoint tests: ✅ All Passed
+
+            *Pipeline Details:*
+            * *Repository:* $(params.repoUrl)
+            * *Revision:* $(params.revision)
+            * *Public DNS:* $(params.publicDNS)
+
+            *Executed Tests:*
+            * test-httpbinipfilter ✅
+            * test-http-test1 ✅
+            * test-http-testelster ✅
+            * test-slvredis ✅
+            * test-ratelimit-slvredis ✅
+
+            *Infrastructure Status:*
+            * ARO cluster deployed and validated ✅
+            * Azure services (PostgreSQL/Redis) provisioned ✅
+            * Kubeconfig and service access configured ✅
+            * All connectivity tests passed ✅
+
+            Ready for manual teardown approval. The pipeline will proceed with infrastructure cleanup once approved.
+
+    # Manual approval step before teardown - this will pause the pipeline
+    - name: manual-approval-teardown
+      runAfter:
+        - update-jira-ticket
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+        - name: description
+          value: "All endpoint tests completed. Please review results and approve to tear down ARO cluster."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '60m'
+
+    - name: teardown-aro
+      runAfter: [manual-approval-teardown]
+      taskRef: { name: aro-teardown }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+

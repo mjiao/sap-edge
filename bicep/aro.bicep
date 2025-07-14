@@ -5,9 +5,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 param clusterName string
-param domain string
+@description('The pull secret for the ARO cluster.')
 @secure()
-param pullSecret string = ''
+param pullSecret string
+@description('The domain for the ARO cluster.')
+param domain string
 @allowed([
     '4.16.39'
     '4.15.35'
@@ -31,16 +33,26 @@ param workerCount int = 3
 
 param location string = resourceGroup().location
 
+@description('Whether to deploy Azure Database for PostgreSQL')
+param deployPostgres bool = true
+
+@description('Whether to deploy Azure Cache for Redis')
+param deployRedis bool = true
+
+@description('PostgreSQL admin password')
+@secure()
+param postgresAdminPassword string = ''
+
 resource aroCluster 'Microsoft.RedHatOpenShift/openShiftClusters@2023-11-22' = {
   name: clusterName
   location: location
   properties: {
     clusterProfile: {
-      pullSecret: !empty(pullSecret) ? pullSecret : null
       domain: domain
+      pullSecret: base64ToString(pullSecret)
+      resourceGroupId: '/subscriptions/${subscription().subscriptionId}/resourceGroups/${aroResourceGroup}'
       version: version
       fipsValidatedModules: 'Disabled'
-      resourceGroupId: '/subscriptions/${subscription().subscriptionId}/resourceGroups/${aroResourceGroup}'
     }
     networkProfile: {
       podCidr: '10.128.0.0/14'
@@ -90,3 +102,31 @@ resource workerSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' exi
   name: workerSubnetName
   parent: vnet
 }
+
+// Deploy Azure services using the azure-services.bicep module
+module azureServices 'azure-services.bicep' = if (deployPostgres || deployRedis) {
+  name: 'azure-services-deployment'
+  params: {
+    clusterName: clusterName
+    location: location
+    deployPostgres: deployPostgres
+    deployRedis: deployRedis
+    postgresAdminPassword: postgresAdminPassword
+  }
+}
+
+// Outputs for Azure services
+output postgresServerName string = deployPostgres ? azureServices.outputs.postgresServerName : ''
+output postgresServerFqdn string = deployPostgres ? azureServices.outputs.postgresServerFqdn : ''
+output postgresAdminUsername string = deployPostgres ? azureServices.outputs.postgresAdminUsername : ''
+output postgresDatabaseName string = deployPostgres ? azureServices.outputs.postgresDatabaseName : ''
+
+output redisCacheName string = deployRedis ? azureServices.outputs.redisCacheName : ''
+output redisHostName string = deployRedis ? azureServices.outputs.redisHostName : ''
+output redisPort int = deployRedis ? azureServices.outputs.redisPort : 0
+output redisSslPort int = deployRedis ? azureServices.outputs.redisSslPort : 0
+
+// Connection strings
+output postgresConnectionString string = deployPostgres ? azureServices.outputs.postgresConnectionString : ''
+output redisConnectionString string = deployRedis ? azureServices.outputs.redisConnectionString : ''
+

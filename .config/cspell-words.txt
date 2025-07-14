@@ -56,6 +56,13 @@ mktemp
 bruhl
 subshell
 configmap
+Burstable
+eicadmin
+pipelinerun
+pipelineruns
+sslmode
+taskrun
+taskruns
 tfvars
 envsubst
 hostnames

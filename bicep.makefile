@@ -5,18 +5,27 @@ ARO_CLUSTER_NAME?=aro-sapeic
 ARO_DOMAIN?=saponrhel.org
 ARO_VERSION?=4.15.35
 
+# Azure services configuration
+DEPLOY_POSTGRES?=true
+DEPLOY_REDIS?=true
+POSTGRES_ADMIN_PASSWORD?=
+
 .PHONY: aro-deploy
 aro-deploy: domain-zone-exists network-deploy  ## Deploy ARO
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME ARO_DOMAIN ARO_VERSION CLIENT_ID CLIENT_SECRET)
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0)
 	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
 		--template-file bicep/aro.bicep \
 		--parameters \
-		clusterName=${ARO_CLUSTER_NAME} \
-		pullSecret=${PULL_SECRET} \
+		clusterName="${ARO_CLUSTER_NAME}" \
+		pullSecret="$$PULL_SECRET_BASE64" \
 		domain="${ARO_CLUSTER_NAME}.${ARO_DOMAIN}" \
-		version=${ARO_VERSION} \
-		servicePrincipalClientId=${CLIENT_ID} \
-		servicePrincipalClientSecret=${CLIENT_SECRET}
+		version="${ARO_VERSION}" \
+		servicePrincipalClientId="${CLIENT_ID}" \
+		servicePrincipalClientSecret="${CLIENT_SECRET}" \
+		deployPostgres="${DEPLOY_POSTGRES}" \
+		deployRedis="${DEPLOY_REDIS}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
 
 .PHONY: domain-records
 .ONESHELL:
@@ -69,6 +78,20 @@ aro-url:  ## Get ARO URL
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
 	@az aro show --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query "apiserverProfile.url" -o tsv
 
+aro-services-info:  ## Get Azure services information
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@echo "=== Azure Services Information ==="
+	@az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.outputs" -o json | jq -r '
+		"PostgreSQL Server: " + (.postgresServerName.value // "Not deployed") + "\n" +
+		"PostgreSQL FQDN: " + (.postgresServerFqdn.value // "Not deployed") + "\n" +
+		"PostgreSQL Admin: " + (.postgresAdminUsername.value // "Not deployed") + "\n" +
+		"PostgreSQL Database: " + (.postgresDatabaseName.value // "Not deployed") + "\n" +
+		"Redis Cache: " + (.redisCacheName.value // "Not deployed") + "\n" +
+		"Redis Host: " + (.redisHostName.value // "Not deployed") + "\n" +
+		"Redis Port: " + (.redisPort.value // "Not deployed") + "\n" +
+		"Redis SSL Port: " + (.redisSslPort.value // "Not deployed")
+	'
+
 .PHONY: domain-zone-exists
 domain-zone-exists:  ## Fail if DNS domain zone does not exists
 	$(call required-environment-variables,ARO_DOMAIN)
@@ -95,3 +118,17 @@ aro-delete-cluster:  ## Delete the ARO cluster
 aro-delete-resources:  ## Delete all resources in the ARO resource group
 	$(call required-environment-variables,ARO_RESOURCE_GROUP)
 	az resource delete --resource-group ${ARO_RESOURCE_GROUP} --ids $$(az resource list --resource-group ${ARO_RESOURCE_GROUP} --query "[].id" -o tsv)
+
+
+
+.PHONY: azure-services-deploy
+azure-services-deploy:  ## Deploy Azure services only (public access)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME POSTGRES_ADMIN_PASSWORD)
+	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--template-file bicep/azure-services.bicep \
+		--parameters \
+		clusterName="${ARO_CLUSTER_NAME}" \
+		location="${ARO_LOCATION}" \
+		deployPostgres="${DEPLOY_POSTGRES}" \
+		deployRedis="${DEPLOY_REDIS}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
