@@ -19,8 +19,12 @@ spec:
     - name: repoUrl
       value: "{{ repo_url }}"     # PaC fills with PR repo URL
     - name: revision
-      value: "{{ revision }}"     # PaC fills with PR repo URL
-    - name: clusterInfoSecretName   # ✏️ to be edited in each PR
+      value: "{{ revision }}"     # PaC fills with PR revision
+    - name: clusterConfigMapName   # ✏️ to be edited in each PR
+      value: "<replace-me>"
+    - name: eicAuthSecretName
+      value: "<replace-me>"
+    - name: publicDNS
       value: "<replace-me>"
     - name: jiraSecretName
       value: "<replace-me>"
