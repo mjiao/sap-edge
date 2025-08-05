@@ -68,8 +68,9 @@ spec:
         # Wait for cluster to be ready
         echo "⏳ Waiting for ARO cluster to be ready..."
         while true; do
-          CLUSTER_STATUS=$(make aro-cluster-status)
-          echo "Cluster status: $CLUSTER_STATUS"
+          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
+          echo "Cluster status: '$CLUSTER_STATUS'"
+          echo "Status length: ${#CLUSTER_STATUS}"
           
           if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
             echo "✅ ARO cluster is ready!"
@@ -84,9 +85,18 @@ spec:
         done
         
         # Get cluster URL and credentials
-        CLUSTER_URL=$(make aro-cluster-url)
-        USERNAME=$(make aro-credentials | jq -r '.kubeadminUsername')
-        PASSWORD=$(make aro-credentials | jq -r '.kubeadminPassword')
+        CLUSTER_URL=$(make aro-cluster-url | tail -1)
+        echo "🔍 Debug: Getting credentials..."
+        CREDENTIALS_RAW=$(make aro-credentials)
+        echo "🔍 Debug: Raw credentials output:"
+        echo "$CREDENTIALS_RAW"
+        echo "🔍 Debug: End raw credentials"
+        CREDENTIALS_JSON=$(echo "$CREDENTIALS_RAW" | grep -v "Variable is not defined" | grep -v "Not all required variables are defined" | grep -v "az aro list-credentials")
+        echo "🔍 Debug: Filtered JSON:"
+        echo "$CREDENTIALS_JSON"
+        echo "🔍 Debug: End filtered JSON"
+        USERNAME=$(echo "$CREDENTIALS_JSON" | jq -r '.kubeadminUsername')
+        PASSWORD=$(echo "$CREDENTIALS_JSON" | jq -r '.kubeadminPassword')
         
         echo "🌐 Cluster URL: $CLUSTER_URL"
         echo "👤 Username: $USERNAME"
@@ -103,7 +113,7 @@ spec:
         echo "📄 Generating kubeconfig..."
         # Ensure any previous kubeconfig is removed
         rm -f kubeconfig kubeconfig.backup
-        make aro-kubeconfig --file kubeconfig
+        az aro get-admin-kubeconfig --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --file kubeconfig
         
         echo "🔧 Adding insecure TLS settings to kubeconfig..."
         # Create a backup of the original kubeconfig
@@ -137,7 +147,7 @@ spec:
         POSTGRES_DATABASE_NAME="eic"
         POSTGRES_CONNECTION_STRING=""
         
-        POSTGRES_EXISTS=$(make postgres-exists)
+        POSTGRES_EXISTS=$(make postgres-exists | tail -1)
         if [[ -n "$POSTGRES_EXISTS" ]]; then
           POSTGRES_SERVER_NAME="$EXPECTED_POSTGRES_NAME"
           # Use public FQDN for PostgreSQL server
@@ -161,7 +171,7 @@ spec:
         REDIS_ACCESS_KEY=""
         REDIS_CONNECTION_STRING=""
         
-        REDIS_LIST=$(make redis-exists)
+        REDIS_LIST=$(make redis-exists | tail -1)
         if [[ -n "$REDIS_LIST" ]]; then
           REDIS_CACHE_NAME=$(echo "$REDIS_LIST" | head -1)
           REDIS_HOST_NAME=$(az redis show \

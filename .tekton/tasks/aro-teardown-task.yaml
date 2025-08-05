@@ -44,11 +44,11 @@ spec:
         dnf clean all
         dnf install -y azure-cli
 
-        # Use values from azure-sp-secret and map to uppercase for consistency
-        ARO_RESOURCE_GROUP="$aroResourceGroup"
-        CLIENT_ID="$clientId"
-        CLIENT_SECRET="$clientSecret"
-        TENANT_ID="$tenantId"
+        # Use values from azure-sp-secret and map to uppercase for bicep.makefile
+        export ARO_RESOURCE_GROUP="$aroResourceGroup"
+        export CLIENT_ID="$clientId"
+        export CLIENT_SECRET="$clientSecret"
+        export TENANT_ID="$tenantId"
         
         echo "🔐 Logging into Azure..."
         make azure-login
@@ -66,14 +66,14 @@ spec:
         echo "🗑️ Starting ARO cluster teardown..."
         
         # Check if cluster exists and delete it
-        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
         if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
           echo "🗑️ Deleting ARO cluster..."
           az aro delete --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --yes --no-wait
           
           echo "⏳ Waiting for cluster deletion to complete..."
           while true; do
-            CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+            CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
             if [[ "$CLUSTER_EXISTS_RESULT" == "false" ]]; then
               echo "✅ ARO cluster deleted successfully!"
               break
@@ -88,9 +88,32 @@ spec:
         
         # Clean up ARO-related resources only (keeping resource group)
         echo "🧹 Cleaning up ARO-related resources..."
-        ARO_RESOURCES=$(az resource list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, '$ARO_CLUSTER_NAME') || contains(tags.cluster, '$ARO_CLUSTER_NAME')].id" -o tsv)
+        
+        # Explicitly clean up PostgreSQL and Redis
+        echo "🗑️ Cleaning up PostgreSQL server..."
+        if az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "postgres-${ARO_CLUSTER_NAME}" >/dev/null 2>&1; then
+          az postgres flexible-server delete --resource-group "$ARO_RESOURCE_GROUP" --name "postgres-${ARO_CLUSTER_NAME}" --yes
+          echo "✅ PostgreSQL server deletion initiated"
+        else
+          echo "ℹ️ PostgreSQL server not found"
+        fi
+        
+        echo "🗑️ Cleaning up Redis cache..."
+        REDIS_CACHES=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+        if [[ -n "$REDIS_CACHES" ]]; then
+          for redis_name in $REDIS_CACHES; do
+            echo "🗑️ Deleting Redis cache: $redis_name"
+            az redis delete --resource-group "$ARO_RESOURCE_GROUP" --name "$redis_name" --yes
+          done
+          echo "✅ Redis cache deletion initiated"
+        else
+          echo "ℹ️ Redis cache not found"
+        fi
+        
+        # Clean up other ARO-related resources
+        ARO_RESOURCES=$(az resource list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, '$ARO_CLUSTER_NAME') || (tags && tags.cluster && contains(tags.cluster, '$ARO_CLUSTER_NAME'))].id" -o tsv)
         if [[ -n "$ARO_RESOURCES" ]]; then
-          echo "Found ARO-related resources to delete:"
+          echo "Found other ARO-related resources to delete:"
           echo "$ARO_RESOURCES"
           az resource delete --resource-group "$ARO_RESOURCE_GROUP" --ids $ARO_RESOURCES --yes || echo "Some ARO resources may have already been deleted"
         else
