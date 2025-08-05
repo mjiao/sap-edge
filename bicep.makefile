@@ -61,7 +61,7 @@ azure-login:  ## Login to Azure using service principal
 
 .PHONY: azure-set-subscription
 azure-set-subscription:  ## Set Azure subscription to current account
-	az account set --subscription "$(az account show --query id -o tsv)"
+	az account set --subscription "$$(az account show --query id -o tsv)"
 
 .PHONY: aro-cluster-status
 aro-cluster-status:  ## Get ARO cluster provisioning state
