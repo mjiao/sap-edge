@@ -15,6 +15,7 @@ metadata:
 spec:
   pipelineRef:
     name: aro-endpoint-test-pipeline
+  timeout: 168h
   params:
     - name: repoUrl
       value: "{{ repo_url }}"

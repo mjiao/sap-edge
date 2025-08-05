@@ -105,10 +105,14 @@ spec:
         
         # Check if cluster already exists
         echo "🔍 Checking existing cluster status..."
-        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+        echo "Using cluster name: $ARO_CLUSTER_NAME"
+        echo "Using resource group: $ARO_RESOURCE_GROUP"
+        
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
         if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
+          echo "✅ Cluster EXISTS"
           CLUSTER_EXISTS=true
-          CLUSTER_STATUS=$(make aro-cluster-status)
+          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
           echo "Found existing cluster with status: $CLUSTER_STATUS"
           
           if [[ "$CLUSTER_STATUS" == "Failed" ]]; then
@@ -124,7 +128,7 @@ spec:
             
             if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
               echo "📊 Checking PostgreSQL server status..."
-              POSTGRES_EXISTS=$(make postgres-exists)
+              POSTGRES_EXISTS=$(make postgres-exists | tail -1)
               if [[ -n "$POSTGRES_EXISTS" ]]; then
                 echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
               else
@@ -135,7 +139,7 @@ spec:
 
             if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
               echo "📊 Checking Redis cache status..."
-              REDIS_EXISTS=$(make redis-exists)
+              REDIS_EXISTS=$(make redis-exists | tail -1)
               if [[ -n "$REDIS_EXISTS" ]]; then
                 echo "✅ Redis cache already exists: $REDIS_EXISTS"
               else
@@ -148,43 +152,17 @@ spec:
               echo "✅ All services are ready, exiting successfully!"
               exit 0
             fi
-          else
+            # If services need deployment, continue to deployment section
+            break
+          elif [[ "$CLUSTER_STATUS" == "Creating" || "$CLUSTER_STATUS" == "Updating" ]]; then
             echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
             while true; do
-              CLUSTER_STATUS=$(make aro-cluster-status)
+              CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
               echo "Cluster status: $CLUSTER_STATUS"
               
               if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
                 echo "✅ Cluster is ready!"
-                # Check services after cluster becomes ready
-                echo "🔍 Checking Azure services status..."
-                
-                if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
-                  echo "📊 Checking PostgreSQL server status..."
-                  POSTGRES_EXISTS=$(make postgres-exists)
-                  if [[ -n "$POSTGRES_EXISTS" ]]; then
-                    echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
-                  else
-                    echo "📦 PostgreSQL server needs to be created"
-                    SERVICES_NEED_DEPLOYMENT=true
-                  fi
-                fi
-
-                if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
-                  echo "📊 Checking Redis cache status..."
-                  REDIS_EXISTS=$(make redis-exists)
-                  if [[ -n "$REDIS_EXISTS" ]]; then
-                    echo "✅ Redis cache already exists: $REDIS_EXISTS"
-                  else
-                    echo "📦 Redis cache needs to be created"
-                    SERVICES_NEED_DEPLOYMENT=true
-                  fi
-                fi
-                
-                if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
-                  echo "✅ All services are ready, exiting successfully!"
-                  exit 0
-                fi
+                # Services will be checked in the main deployment section
                 break
               elif [[ "$CLUSTER_STATUS" == "Failed" ]]; then
                 echo "❌ Cluster deployment failed, cleaning up..."
@@ -206,42 +184,55 @@ spec:
         az group create --name "$ARO_RESOURCE_GROUP" --location "$ARO_LOCATION" --query name -o tsv || echo "Resource group already exists"
         
         # Deployment decision logic based on cluster existence
-        if [[ "$CLUSTER_EXISTS" == "true" && "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
-          echo "🚀 Deploying Azure services only (cluster exists)..."
-          # Deploy only the Azure services using public Bicep with retry logic
-          RETRY_COUNT=0
-          MAX_RETRIES=3
-          while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
-            if az deployment group create --resource-group "$ARO_RESOURCE_GROUP" \
-              --template-file bicep/azure-services.bicep \
-              --parameters \
-              clusterName="$ARO_CLUSTER_NAME" \
-              location="$ARO_LOCATION" \
-              deployPostgres="${DEPLOY_POSTGRES}" \
-              deployRedis="${DEPLOY_REDIS}" \
-              postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD"; then
-              echo "✅ Azure services deployment succeeded"
-              break
-            else
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "❌ Deployment attempt $RETRY_COUNT failed"
-              if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
-                echo "⏳ Retrying in 30 seconds..."
-                sleep 30
+        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS, SERVICES_NEED_DEPLOYMENT=$SERVICES_NEED_DEPLOYMENT"
+        
+        if [[ "$CLUSTER_EXISTS" == "true" ]]; then
+          if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+            echo "🚀 Deploying Azure services only (cluster exists)..."
+            # Deploy only the Azure services using public Bicep with retry logic
+            RETRY_COUNT=0
+            MAX_RETRIES=3
+            while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+              if az deployment group create --resource-group "$ARO_RESOURCE_GROUP" \
+                --template-file bicep/azure-services.bicep \
+                --parameters \
+                clusterName="$ARO_CLUSTER_NAME" \
+                location="$ARO_LOCATION" \
+                deployPostgres="${DEPLOY_POSTGRES}" \
+                deployRedis="${DEPLOY_REDIS}" \
+                postgresAdminPassword="$POSTGRES_ADMIN_PASSWORD"; then
+                echo "✅ Azure services deployment succeeded"
+                break
               else
-                echo "💥 All deployment attempts failed"
-                exit 1
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "❌ Deployment attempt $RETRY_COUNT failed"
+                if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+                  echo "⏳ Retrying in 30 seconds..."
+                  sleep 30
+                else
+                  echo "💥 All deployment attempts failed"
+                  exit 1
+                fi
               fi
-            fi
-          done
-        elif [[ "$CLUSTER_EXISTS" == "false" ]]; then
+            done
+          else
+            echo "✅ Cluster exists and all services are ready - nothing to deploy!"
+          fi
+        else
           echo "🚀 Deploying full ARO cluster with public services..."
-          make -f bicep.makefile aro-deploy
+          
+          # Final safety check - double-check cluster doesn't exist before deploying
+          echo "🔍 Final safety check before deployment..."
+          if az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
+            echo "⚠️ WARNING: Cluster detected during final check - skipping deployment to avoid conflicts"
+            echo "✅ ARO deployment completed successfully (cluster already exists)"
+            exit 0
+          fi
+          
+          make aro-deploy
 
           echo "🔄 Creating domain records for ARO..."
-          make -f bicep.makefile domain-records
-        else
-          echo "✅ Both cluster and services already exist - nothing to deploy!"
+          make domain-records
         fi
 
         echo "✅ ARO deployment completed successfully!" 
