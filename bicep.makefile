@@ -117,13 +117,7 @@ arorp-service-principal:  ## Assign required roles to "Azure Red Hat Openshift" 
 	--role Contributor \
 	--scope "/subscriptions/$$(az account show --query id -o tsv)/resourceGroups/${ARO_RESOURCE_GROUP}"
 
-aro-credentials:  ## Get ARO credentials
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
 
-aro-kubeconfig:  ## Get ARO kubeconfig file
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
 
 aro-url:  ## Get ARO URL
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
