@@ -51,8 +51,11 @@ spec:
         echo "📦 Installing OpenShift CLI..."
         curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz -C /usr/local/bin oc
         
-        # Use values from azure-sp-secret
-        ARO_RESOURCE_GROUP="$aroResourceGroup"
+        # Use values from azure-sp-secret and map to uppercase for bicep.makefile
+        export ARO_RESOURCE_GROUP="$aroResourceGroup"
+        export CLIENT_ID="$clientId"
+        export CLIENT_SECRET="$clientSecret"
+        export TENANT_ID="$tenantId"
         
         echo "🔐 Logging into Azure..."
         make azure-login
