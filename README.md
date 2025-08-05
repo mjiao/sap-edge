@@ -324,7 +324,7 @@ oc create secret generic azure-postgres-admin-password \
   --from-literal=password="your-secure-password"
 
 # Deploy ARO with Azure services
-make -f bicep.makefile aro-deploy
+make aro-deploy
 ```
 
 #### Bicep Configuration

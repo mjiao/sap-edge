@@ -55,17 +55,17 @@ spec:
         ARO_RESOURCE_GROUP="$aroResourceGroup"
         
         echo "🔐 Logging into Azure..."
-        az login --service-principal -u "$clientId" -p "$clientSecret" --tenant "$tenantId"
+        make azure-login
         
         echo "📋 Setting subscription..."
-        az account set --subscription "$(az account show --query id -o tsv)"
+        make azure-set-subscription
         
         echo "🔍 Validating ARO cluster..."
         
         # Wait for cluster to be ready
         echo "⏳ Waiting for ARO cluster to be ready..."
         while true; do
-          CLUSTER_STATUS=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "provisioningState" -o tsv)
+          CLUSTER_STATUS=$(make aro-cluster-status)
           echo "Cluster status: $CLUSTER_STATUS"
           
           if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
@@ -81,9 +81,9 @@ spec:
         done
         
         # Get cluster URL and credentials
-        CLUSTER_URL=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "apiserverProfile.url" -o tsv)
-        USERNAME=$(az aro list-credentials --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query 'kubeadminUsername' -o tsv)
-        PASSWORD=$(az aro list-credentials --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query 'kubeadminPassword' -o tsv)
+        CLUSTER_URL=$(make aro-cluster-url)
+        USERNAME=$(make aro-credentials | jq -r '.kubeadminUsername')
+        PASSWORD=$(make aro-credentials | jq -r '.kubeadminPassword')
         
         echo "🌐 Cluster URL: $CLUSTER_URL"
         echo "👤 Username: $USERNAME"
@@ -100,7 +100,7 @@ spec:
         echo "📄 Generating kubeconfig..."
         # Ensure any previous kubeconfig is removed
         rm -f kubeconfig kubeconfig.backup
-        az aro get-admin-kubeconfig --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --file kubeconfig
+        make aro-kubeconfig --file kubeconfig
         
         echo "🔧 Adding insecure TLS settings to kubeconfig..."
         # Create a backup of the original kubeconfig
@@ -134,7 +134,8 @@ spec:
         POSTGRES_DATABASE_NAME="eic"
         POSTGRES_CONNECTION_STRING=""
         
-        if az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "$EXPECTED_POSTGRES_NAME" >/dev/null 2>&1; then
+        POSTGRES_EXISTS=$(make postgres-exists)
+        if [[ -n "$POSTGRES_EXISTS" ]]; then
           POSTGRES_SERVER_NAME="$EXPECTED_POSTGRES_NAME"
           # Use public FQDN for PostgreSQL server
           POSTGRES_SERVER_FQDN="${EXPECTED_POSTGRES_NAME}.postgres.database.azure.com"
@@ -157,7 +158,7 @@ spec:
         REDIS_ACCESS_KEY=""
         REDIS_CONNECTION_STRING=""
         
-        REDIS_LIST=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+        REDIS_LIST=$(make redis-exists)
         if [[ -n "$REDIS_LIST" ]]; then
           REDIS_CACHE_NAME=$(echo "$REDIS_LIST" | head -1)
           REDIS_HOST_NAME=$(az redis show \

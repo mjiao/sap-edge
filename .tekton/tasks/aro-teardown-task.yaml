@@ -47,11 +47,11 @@ spec:
         TENANT_ID="$tenantId"
         
         echo "🔐 Logging into Azure..."
-        az login --service-principal -u "$CLIENT_ID" -p "$CLIENT_SECRET" --tenant "$TENANT_ID"
+        make azure-login
 
 
         echo "📋 Setting subscription..."
-        az account set --subscription "$(az account show --query id -o tsv)"
+        make azure-set-subscription
         
         # Check if resource group exists
         if ! az group show --name "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
@@ -62,13 +62,15 @@ spec:
         echo "🗑️ Starting ARO cluster teardown..."
         
         # Check if cluster exists and delete it
-        if az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+        if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
           echo "🗑️ Deleting ARO cluster..."
           az aro delete --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --yes --no-wait
           
           echo "⏳ Waiting for cluster deletion to complete..."
           while true; do
-            if ! az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
+            CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+            if [[ "$CLUSTER_EXISTS_RESULT" == "false" ]]; then
               echo "✅ ARO cluster deleted successfully!"
               break
             else

@@ -89,7 +89,7 @@ spec:
         dnf install -y azure-cli-2.59.0
         
         echo "🔐 Logging into Azure..."
-        az login --service-principal -u "$CLIENT_ID" -p "$CLIENT_SECRET" --tenant "$TENANT_ID"
+        make azure-login
         
         echo "🔍 Checking Azure services status..." 
         # Set fixed PostgreSQL server name
@@ -101,9 +101,10 @@ spec:
         
         # Check if cluster already exists
         echo "🔍 Checking existing cluster status..."
-        if az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" >/dev/null 2>&1; then
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists)
+        if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
           CLUSTER_EXISTS=true
-          CLUSTER_STATUS=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "provisioningState" -o tsv)
+          CLUSTER_STATUS=$(make aro-cluster-status)
           echo "Found existing cluster with status: $CLUSTER_STATUS"
           
           if [[ "$CLUSTER_STATUS" == "Failed" ]]; then
@@ -119,7 +120,7 @@ spec:
             
             if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
               echo "📊 Checking PostgreSQL server status..."
-              POSTGRES_EXISTS=$(az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME" --query "name" -o tsv 2>/dev/null || true)
+              POSTGRES_EXISTS=$(make postgres-exists)
               if [[ -n "$POSTGRES_EXISTS" ]]; then
                 echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
               else
@@ -130,7 +131,7 @@ spec:
 
             if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
               echo "📊 Checking Redis cache status..."
-              REDIS_EXISTS=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+              REDIS_EXISTS=$(make redis-exists)
               if [[ -n "$REDIS_EXISTS" ]]; then
                 echo "✅ Redis cache already exists: $REDIS_EXISTS"
               else
@@ -146,7 +147,7 @@ spec:
           else
             echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
             while true; do
-              CLUSTER_STATUS=$(az aro show --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --query "provisioningState" -o tsv)
+              CLUSTER_STATUS=$(make aro-cluster-status)
               echo "Cluster status: $CLUSTER_STATUS"
               
               if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
@@ -156,7 +157,7 @@ spec:
                 
                 if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
                   echo "📊 Checking PostgreSQL server status..."
-                  POSTGRES_EXISTS=$(az postgres flexible-server show --resource-group "$ARO_RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME" --query "name" -o tsv 2>/dev/null || true)
+                  POSTGRES_EXISTS=$(make postgres-exists)
                   if [[ -n "$POSTGRES_EXISTS" ]]; then
                     echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
                   else
@@ -167,7 +168,7 @@ spec:
 
                 if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
                   echo "📊 Checking Redis cache status..."
-                  REDIS_EXISTS=$(az redis list --resource-group "$ARO_RESOURCE_GROUP" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv)
+                  REDIS_EXISTS=$(make redis-exists)
                   if [[ -n "$REDIS_EXISTS" ]]; then
                     echo "✅ Redis cache already exists: $REDIS_EXISTS"
                   else
