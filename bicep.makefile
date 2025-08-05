@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Kirill Satarin (@kksat)
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
 ARO_RESOURCE_GROUP?=aro-sapeic
 ARO_LOCATION?=northeurope
 
@@ -11,6 +17,7 @@ DEPLOY_REDIS?=true
 POSTGRES_ADMIN_PASSWORD?=
 
 .PHONY: aro-deploy
+.ONESHELL:
 aro-deploy: domain-zone-exists network-deploy  ## Deploy ARO
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME ARO_DOMAIN ARO_VERSION CLIENT_ID CLIENT_SECRET)
 	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0)
@@ -46,6 +53,50 @@ network-deploy:  ## Deploy network
 resource-group:  ## Create resource group
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_LOCATION)
 	az group create --name ${ARO_RESOURCE_GROUP} --location ${ARO_LOCATION} --query name -o tsv
+
+.PHONY: azure-login
+azure-login:  ## Login to Azure using service principal
+	$(call required-environment-variables,CLIENT_ID CLIENT_SECRET TENANT_ID)
+	az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
+
+.PHONY: azure-set-subscription
+azure-set-subscription:  ## Set Azure subscription to current account
+	az account set --subscription "$(az account show --query id -o tsv)"
+
+.PHONY: aro-cluster-status
+aro-cluster-status:  ## Get ARO cluster provisioning state
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --query "provisioningState" -o tsv
+
+.PHONY: aro-cluster-exists
+aro-cluster-exists:  ## Check if ARO cluster exists
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1 && echo "true" || echo "false"
+
+.PHONY: aro-cluster-url
+aro-cluster-url:  ## Get ARO cluster URL
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --query "apiserverProfile.url" -o tsv
+
+.PHONY: aro-credentials
+aro-credentials:  ## Get ARO credentials
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
+
+.PHONY: aro-kubeconfig
+aro-kubeconfig:  ## Get ARO kubeconfig file
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
+
+.PHONY: postgres-exists
+postgres-exists:  ## Check if PostgreSQL server exists
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@az postgres flexible-server show --resource-group "${ARO_RESOURCE_GROUP}" --name "postgres-${ARO_CLUSTER_NAME}" --query "name" -o tsv 2>/dev/null || echo ""
+
+.PHONY: redis-exists
+redis-exists:  ## Check if Redis cache exists
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@az redis list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv
 
 .PHONY: service-principal
 .ONESHELL:
