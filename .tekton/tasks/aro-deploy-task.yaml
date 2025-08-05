@@ -80,6 +80,10 @@ spec:
         # PostgreSQL admin password is already available as environment variable from envFrom
         echo "🔐 PostgreSQL admin password available from secret mount..."
         
+        echo "📦 Installing required packages..."
+        # Install make, libicu, and jq first (needed for makefile operations)
+        dnf install -y make libicu jq
+        
         echo "📦 Installing Azure CLI..."
         # Install Azure CLI using the official Microsoft repository
         rpm --import https://packages.microsoft.com/keys/microsoft.asc
@@ -200,9 +204,6 @@ spec:
         
         echo "🏗️ Creating resource group (idempotent)..."
         az group create --name "$ARO_RESOURCE_GROUP" --location "$ARO_LOCATION" --query name -o tsv || echo "Resource group already exists"
-        
-        echo "📦 Installing make, libicu, and jq..."
-        dnf install -y make libicu jq
         
         # Deployment decision logic based on cluster existence
         if [[ "$CLUSTER_EXISTS" == "true" && "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then

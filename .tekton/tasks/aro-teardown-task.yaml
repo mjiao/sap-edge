@@ -33,6 +33,10 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
         
+        echo "📦 Installing required packages..."
+        # Install make, libicu, and jq first (needed for makefile operations)
+        dnf install -y make libicu jq
+        
         echo "📦 Installing Azure CLI..."
         # Install Azure CLI using the official Microsoft repository
         rpm --import https://packages.microsoft.com/keys/microsoft.asc

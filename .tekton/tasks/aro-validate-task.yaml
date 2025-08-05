@@ -45,7 +45,7 @@ spec:
         dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
         dnf clean all
         # Install required tools
-        dnf install -y azure-cli tar jq
+        dnf install -y azure-cli tar jq make libicu
 
         # Install OpenShift CLI
         echo "📦 Installing OpenShift CLI..."
