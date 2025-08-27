@@ -15,7 +15,10 @@ metadata:
 spec:
   pipelineRef:
     name: aro-endpoint-test-pipeline
-  timeout: 168h
+  timeouts:
+    pipeline: "168h"      # Total pipeline timeout (7 days)
+    tasks: "120m"         # Individual task timeout (2 hours)
+    finally: "30m"        # Finally tasks timeout
   params:
     - name: repoUrl
       value: "{{ repo_url }}"

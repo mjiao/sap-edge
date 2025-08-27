@@ -177,3 +177,154 @@ azure-services-deploy:  ## Deploy Azure services only (public access)
 		deployPostgres="${DEPLOY_POSTGRES}" \
 		deployRedis="${DEPLOY_REDIS}" \
 		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+
+.PHONY: aro-services-deploy-only
+aro-services-deploy-only:  ## Deploy only Azure services (PostgreSQL/Redis) for existing cluster
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME POSTGRES_ADMIN_PASSWORD)
+	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--template-file bicep/azure-services.bicep \
+		--parameters \
+		clusterName="${ARO_CLUSTER_NAME}" \
+		location="${ARO_LOCATION}" \
+		deployPostgres="${DEPLOY_POSTGRES}" \
+		deployRedis="${DEPLOY_REDIS}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+
+.PHONY: aro-cleanup-failed
+aro-cleanup-failed:  ## Force delete failed ARO cluster
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait
+
+.PHONY: aro-wait-for-ready
+aro-wait-for-ready:  ## Wait for ARO cluster to reach ready state
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@while true; do \
+		STATUS=$$(make aro-cluster-status | tail -1); \
+		echo "Cluster status: $$STATUS"; \
+		if [ "$$STATUS" = "Succeeded" ]; then \
+			echo "✅ Cluster is ready!"; \
+			break; \
+		elif [ "$$STATUS" = "Failed" ]; then \
+			echo "❌ Cluster deployment failed"; \
+			exit 1; \
+		else \
+			echo "⏳ Still provisioning... waiting 60 seconds"; \
+			sleep 60; \
+		fi; \
+	done
+
+.PHONY: aro-services-deploy-with-retry
+aro-services-deploy-with-retry:  ## Deploy Azure services with retry logic
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME POSTGRES_ADMIN_PASSWORD)
+	@RETRY_COUNT=0; \
+	MAX_RETRIES=3; \
+	while [ $$RETRY_COUNT -lt $$MAX_RETRIES ]; do \
+		if make aro-services-deploy-only; then \
+			echo "✅ Azure services deployment succeeded"; \
+			break; \
+		else \
+			RETRY_COUNT=$$((RETRY_COUNT + 1)); \
+			echo "❌ Deployment attempt $$RETRY_COUNT failed"; \
+			if [ $$RETRY_COUNT -lt $$MAX_RETRIES ]; then \
+				echo "⏳ Retrying in 30 seconds..."; \
+				sleep 30; \
+			else \
+				echo "💥 All deployment attempts failed"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+
+.PHONY: aro-final-safety-check
+aro-final-safety-check:  ## Final safety check before deployment to avoid conflicts
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@if az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1; then \
+		echo "⚠️ WARNING: Cluster detected during final check - skipping deployment to avoid conflicts"; \
+		echo "✅ ARO deployment completed successfully (cluster already exists)"; \
+		exit 0; \
+	else \
+		echo "🔍 Final safety check passed - no existing cluster found"; \
+	fi
+
+.PHONY: aro-get-kubeconfig
+aro-get-kubeconfig:  ## Get ARO kubeconfig with insecure TLS settings
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
+	@echo "🔐 Getting ARO kubeconfig..."
+	rm -f kubeconfig kubeconfig.backup
+	az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+	echo "🔧 Adding insecure TLS settings to kubeconfig..."
+	cp kubeconfig kubeconfig.backup
+	sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
+	echo "✅ Kubeconfig ready with insecure TLS settings"
+
+.PHONY: redis-get-info
+redis-get-info:  ## Get Redis cache connection information
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@REDIS_LIST=$$(make redis-exists | tail -1); \
+	if [[ -n "$$REDIS_LIST" ]]; then \
+		REDIS_CACHE_NAME=$$(echo "$$REDIS_LIST" | head -1); \
+		echo "Redis Cache Name: $$REDIS_CACHE_NAME"; \
+		echo "Redis Host: $$(az redis show --resource-group "${ARO_RESOURCE_GROUP}" --name "$$REDIS_CACHE_NAME" --query "hostName" -o tsv)"; \
+		echo "Redis Port: $$(az redis show --resource-group "${ARO_RESOURCE_GROUP}" --name "$$REDIS_CACHE_NAME" --query "port" -o tsv)"; \
+		echo "Redis SSL Port: $$(az redis show --resource-group "${ARO_RESOURCE_GROUP}" --name "$$REDIS_CACHE_NAME" --query "sslPort" -o tsv)"; \
+		echo "Redis Access Key: $$(az redis list-keys --resource-group "${ARO_RESOURCE_GROUP}" --name "$$REDIS_CACHE_NAME" --query "primaryKey" -o tsv)"; \
+	else \
+		echo "No Redis cache found"; \
+	fi
+
+.PHONY: postgres-delete
+postgres-delete:  ## Delete PostgreSQL flexible server
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@if az postgres flexible-server show --resource-group "${ARO_RESOURCE_GROUP}" --name "postgres-${ARO_CLUSTER_NAME}" >/dev/null 2>&1; then \
+		echo "🗑️ Deleting PostgreSQL server postgres-${ARO_CLUSTER_NAME}..."; \
+		az postgres flexible-server delete --resource-group "${ARO_RESOURCE_GROUP}" --name "postgres-${ARO_CLUSTER_NAME}" --yes; \
+		echo "✅ PostgreSQL server deletion initiated"; \
+	else \
+		echo "ℹ️ PostgreSQL server not found"; \
+	fi
+
+.PHONY: redis-delete
+redis-delete:  ## Delete Redis cache instances
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@REDIS_CACHES=$$(az redis list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?contains(name, 'redis-${ARO_CLUSTER_NAME}')].name" -o tsv); \
+	if [[ -n "$$REDIS_CACHES" ]]; then \
+		for redis_name in $$REDIS_CACHES; do \
+			echo "🗑️ Deleting Redis cache: $$redis_name"; \
+			az redis delete --resource-group "${ARO_RESOURCE_GROUP}" --name "$$redis_name" --yes; \
+		done; \
+		echo "✅ Redis cache deletion initiated"; \
+	else \
+		echo "ℹ️ Redis cache not found"; \
+	fi
+
+.PHONY: aro-resources-cleanup
+aro-resources-cleanup:  ## Clean up other ARO-related resources
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@ARO_RESOURCES=$$(az resource list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?contains(name, '${ARO_CLUSTER_NAME}') || (tags && tags.cluster && contains(tags.cluster, '${ARO_CLUSTER_NAME}'))].id" -o tsv); \
+	if [[ -n "$$ARO_RESOURCES" ]]; then \
+		echo "Found other ARO-related resources to delete:"; \
+		echo "$$ARO_RESOURCES"; \
+		az resource delete --resource-group "${ARO_RESOURCE_GROUP}" --ids $$ARO_RESOURCES --yes || echo "Some ARO resources may have already been deleted"; \
+		echo "✅ ARO resources cleanup completed"; \
+	else \
+		echo "ℹ️ No other ARO-related resources found"; \
+	fi
+
+.PHONY: aro-resource-group-create
+aro-resource-group-create:  ## Create resource group (idempotent)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_LOCATION)
+	@echo "🏗️ Creating resource group ${ARO_RESOURCE_GROUP}..."
+	az group create --name "${ARO_RESOURCE_GROUP}" --location "${ARO_LOCATION}" --query name -o tsv || echo "Resource group already exists"
+
+.PHONY: aro-resource-group-exists
+aro-resource-group-exists:  ## Check if resource group exists
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@az group show --name "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1
+
+.PHONY: aro-cleanup-all-services
+aro-cleanup-all-services:  ## Clean up all ARO services (PostgreSQL, Redis, other resources)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@echo "🧹 Cleaning up ARO-related resources..."
+	make postgres-delete
+	make redis-delete
+	make aro-resources-cleanup
