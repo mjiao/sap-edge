@@ -401,11 +401,11 @@ Create a secret containing your Azure service principal credentials, ARO resourc
 ```bash
 # Method 1: Using oc with literal values
 oc create secret generic azure-sp-secret \
-  --from-literal=clientId="your-client-id" \
-  --from-literal=clientSecret="your-client-secret" \
-  --from-literal=tenantId="your-tenant-id" \
-  --from-literal=aroResourceGroup="your-aro-resource-group" \
-  --from-literal=aroDomain="your-domain.com"
+  --from-literal=CLIENT_ID="your-client-id" \
+  --from-literal=CLIENT_SECRET="your-client-secret" \
+  --from-literal=TENANT_ID="your-tenant-id" \
+  --from-literal=ARO_RESOURCE_GROUP="your-aro-resource-group" \
+  --from-literal=ARO_DOMAIN="your-domain.com"
 
 # Method 2: Using YAML file
 cat <<EOF | oc apply -f -
@@ -415,11 +415,11 @@ metadata:
   name: azure-sp-secret
 type: Opaque
 stringData:
-  clientId: "your-client-id"
-  clientSecret: "your-client-secret"
-  tenantId: "your-tenant-id"
-  aroResourceGroup: "your-aro-resource-group"
-  aroDomain: "your-domain.com"
+  CLIENT_ID: "your-client-id"
+  CLIENT_SECRET: "your-client-secret"
+  TENANT_ID: "your-tenant-id"
+  ARO_RESOURCE_GROUP: "your-aro-resource-group"
+  ARO_DOMAIN: "your-domain.com"
 EOF
 ```
 
@@ -430,11 +430,11 @@ Create a secret containing your Red Hat pull secret:
 ```bash
 # Method 1: Using oc with file
 oc create secret generic redhat-pull-secret \
-  --from-file=pullSecret=path/to/pull-secret.txt
+  --from-file=PULL_SECRET=path/to/pull-secret.txt
 
 # Method 2: Using oc with literal (single line JSON)
 oc create secret generic redhat-pull-secret \
-  --from-literal=pullSecret='{"auths":{"registry.redhat.io":{"auth":"..."}}}'
+  --from-literal=PULL_SECRET='{"auths":{"registry.redhat.io":{"auth":"..."}}}'
 
 # Method 3: Using YAML file
 cat <<EOF | oc apply -f -
@@ -444,7 +444,7 @@ metadata:
   name: redhat-pull-secret
 type: Opaque
 stringData:
-  pullSecret: |
+  PULL_SECRET: |
     {
       "auths": {
         "registry.redhat.io": {

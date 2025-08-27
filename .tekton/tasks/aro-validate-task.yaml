@@ -26,6 +26,7 @@ spec:
   steps:
     - name: validate-and-get-access
       image: registry.access.redhat.com/ubi9/ubi
+      timeout: "30m"       # Validation should be quick
       workingDir: $(workspaces.source.path)
       env:
         - name: ARO_CLUSTER_NAME
@@ -51,11 +52,7 @@ spec:
         echo "📦 Installing OpenShift CLI..."
         curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz -C /usr/local/bin oc
         
-        # Use values from azure-sp-secret and map to uppercase for bicep.makefile
-        export ARO_RESOURCE_GROUP="$aroResourceGroup"
-        export CLIENT_ID="$clientId"
-        export CLIENT_SECRET="$clientSecret"
-        export TENANT_ID="$tenantId"
+        # Environment variables are now directly available from secrets (no conversion needed)
         
         echo "🔐 Logging into Azure..."
         make azure-login
@@ -111,16 +108,8 @@ spec:
         
         # Generate kubeconfig
         echo "📄 Generating kubeconfig..."
-        # Ensure any previous kubeconfig is removed
-        rm -f kubeconfig kubeconfig.backup
-        az aro get-admin-kubeconfig --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --file kubeconfig
-        
-        echo "🔧 Adding insecure TLS settings to kubeconfig..."
-        # Create a backup of the original kubeconfig
-        cp kubeconfig kubeconfig.backup
-        
-        # Add insecure-skip-tls-verify: true to the cluster configuration
-        sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
+        # Get kubeconfig with insecure TLS settings
+        make aro-get-kubeconfig
         
         echo "✅ Kubeconfig generated and configured with insecure TLS!"
         echo "📁 Kubeconfig saved to: $(pwd)/kubeconfig"
@@ -171,37 +160,8 @@ spec:
         REDIS_ACCESS_KEY=""
         REDIS_CONNECTION_STRING=""
         
-        REDIS_LIST=$(make redis-exists | tail -1)
-        if [[ -n "$REDIS_LIST" ]]; then
-          REDIS_CACHE_NAME=$(echo "$REDIS_LIST" | head -1)
-          REDIS_HOST_NAME=$(az redis show \
-            --resource-group "$ARO_RESOURCE_GROUP" \
-            --name "$REDIS_CACHE_NAME" \
-            --query "hostName" -o tsv)
-          REDIS_PORT=$(az redis show \
-            --resource-group "$ARO_RESOURCE_GROUP" \
-            --name "$REDIS_CACHE_NAME" \
-            --query "port" -o tsv)
-          REDIS_SSL_PORT=$(az redis show \
-            --resource-group "$ARO_RESOURCE_GROUP" \
-            --name "$REDIS_CACHE_NAME" \
-            --query "sslPort" -o tsv)
-          
-          # Try to get Redis access key
-          REDIS_ACCESS_KEY=$(az redis list-keys \
-            --resource-group "$ARO_RESOURCE_GROUP" \
-            --name "$REDIS_CACHE_NAME" \
-            --query "primaryKey" -o tsv 2>/dev/null || echo "")
-          
-          # Build Redis connection string if we have the access key
-          if [[ -n "$REDIS_ACCESS_KEY" ]]; then
-            REDIS_CONNECTION_STRING="redis://:${REDIS_ACCESS_KEY}@${REDIS_HOST_NAME}:${REDIS_SSL_PORT}"
-          fi
-          
-          echo "✅ Found Redis cache: $REDIS_CACHE_NAME"
-        else
-          echo "⚠️ Redis cache not found with prefix: redis-${ARO_CLUSTER_NAME}"
-        fi
+        # Get Redis connection information
+        make redis-get-info
         
         echo ""
         echo "📋 ==================================="
