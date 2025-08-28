@@ -7,7 +7,7 @@
 ARO_RESOURCE_GROUP?=aro-sapeic
 ARO_LOCATION?=northeurope
 
-ARO_CLUSTER_NAME?=aro-sapeic
+ARO_CLUSTER_NAME?=sapeic
 ARO_DOMAIN?=saponrhel.org
 ARO_VERSION?=4.15.35
 
@@ -319,18 +319,29 @@ aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 			echo "🔄 Proceeding with new deployment..."; \
 		fi; \
 	elif [ "$$EXISTING_STATE" = "Succeeded" ]; then \
-		echo "✅ Found successful existing deployment. Skipping new deployment."; \
-		exit 0; \
+		echo "🔍 Found successful deployment record. Checking if cluster actually exists..."; \
+		if make aro-cluster-exists | tail -1 | grep -q "true"; then \
+			echo "✅ ARO cluster exists. Skipping new deployment."; \
+			exit 0; \
+		else \
+			echo "⚠️  Deployment succeeded but cluster was deleted. Proceeding with new deployment..."; \
+		fi; \
 	fi
-	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+	@echo "🔐 Preparing secure deployment parameters..."
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
+	TEMP_PARAMS=$$(mktemp); \
+	echo "{ \
+		\"servicePrincipalClientId\": { \"value\": \"${CLIENT_ID}\" }, \
+		\"servicePrincipalClientSecret\": { \"value\": \"${CLIENT_SECRET}\" }, \
+		\"pullSecret\": { \"value\": \"$$PULL_SECRET_BASE64\" }, \
+		\"postgresAdminPassword\": { \"value\": \"${POSTGRES_ADMIN_PASSWORD}\" } \
+	}" > $$TEMP_PARAMS; \
+	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
 		--name aro-deploy \
 		--template-file bicep/aro.bicep \
 		--parameters @bicep/test.parameters.json \
-		--parameters \
-		servicePrincipalClientId="${CLIENT_ID}" \
-		servicePrincipalClientSecret="${CLIENT_SECRET}" \
-		pullSecret="${PULL_SECRET}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+		--parameters @$$TEMP_PARAMS; \
+	rm -f $$TEMP_PARAMS
 
 .PHONY: aro-services-deploy-test
 aro-services-deploy-test:  ## Deploy only Azure services with test settings
@@ -401,26 +412,36 @@ aro-cost-estimate:  ## Get cost estimate for test deployment
 aro-validate-test-config:  ## Validate test configuration before deployment
 	@echo "🔍 Validating test deployment configuration..."
 	@echo "=============================================="
-	@az deployment group validate --resource-group ${ARO_RESOURCE_GROUP} \
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
+	TEMP_PARAMS=$$(mktemp); \
+	echo "{ \
+		\"servicePrincipalClientId\": { \"value\": \"${CLIENT_ID}\" }, \
+		\"servicePrincipalClientSecret\": { \"value\": \"${CLIENT_SECRET}\" }, \
+		\"pullSecret\": { \"value\": \"$$PULL_SECRET_BASE64\" }, \
+		\"postgresAdminPassword\": { \"value\": \"${POSTGRES_ADMIN_PASSWORD}\" } \
+	}" > $$TEMP_PARAMS; \
+	az deployment group validate --resource-group ${ARO_RESOURCE_GROUP} \
 		--template-file bicep/aro.bicep \
 		--parameters @bicep/test.parameters.json \
-		--parameters \
-		servicePrincipalClientId="${CLIENT_ID}" \
-		servicePrincipalClientSecret="${CLIENT_SECRET}" \
-		pullSecret="${PULL_SECRET}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}" \
-		--query "error" -o table
+		--parameters @$$TEMP_PARAMS \
+		--query "error" -o table; \
+	rm -f $$TEMP_PARAMS
 	@echo "✅ Configuration validation completed"
 
 .PHONY: aro-what-if-test
 aro-what-if-test:  ## Preview what resources will be created/modified
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
 	@echo "🔮 What-if analysis for test deployment..."
-	@az deployment group what-if --resource-group ${ARO_RESOURCE_GROUP} \
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
+	TEMP_PARAMS=$$(mktemp); \
+	echo "{ \
+		\"servicePrincipalClientId\": { \"value\": \"${CLIENT_ID}\" }, \
+		\"servicePrincipalClientSecret\": { \"value\": \"${CLIENT_SECRET}\" }, \
+		\"pullSecret\": { \"value\": \"$$PULL_SECRET_BASE64\" }, \
+		\"postgresAdminPassword\": { \"value\": \"${POSTGRES_ADMIN_PASSWORD}\" } \
+	}" > $$TEMP_PARAMS; \
+	az deployment group what-if --resource-group ${ARO_RESOURCE_GROUP} \
 		--template-file bicep/aro.bicep \
 		--parameters @bicep/test.parameters.json \
-		--parameters \
-		servicePrincipalClientId="${CLIENT_ID}" \
-		servicePrincipalClientSecret="${CLIENT_SECRET}" \
-		pullSecret="${PULL_SECRET}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+		--parameters @$$TEMP_PARAMS; \
+	rm -f $$TEMP_PARAMS
