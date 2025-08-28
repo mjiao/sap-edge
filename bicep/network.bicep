@@ -4,13 +4,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+@description('Azure region for deployment')
+param location string = resourceGroup().location
+
 param vnetName string = '${resourceGroup().name}-vnet'
 param masterSubnetName string = 'master'
 param workerSubnetName string = 'worker'
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' = {
   name: vnetName
-  location: resourceGroup().location
+  location: location
   properties: {
     addressSpace: {
       addressPrefixes: [
