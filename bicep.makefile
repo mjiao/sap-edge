@@ -16,23 +16,15 @@ DEPLOY_POSTGRES?=true
 DEPLOY_REDIS?=true
 POSTGRES_ADMIN_PASSWORD?=
 
-.PHONY: aro-deploy
-.ONESHELL:
-aro-deploy: domain-zone-exists network-deploy  ## Deploy ARO
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME ARO_DOMAIN ARO_VERSION CLIENT_ID CLIENT_SECRET)
-	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0)
-	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
-		--template-file bicep/aro.bicep \
-		--parameters \
-		clusterName="${ARO_CLUSTER_NAME}" \
-		pullSecret="$$PULL_SECRET_BASE64" \
-		domain="${ARO_CLUSTER_NAME}.${ARO_DOMAIN}" \
-		version="${ARO_VERSION}" \
-		servicePrincipalClientId="${CLIENT_ID}" \
-		servicePrincipalClientSecret="${CLIENT_SECRET}" \
-		deployPostgres="${DEPLOY_POSTGRES}" \
-		deployRedis="${DEPLOY_REDIS}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+.PHONY: install-bicep
+install-bicep:
+	az config set bicep.use_binary_from_path=false && az bicep install && az bicep version
+
+.PHONY: lint-bicep
+lint-bicep: install-bicep ## Run bicep lint
+	az bicep lint --file bicep/aro.bicep
+	az bicep lint --file bicep/domain-records.bicep
+
 
 .PHONY: domain-records
 .ONESHELL:
@@ -119,10 +111,8 @@ arorp-service-principal:  ## Assign required roles to "Azure Red Hat Openshift" 
 
 
 
-aro-url:  ## Get ARO URL
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@az aro show --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query "apiserverProfile.url" -o tsv
 
+.PHONY: aro-services-info
 aro-services-info:  ## Get Azure services information
 	$(call required-environment-variables,ARO_RESOURCE_GROUP)
 	@echo "=== Azure Services Information ==="
@@ -166,29 +156,6 @@ aro-delete-resources:  ## Delete all resources in the ARO resource group
 
 
 
-.PHONY: azure-services-deploy
-azure-services-deploy:  ## Deploy Azure services only (public access)
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME POSTGRES_ADMIN_PASSWORD)
-	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
-		--template-file bicep/azure-services.bicep \
-		--parameters \
-		clusterName="${ARO_CLUSTER_NAME}" \
-		location="${ARO_LOCATION}" \
-		deployPostgres="${DEPLOY_POSTGRES}" \
-		deployRedis="${DEPLOY_REDIS}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
-
-.PHONY: aro-services-deploy-only
-aro-services-deploy-only:  ## Deploy only Azure services (PostgreSQL/Redis) for existing cluster
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME POSTGRES_ADMIN_PASSWORD)
-	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
-		--template-file bicep/azure-services.bicep \
-		--parameters \
-		clusterName="${ARO_CLUSTER_NAME}" \
-		location="${ARO_LOCATION}" \
-		deployPostgres="${DEPLOY_POSTGRES}" \
-		deployRedis="${DEPLOY_REDIS}" \
-		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
 
 .PHONY: aro-cleanup-failed
 aro-cleanup-failed:  ## Force delete failed ARO cluster
@@ -219,7 +186,7 @@ aro-services-deploy-with-retry:  ## Deploy Azure services with retry logic
 	@RETRY_COUNT=0; \
 	MAX_RETRIES=3; \
 	while [ $$RETRY_COUNT -lt $$MAX_RETRIES ]; do \
-		if make aro-services-deploy-only; then \
+		if make aro-services-deploy-test; then \
 			echo "✅ Azure services deployment succeeded"; \
 			break; \
 		else \
@@ -328,3 +295,111 @@ aro-cleanup-all-services:  ## Clean up all ARO services (PostgreSQL, Redis, othe
 	make postgres-delete
 	make redis-delete
 	make aro-resources-cleanup
+
+# Testing-optimized deployment targets
+.PHONY: aro-deploy-test
+aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
+	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
+	@echo "🧪 Deploying ARO cluster with test-optimized settings..."
+	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--name aro-deploy \
+		--template-file bicep/aro.bicep \
+		--parameters @bicep/test.parameters.json \
+		--parameters \
+		servicePrincipalClientId="${CLIENT_ID}" \
+		servicePrincipalClientSecret="${CLIENT_SECRET}" \
+		pullSecret="${PULL_SECRET}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+
+.PHONY: aro-services-deploy-test
+aro-services-deploy-test:  ## Deploy only Azure services with test settings
+	$(call required-environment-variables,ARO_RESOURCE_GROUP POSTGRES_ADMIN_PASSWORD)
+	@echo "🧪 Deploying Azure services with test-optimized settings..."
+	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--name azure-services-deploy \
+		--template-file bicep/azure-services.bicep \
+		--parameters @bicep/azure-services.test.parameters.json \
+		--parameters \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"
+
+.PHONY: aro-test-info
+aro-test-info:  ## Get test cluster connection and service information
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@echo "🧪 Test Cluster Information:"
+	@echo "=========================="
+	@az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy \
+		--query "properties.outputs.quickConnectionInfo.value" -o json | jq -r '
+		"Cluster Info:",
+		"  Name: " + .cluster.name,
+		"  API Server: " + .cluster.apiServerUrl,
+		"  Console: " + .cluster.consoleUrl,
+		"  Version: " + .cluster.version,
+		"",
+		"Quick Commands:",
+		"  Get Kubeconfig: " + .commands.getKubeconfig,
+		"  Get Credentials: " + .commands.getCredentials,
+		"",
+		if .services.postgres then
+			"PostgreSQL:",
+			"  Server: " + .services.postgres.serverName,
+			"  FQDN: " + .services.postgres.serverFqdn,
+			"  Database: " + .services.postgres.databaseName,
+			"  Connect: " + .services.postgres.connectCommand,
+			""
+		else "" end,
+		if .services.redis then
+			"Redis:",
+			"  Cache: " + .services.redis.cacheName,
+			"  Host: " + .services.redis.hostName,
+			"  Port: " + (.services.redis.port | tostring),
+			"  SSL Port: " + (.services.redis.sslPort | tostring),
+			"  Get Keys: " + .services.redis.getKeysCommand,
+			""
+		else "" end,
+		"Testing Info:",
+		"  Auto Shutdown: " + (.testing.autoShutdown | tostring),
+		"  Shutdown Time: " + .testing.shutdownTime,
+		"  Cleanup: " + .testing.cleanupCommand
+		'
+
+.PHONY: aro-cost-estimate
+aro-cost-estimate:  ## Get cost estimate for test deployment
+	@echo "💰 Estimated Monthly Costs for Test Configuration:"
+	@echo "================================================="
+	@echo "ARO Cluster (3 workers, D4s_v3): ~$1,200-1,500/month"
+	@echo "PostgreSQL (Standard_B1ms): ~$15-25/month"
+	@echo "Redis (Basic C0): ~$16-20/month"
+	@echo "Total Estimated: ~$1,250-1,550/month"
+	@echo ""
+	@echo "💡 Cost Optimization Tips:"
+	@echo "- Use 'make aro-cleanup-all-services' when not testing"
+	@echo "- Consider hibernating cluster overnight (manual process)"
+	@echo "- Monitor usage with: az consumption usage list"
+
+.PHONY: aro-validate-test-config
+aro-validate-test-config:  ## Validate test configuration before deployment
+	@echo "🔍 Validating test deployment configuration..."
+	@echo "=============================================="
+	@az deployment group validate --resource-group ${ARO_RESOURCE_GROUP} \
+		--template-file bicep/aro.bicep \
+		--parameters @bicep/test.parameters.json \
+		--parameters \
+		servicePrincipalClientId="${CLIENT_ID}" \
+		servicePrincipalClientSecret="${CLIENT_SECRET}" \
+		pullSecret="${PULL_SECRET}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}" \
+		--query "error" -o table
+	@echo "✅ Configuration validation completed"
+
+.PHONY: aro-what-if-test
+aro-what-if-test:  ## Preview what resources will be created/modified
+	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
+	@echo "🔮 What-if analysis for test deployment..."
+	@az deployment group what-if --resource-group ${ARO_RESOURCE_GROUP} \
+		--template-file bicep/aro.bicep \
+		--parameters @bicep/test.parameters.json \
+		--parameters \
+		servicePrincipalClientId="${CLIENT_ID}" \
+		servicePrincipalClientSecret="${CLIENT_SECRET}" \
+		pullSecret="${PULL_SECRET}" \
+		postgresAdminPassword="${POSTGRES_ADMIN_PASSWORD}"

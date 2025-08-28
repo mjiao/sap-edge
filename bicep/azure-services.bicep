@@ -25,26 +25,42 @@ param postgresAdminUsername string = 'eicadmin'
 @secure()
 param postgresAdminPassword string
 
-@description('PostgreSQL SKU name (dev mode: Standard_B1ms)')
+@description('PostgreSQL SKU name (cost-optimized for testing)')
+@allowed(['Standard_B1ms', 'Standard_B2s', 'Standard_D2s_v3'])
 param postgresSkuName string = 'Standard_B1ms'
 
-@description('PostgreSQL tier (dev mode: Burstable)')
+@description('PostgreSQL tier (cost-optimized for testing)')
+@allowed(['Burstable', 'GeneralPurpose'])
 param postgresTier string = 'Burstable'
 
-@description('PostgreSQL storage size in GB')
+@description('PostgreSQL storage size in GB (minimal for testing)')
+@minValue(32)
+@maxValue(128)
 param postgresStorageSize int = 32
 
 @description('PostgreSQL version')
+@allowed(['13', '14', '15', '16'])
 param postgresVersion string = '15'
 
 @description('Redis cache name (auto-generated if not provided)')
 param redisCacheName string = ''
 
-@description('Redis SKU (dev mode: Basic)')
+@description('Redis SKU (cost-optimized for testing)')
+@allowed(['Basic', 'Standard'])
 param redisSku string = 'Basic'
 
-@description('Redis size (dev mode: C0)')
+@description('Redis size (minimal for testing)')
+@allowed(['C0', 'C1', 'C2'])
 param redisSize string = 'C0'
+
+@description('Testing-specific tags for resource management')
+param testingTags object = {
+  purpose: 'testing'
+  team: 'sap-edge'
+  autoCleanup: 'enabled'
+  maxLifetime: '7days'
+  costOptimized: 'true'
+}
 
 // Variables
 var postgresServerNameFinal = empty(postgresServerName) ? 'postgres-${clusterName}' : postgresServerName
@@ -54,6 +70,10 @@ var redisCacheNameFinal = empty(redisCacheName) ? 'redis-${clusterName}' : redis
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = if (deployPostgres) {
   name: postgresServerNameFinal
   location: location
+  tags: union(testingTags, {
+    service: 'postgresql'
+    clusterName: clusterName
+  })
   sku: {
     name: postgresSkuName
     tier: postgresTier
@@ -99,6 +119,10 @@ resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2
 resource redisCache 'Microsoft.Cache/redis@2023-08-01' = if (deployRedis) {
   name: redisCacheNameFinal
   location: location
+  tags: union(testingTags, {
+    service: 'redis'
+    clusterName: clusterName
+  })
   properties: {
     sku: {
       name: redisSku
@@ -111,15 +135,15 @@ resource redisCache 'Microsoft.Cache/redis@2023-08-01' = if (deployRedis) {
 }
 
 // Outputs
-output postgresServerName string = deployPostgres && !empty(postgresServerNameFinal) ? postgresServer.name : ''
-output postgresServerFqdn string = deployPostgres && !empty(postgresServerNameFinal) ? postgresServer.properties.fullyQualifiedDomainName : ''
+output postgresServerName string = deployPostgres ? postgresServer.name : ''
+output postgresServerFqdn string = deployPostgres ? postgresServer.properties.fullyQualifiedDomainName : ''
 output postgresAdminUsername string = deployPostgres ? postgresAdminUsername : ''
 output postgresDatabaseName string = deployPostgres ? 'eic' : ''
 
-output redisCacheName string = deployRedis && !empty(redisCacheNameFinal) ? redisCache.name : ''
-output redisHostName string = deployRedis && !empty(redisCacheNameFinal) ? redisCache.properties.hostName : ''
-output redisPort int = deployRedis && !empty(redisCacheNameFinal) ? redisCache.properties.port : 0
-output redisSslPort int = deployRedis && !empty(redisCacheNameFinal) ? redisCache.properties.sslPort : 0
+output redisCacheName string = deployRedis ? redisCache.name : ''
+output redisHostName string = deployRedis ? redisCache.properties.hostName : ''
+output redisPort int = deployRedis ? redisCache.properties.port : 0
+output redisSslPort int = deployRedis ? redisCache.properties.sslPort : 0
 
 // Connection strings (without passwords - get from Azure portal)
 output postgresConnectionString string = deployPostgres ? 'postgresql://${postgresAdminUsername}:[PASSWORD]@${postgresServerNameFinal}.postgres.database.azure.com:5432/eic?sslmode=require' : ''

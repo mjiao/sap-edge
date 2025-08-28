@@ -233,7 +233,7 @@ spec:
             * *Location:* $(params.aroLocation)
             * *ARO Version:* $(params.aroVersion)
             * *PostgreSQL Deployment:* $(params.deployPostgres)
-            * *Redis Deployment:* $(params.deployRedis)
+            * *Redis Deployment:* $(params.deployRedis) 
 
             *Pipeline Status:*
             * Repository cloned: ✅
