@@ -49,7 +49,7 @@ resource-group:  ## Create resource group
 .PHONY: azure-login
 azure-login:  ## Login to Azure using service principal
 	$(call required-environment-variables,CLIENT_ID CLIENT_SECRET TENANT_ID)
-	az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
+	@az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
 
 .PHONY: azure-set-subscription
 azure-set-subscription:  ## Set Azure subscription to current account
@@ -301,7 +301,28 @@ aro-cleanup-all-services:  ## Clean up all ARO services (PostgreSQL, Redis, othe
 aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
 	@echo "🧪 Deploying ARO cluster with test-optimized settings..."
-	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+	@echo "🔍 Checking for existing deployment..."
+	@EXISTING_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound"); \
+	if [ "$$EXISTING_STATE" = "Running" ]; then \
+		echo "⏳ Found existing deployment in progress. Waiting for it to complete..."; \
+		echo "💡 If you want to cancel it, run: az deployment group cancel --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy"; \
+		while [ "$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null)" = "Running" ]; do \
+			echo "⏳ Still running... checking again in 60 seconds"; \
+			sleep 60; \
+		done; \
+		FINAL_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null); \
+		if [ "$$FINAL_STATE" = "Succeeded" ]; then \
+			echo "✅ Previous deployment completed successfully!"; \
+			exit 0; \
+		else \
+			echo "❌ Previous deployment failed with state: $$FINAL_STATE"; \
+			echo "🔄 Proceeding with new deployment..."; \
+		fi; \
+	elif [ "$$EXISTING_STATE" = "Succeeded" ]; then \
+		echo "✅ Found successful existing deployment. Skipping new deployment."; \
+		exit 0; \
+	fi
+	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
 		--name aro-deploy \
 		--template-file bicep/aro.bicep \
 		--parameters @bicep/test.parameters.json \
@@ -315,7 +336,7 @@ aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 aro-services-deploy-test:  ## Deploy only Azure services with test settings
 	$(call required-environment-variables,ARO_RESOURCE_GROUP POSTGRES_ADMIN_PASSWORD)
 	@echo "🧪 Deploying Azure services with test-optimized settings..."
-	az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+	@az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
 		--name azure-services-deploy \
 		--template-file bicep/azure-services.bicep \
 		--parameters @bicep/azure-services.test.parameters.json \
