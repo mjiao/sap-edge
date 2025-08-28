@@ -324,7 +324,7 @@ oc create secret generic azure-postgres-admin-password \
   --from-literal=password="your-secure-password"
 
 # Deploy ARO with Azure services
-make aro-deploy
+make aro-deploy-test
 ```
 
 #### Bicep Configuration
@@ -349,13 +349,13 @@ oc create secret generic azure-postgres-admin-password \
   --from-literal=password="your-secure-password"
 
 # Deploy ARO with Azure services
-make aro-deploy DEPLOY_POSTGRES=true DEPLOY_REDIS=true POSTGRES_ADMIN_PASSWORD="your-password"
+make aro-deploy-test POSTGRES_ADMIN_PASSWORD="your-password"
 
 # Get Azure services information
 make aro-services-info
 
-# Deploy only ARO (without Azure services)
-make aro-deploy DEPLOY_POSTGRES=false DEPLOY_REDIS=false
+# Deploy only ARO (without Azure services - modify test parameters)
+make aro-deploy-test POSTGRES_ADMIN_PASSWORD="your-password"
 ```
 
 ## Pipeline Structure
@@ -366,7 +366,7 @@ The ARO pipeline consists of several Tekton tasks and a complete pipeline defini
 
 | Task Name | Purpose | Location |
 |-----------|---------|----------|
-| `aro-deploy` | Deploys ARO cluster with Azure services via Bicep | `.tekton/tasks/aro-deploy-task.yaml` |
+| `aro-deploy-test` | Deploys ARO cluster with cost-optimized test settings | `.tekton/tasks/aro-deploy-task.yaml` |
 | `aro-validate-and-get-access` | Validates cluster, generates kubeconfig, and retrieves Azure services info | `.tekton/tasks/aro-validate-and-get-access-task.yaml` |
 | `aro-teardown` | Cleans up ARO cluster and resources | `.tekton/tasks/aro-teardown-task.yaml` |
 | `aro-cleanup-failed` | Handles cleanup of failed deployments | `.tekton/tasks/aro-cleanup-failed-task.yaml` |

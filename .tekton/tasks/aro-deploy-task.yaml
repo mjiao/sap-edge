@@ -184,7 +184,7 @@ spec:
           echo "🔍 Final safety check before deployment..."
           make aro-final-safety-check
           
-          make aro-deploy
+          make aro-deploy-test
 
           echo "🔄 Creating domain records for ARO..."
           make domain-records

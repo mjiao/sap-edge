@@ -1,0 +1,46 @@
+{
+  "// SPDX-FileCopyrightText": "2024 SAP edge team",
+  "// SPDX-License-Identifier": "Apache-2.0",
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "clusterName": {
+      "value": "aro-test"
+    },
+    "deployPostgres": {
+      "value": true
+    },
+    "deployRedis": {
+      "value": true
+    },
+    "postgresSkuName": {
+      "value": "Standard_B1ms"
+    },
+    "postgresTier": {
+      "value": "Burstable"
+    },
+    "postgresStorageSize": {
+      "value": 32
+    },
+    "postgresVersion": {
+      "value": "15"
+    },
+    "redisSku": {
+      "value": "Basic"
+    },
+    "redisSize": {
+      "value": "C0"
+    },
+    "testingTags": {
+      "value": {
+        "purpose": "testing",
+        "team": "sap-edge",
+        "autoCleanup": "enabled",
+        "maxLifetime": "7days",
+        "costOptimized": "true",
+        "environment": "test",
+        "owner": "sap-edge-team"
+      }
+    }
+  }
+}
