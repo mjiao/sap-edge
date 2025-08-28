@@ -5,7 +5,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "clusterName": {
-      "value": "aro-test"
+      "value": "sapeic"
     },
     "deployPostgres": {
       "value": true

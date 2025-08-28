@@ -5,10 +5,10 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "clusterName": {
-      "value": "aro-test"
+      "value": "sapeic"
     },
     "domain": {
-      "value": "aro-test.saponrhel.org"
+      "value": "sapeic.saponrhel.org"
     },
     "version": {
       "value": "4.17.27"

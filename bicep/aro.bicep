@@ -88,7 +88,7 @@ resource aroCluster 'Microsoft.RedHatOpenShift/openShiftClusters@2023-11-22' = {
     clusterProfile: {
       domain: domain
       pullSecret: base64ToString(pullSecret)
-      resourceGroupId: resourceId('Microsoft.Resources/resourceGroups', aroResourceGroup)
+      resourceGroupId: '/subscriptions/${subscription().subscriptionId}/resourceGroups/${aroResourceGroup}'
       version: version
       fipsValidatedModules: 'Disabled'
     }
