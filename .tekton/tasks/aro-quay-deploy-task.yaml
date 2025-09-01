@@ -1,0 +1,150 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-quay-deploy
+spec:
+  description: Deploy Quay registry on ARO cluster with Azure storage
+  params:
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: setup-environment
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_ID
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_SECRET
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: TENANT_ID
+        - name: ARO_RESOURCE_GROUP
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_RESOURCE_GROUP
+        - name: ARO_CLUSTER_NAME
+          value: $(params.aroClusterName)
+        - name: ARO_LOCATION
+          value: "northeurope"
+        - name: QUAY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: password
+        - name: QUAY_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: email
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🚀 Starting Quay registry deployment on ARO..."
+        
+        # Install required tools
+        echo "📦 Installing required tools..."
+        dnf update -y
+        dnf install -y curl jq make
+        
+        # Install Azure CLI
+        echo "📦 Installing Azure CLI..."
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/8/packages-microsoft-prod.rpm
+        dnf install -y azure-cli
+        
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+        mv oc kubectl /usr/local/bin/
+        
+        # Login to Azure
+        echo "🔐 Logging into Azure..."
+        az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
+        az account set --subscription "$(az account show --query id -o tsv)"
+        
+        # Get ARO credentials and login to cluster
+        echo "🔐 Getting ARO credentials..."
+        az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        # Verify cluster access
+        echo "✅ Verifying cluster access..."
+        oc get nodes
+        
+        # Note: This pipeline deploys ARO without PostgreSQL/Redis since they're not needed
+        echo "ℹ️  Note: ARO deployed without Azure PostgreSQL/Redis services for this use case"
+        
+        # Step 1: Create Azure storage for Quay
+        echo "🏗️ Creating Azure storage for Quay..."
+        make aro-quay-storage-create
+        
+        # Extract storage info for environment variables
+        echo "📋 Getting storage account information..."
+        STORAGE_ACCOUNTS=$(az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].name" -o tsv)
+        if [ -z "$STORAGE_ACCOUNTS" ]; then
+          echo "❌ No Quay storage account found"
+          exit 1
+        fi
+        
+        # Use the first (and should be only) storage account
+        AZURE_STORAGE_ACCOUNT_NAME=$(echo "$STORAGE_ACCOUNTS" | head -1)
+        AZURE_STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group "${ARO_RESOURCE_GROUP}" --account-name "$AZURE_STORAGE_ACCOUNT_NAME" --query "[0].value" -o tsv)
+        export AZURE_STORAGE_ACCOUNT_NAME
+        export AZURE_STORAGE_ACCOUNT_KEY
+        export AZURE_STORAGE_CONTAINER="quay-registry"
+        
+        echo "✅ Storage configuration:"
+        echo "  Account: $AZURE_STORAGE_ACCOUNT_NAME"
+        echo "  Container: $AZURE_STORAGE_CONTAINER"
+        
+        # Step 2: Deploy Quay with complete automation
+        echo "🚀 Deploying Quay registry with complete automation..."
+        make aro-quay-deploy-complete
+        
+        # Step 3: Create admin user
+        echo "👤 Creating Quay admin user..."
+        make aro-quay-create-admin
+        
+        # Step 4: Get final status and information
+        echo "📋 Getting Quay registry information..."
+        make aro-quay-info
+        
+        echo "✅ Quay registry deployment completed successfully!"
+        
+        # Save deployment info to workspace for next tasks
+        cat > quay-deployment-info.txt << EOF
+        AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME}
+        AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
+        ARO_CLUSTER_NAME=${ARO_CLUSTER_NAME}
+        ARO_RESOURCE_GROUP=${ARO_RESOURCE_GROUP}
+        QUAY_DEPLOYMENT_STATUS=SUCCESS
+        EOF
+        
+        echo "💾 Deployment information saved to quay-deployment-info.txt"

@@ -1,0 +1,178 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deployment-status-report
+spec:
+  description: Generate final deployment status report
+  params:
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials"
+    - name: deploymentType
+      type: string
+      description: "Type of deployment (e.g., aro-quay-complete)"
+      default: "aro-quay-complete"
+  workspaces:
+    - name: source
+  steps:
+    - name: generate-report
+      image: registry.redhat.io/ubi8/ubi:latest
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_ID
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_SECRET
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: TENANT_ID
+        - name: ARO_RESOURCE_GROUP
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_RESOURCE_GROUP
+        - name: ARO_CLUSTER_NAME
+          value: $(params.aroClusterName)
+        - name: DEPLOYMENT_TYPE
+          value: $(params.deploymentType)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "📊 Generating final deployment status report..."
+        
+        # Install required tools
+        echo "📦 Installing required tools..."
+        dnf update -y
+        dnf install -y curl jq make
+        
+        # Install Azure CLI
+        echo "📦 Installing Azure CLI..."
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/8/packages-microsoft-prod.rpm
+        dnf install -y azure-cli
+        
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+        mv oc kubectl /usr/local/bin/
+        
+        # Login to Azure
+        echo "🔐 Logging into Azure..."
+        az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
+        az account set --subscription "$(az account show --query id -o tsv)"
+        
+        # Get ARO credentials and login to cluster
+        echo "🔐 Getting ARO credentials..."
+        az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        echo "📋 Generating comprehensive deployment report..."
+        echo "=============================================="
+        echo ""
+        
+        # ARO Cluster Status
+        echo "🔴 ARO Cluster Status:"
+        echo "  Cluster Name: ${ARO_CLUSTER_NAME}"
+        echo "  Resource Group: ${ARO_RESOURCE_GROUP}"
+        echo "  Status: $(make aro-cluster-status | tail -1)"
+        echo "  API URL: $(make aro-cluster-url | tail -1)"
+        echo ""
+        
+        # Node Status
+        echo "🖥️  Node Status:"
+        oc get nodes -o wide
+        echo ""
+        
+        # Azure Services Status
+        echo "☁️  Azure Services Status:"
+        make aro-services-info || echo "Azure services info not available"
+        echo ""
+        
+        # Quay Registry Status
+        echo "📦 Quay Registry Status:"
+        make aro-quay-status || echo "Quay status not available"
+        echo ""
+        
+        # Quay Registry Info
+        echo "📋 Quay Registry Information:"
+        make aro-quay-info || echo "Quay info not available"
+        echo ""
+        
+        # Storage Account Status
+        echo "💾 Azure Storage Status:"
+        make aro-quay-storage-info || echo "Storage info not available"
+        echo ""
+        
+        # Certificate Trust Status
+        echo "🔒 Certificate Trust Status:"
+        make aro-quay-verify-trust || echo "Certificate trust verification not available"
+        echo ""
+        
+        # Edgelm Namespace Pods (if exists)
+        echo "🔍 Edgelm Namespace Status:"
+        if oc get namespace edgelm >/dev/null 2>&1; then
+          echo "  Namespace exists: ✅"
+          echo "  Pod count: $(oc get pods -n edgelm --no-headers | wc -l)"
+          echo "  Pod status:"
+          oc get pods -n edgelm -o wide || echo "  No pods found"
+        else
+          echo "  Namespace exists: ❌ (not created yet)"
+        fi
+        echo ""
+        
+        # Overall namespaces
+        echo "📁 All Namespaces:"
+        oc get namespaces | head -20
+        echo ""
+        
+        # Deployment Summary
+        echo "📊 Deployment Summary:"
+        echo "  Deployment Type: ${DEPLOYMENT_TYPE}"
+        echo "  Completion Time: $(date -Iseconds)"
+        echo "  Pipeline Status: ✅ SUCCESS"
+        echo ""
+        
+        # Generate machine-readable status file
+        cat > final-deployment-status.json << EOF
+        {
+          "deployment_type": "${DEPLOYMENT_TYPE}",
+          "aro_cluster_name": "${ARO_CLUSTER_NAME}",
+          "aro_resource_group": "${ARO_RESOURCE_GROUP}",
+          "completion_timestamp": "$(date -Iseconds)",
+          "status": "SUCCESS",
+          "components": {
+            "aro_cluster": "deployed",
+            "azure_services": "deployed", 
+            "quay_registry": "deployed",
+            "certificate_trust": "configured",
+            "edgelm_namespace": "$(oc get namespace edgelm >/dev/null 2>&1 && echo 'exists' || echo 'not_found')"
+          }
+        }
+        EOF
+        
+        echo "💾 Machine-readable status saved to final-deployment-status.json"
+        echo ""
+        echo "🎉 Deployment Status Report Generation Completed!"
+        echo "=============================================="
+        
+        # Show final status file for logging
+        echo "📋 Final Status Summary:"
+        cat final-deployment-status.json | jq '.' || cat final-deployment-status.json

@@ -408,6 +408,285 @@ aro-cost-estimate:  ## Get cost estimate for test deployment
 	@echo "- Consider hibernating cluster overnight (manual process)"
 	@echo "- Monitor usage with: az consumption usage list"
 
+# Azure Storage for Quay Registry
+.PHONY: aro-quay-storage-create
+aro-quay-storage-create:  ## Create Azure storage account for Quay registry
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@echo "🏗️ Creating Azure storage account for Quay registry..."
+	@STORAGE_ACCOUNT_NAME="quay$${ARO_CLUSTER_NAME}$$(date +%s | tail -c 6)"; \
+	echo "Storage account name: $$STORAGE_ACCOUNT_NAME"; \
+	az storage account create \
+		--name "$$STORAGE_ACCOUNT_NAME" \
+		--resource-group "${ARO_RESOURCE_GROUP}" \
+		--location "${ARO_LOCATION}" \
+		--sku Standard_LRS \
+		--kind StorageV2 \
+		--access-tier Hot \
+		--tags purpose=quay cluster="${ARO_CLUSTER_NAME}" team=sap-edge; \
+	STORAGE_KEY=$$(az storage account keys list --resource-group "${ARO_RESOURCE_GROUP}" --account-name "$$STORAGE_ACCOUNT_NAME" --query "[0].value" -o tsv); \
+	az storage container create \
+		--name "quay-registry" \
+		--account-name "$$STORAGE_ACCOUNT_NAME" \
+		--account-key "$$STORAGE_KEY"; \
+	echo ""; \
+	echo "✅ Azure storage created successfully!"; \
+	echo "📋 Storage Configuration:"; \
+	echo "   Account Name: $$STORAGE_ACCOUNT_NAME"; \
+	echo "   Container: quay-registry"; \
+	echo "   Resource Group: ${ARO_RESOURCE_GROUP}"; \
+	echo ""; \
+	echo "🔑 Set these environment variables for Quay deployment:"; \
+	echo "   export AZURE_STORAGE_ACCOUNT_NAME=$$STORAGE_ACCOUNT_NAME"; \
+	echo "   export AZURE_STORAGE_ACCOUNT_KEY=$$STORAGE_KEY"; \
+	echo "   export AZURE_STORAGE_CONTAINER=quay-registry"
+
+.PHONY: aro-quay-storage-info
+aro-quay-storage-info:  ## Get Azure storage account information for Quay
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@echo "📋 Quay Azure Storage Accounts:"
+	@echo "==============================="
+	@az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{Name:name,Location:location,Cluster:tags.cluster}" -o table
+
+.PHONY: aro-quay-storage-delete
+aro-quay-storage-delete:  ## Delete Azure storage account for Quay (requires AZURE_STORAGE_ACCOUNT_NAME)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME)
+	@echo "🗑️ Deleting Azure storage account for Quay..."
+	@echo "⚠️  This will permanently delete all registry data!"
+	@read -p "Are you sure? Type 'yes' to confirm: " confirm; \
+	if [ "$$confirm" = "yes" ]; then \
+		az storage account delete \
+			--name "${AZURE_STORAGE_ACCOUNT_NAME}" \
+			--resource-group "${ARO_RESOURCE_GROUP}" \
+			--yes; \
+		echo "✅ Storage account deleted"; \
+	else \
+		echo "❌ Deletion cancelled"; \
+	fi
+
+# ARO Quay Registry deployment targets
+.PHONY: aro-quay-deploy
+aro-quay-deploy:  ## Deploy Quay registry operator and instance on ARO with Azure storage
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME AZURE_STORAGE_ACCOUNT_KEY AZURE_STORAGE_CONTAINER)
+	@echo "📦 Deploying Quay registry operator on ARO cluster..."
+	oc apply -f edge-integration-cell/quay-registry/quay-operator-subscription.yaml
+	@echo "⏳ Waiting for Quay operator to be ready..."
+	@timeout 300 bash -c 'until oc get csv -n openshift-operators | grep -q "quay-operator.*Succeeded"; do echo "Waiting for operator..."; sleep 10; done'
+	@echo "🔧 Creating Quay configuration with Azure storage..."
+	@TEMP_CONFIG=$$(mktemp); \
+	sed 's/AZURE_STORAGE_ACCOUNT_NAME_PLACEHOLDER/${AZURE_STORAGE_ACCOUNT_NAME}/g; s/AZURE_STORAGE_ACCOUNT_KEY_PLACEHOLDER/${AZURE_STORAGE_ACCOUNT_KEY}/g; s/AZURE_STORAGE_CONTAINER_PLACEHOLDER/${AZURE_STORAGE_CONTAINER}/g' \
+		edge-integration-cell/quay-registry/quay-config-secret.yaml > $$TEMP_CONFIG; \
+	oc apply -f $$TEMP_CONFIG; \
+	rm -f $$TEMP_CONFIG
+	@echo "🚀 Creating Quay registry instance..."
+	oc apply -f edge-integration-cell/quay-registry/quay-registry.yaml
+	@echo "✅ Quay deployment initiated on ARO"
+
+.PHONY: aro-quay-wait-ready
+aro-quay-wait-ready:  ## Wait for Quay registry to be ready on ARO
+	@echo "⏳ Waiting for Quay registry to be ready on ARO..."
+	@timeout 600 bash -c 'until oc get pods -n openshift-operators | grep -E "test-registry-.*Running" | wc -l | grep -q "[5-9]"; do echo "Waiting for Quay pods..."; sleep 30; done'
+	@echo "⏳ Waiting for Quay registry endpoint to be available..."
+	@timeout 300 bash -c 'until oc get quayregistry test-registry -o json 2>/dev/null | jq -r ".status.registryEndpoint // \"\"" | grep -q "https://"; do echo "Waiting for endpoint..."; sleep 10; done'
+	@echo "✅ Quay registry is ready on ARO!"
+
+.PHONY: aro-quay-info
+aro-quay-info:  ## Get Quay registry connection information on ARO
+	@echo "📋 ARO Quay Registry Information:"
+	@echo "================================="
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json 2>/dev/null | jq -r '.status.registryEndpoint // "Not ready"'); \
+	if [ "$$ENDPOINT" != "Not ready" ]; then \
+		REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+		echo "Registry Endpoint: $$ENDPOINT"; \
+		echo "Registry Host: $$REGISTRY"; \
+		echo "Admin User Path: $$REGISTRY/quayadmin"; \
+		echo ""; \
+		echo "🔑 Create admin user:"; \
+		echo "make aro-quay-create-admin"; \
+		echo ""; \
+		echo "🔒 Trust certificate:"; \
+		echo "make aro-quay-trust-cert"; \
+	else \
+		echo "❌ Quay registry not ready yet"; \
+	fi
+
+.PHONY: aro-quay-create-admin
+aro-quay-create-admin:  ## Create Quay admin user on ARO
+	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
+	@echo "👤 Creating Quay admin user on ARO..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json | jq -r '.status.registryEndpoint'); \
+	USER_CREATION_ENDPOINT="$$ENDPOINT/api/v1/user/initialize"; \
+	echo "Creating user at: $$USER_CREATION_ENDPOINT"; \
+	curl -X POST -k "$$USER_CREATION_ENDPOINT" \
+		--header 'Content-Type: application/json' \
+		--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
+		--fail --show-error || echo "User may already exist"
+	@echo "✅ Admin user creation completed on ARO"
+
+.PHONY: aro-quay-trust-cert
+aro-quay-trust-cert:  ## Configure ARO to trust Quay registry certificate
+	@echo "🔒 Configuring ARO to trust Quay registry certificate..."
+	@echo "📋 Getting Quay registry endpoint..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json | jq -r '.status.registryEndpoint'); \
+	if [ "$$ENDPOINT" = "null" ] || [ -z "$$ENDPOINT" ]; then \
+		echo "❌ Quay registry endpoint not ready. Run 'make aro-quay-wait-ready' first."; \
+		exit 1; \
+	fi; \
+	REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+	echo "Registry hostname: $$REGISTRY"; \
+	echo "🔑 Extracting OpenShift ingress CA certificate..."; \
+	caBundle="$$(oc get -n openshift-ingress-operator -o json secret/router-ca | jq -r '.data as $$d | $$d | keys[] | select(test("\\.(?:crt|pem)$$")) | $$d[.] | @base64d')"; \
+	if [ -z "$$caBundle" ]; then \
+		echo "❌ Failed to extract CA certificate"; \
+		exit 1; \
+	fi; \
+	echo "$$caBundle" > quay-registry.crt; \
+	echo "📝 Configuring cluster image registry trust..."; \
+	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"')"; \
+	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null; then \
+		echo "Updating existing configmap: $$cmName"; \
+		oc get -o json -n openshift-config "cm/$$cmName" | \
+			jq '.data["'"$${REGISTRY//:/..}"'"] |= "'"$$caBundle"'"' | \
+			oc replace -f - --force; \
+	else \
+		echo "Creating new configmap: $$cmName"; \
+		oc create configmap -n openshift-config "$$cmName" \
+			--from-literal="$${REGISTRY//:/..}=$$caBundle"; \
+		oc patch images.config.openshift.io cluster --type=merge \
+			-p '{"spec":{"additionalTrustedCA":{"name":"'"$$cmName"'"}}}'; \
+	fi; \
+	echo "✅ Certificate trust configured for $$REGISTRY"; \
+	echo ""; \
+	echo "⚠️  Note: OpenShift nodes may need to restart to pick up the new CA bundle."; \
+	echo "🔍 Use 'make aro-quay-verify-trust' to test the configuration."
+
+.PHONY: aro-quay-test-login
+aro-quay-test-login:  ## Test login to ARO Quay registry (requires podman/docker)
+	@echo "🧪 Testing Quay registry login on ARO..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json | jq -r '.status.registryEndpoint'); \
+	REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+	echo "Testing login to: $$REGISTRY/quayadmin"; \
+	echo "Use podman login $$REGISTRY/quayadmin or docker login $$REGISTRY/quayadmin"
+
+.PHONY: aro-quay-verify-trust
+aro-quay-verify-trust:  ## Verify that ARO trusts the Quay registry certificate
+	@echo "🔍 Verifying Quay registry certificate trust..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json | jq -r '.status.registryEndpoint'); \
+	if [ "$$ENDPOINT" = "null" ] || [ -z "$$ENDPOINT" ]; then \
+		echo "❌ Quay registry endpoint not ready"; \
+		exit 1; \
+	fi; \
+	REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+	echo "Testing connection to: $$REGISTRY"; \
+	echo ""; \
+	echo "📋 Checking ConfigMap configuration..."; \
+	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"')"; \
+	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null | grep -q "$${REGISTRY//:/..}"; then \
+		echo "✅ Registry found in CA ConfigMap: $$cmName"; \
+	else \
+		echo "❌ Registry not found in CA ConfigMap"; \
+		echo "Run 'make aro-quay-trust-cert' to configure trust"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "🧪 Testing HTTPS connection..."; \
+	if curl -s --max-time 10 "$$ENDPOINT/health/instance" >/dev/null 2>&1; then \
+		echo "✅ HTTPS connection successful"; \
+	else \
+		echo "⚠️  HTTPS connection failed (this may be normal if nodes haven't restarted)"; \
+	fi; \
+	echo ""; \
+	echo "📊 Node trust status:"; \
+	echo "To check if all nodes have picked up the CA bundle, run:"; \
+	echo "  oc get nodes -o wide"; \
+	echo "  # Check if any nodes are in NotReady state"; \
+	echo ""; \
+	echo "🔧 If trust verification fails:"; \
+	echo "1. Ensure nodes have restarted to pick up new CA bundle"; \
+	echo "2. Check: oc get mcp -o wide"; \
+	echo "3. If needed, trigger node restart: oc patch mcp worker --type merge -p '{\"spec\":{\"paused\":false}}'"; \
+	echo "✅ Certificate trust verification completed"
+
+.PHONY: aro-quay-deploy-complete
+aro-quay-deploy-complete:  ## Complete Quay deployment with storage, registry, and trust configuration
+	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME AZURE_STORAGE_ACCOUNT_KEY AZURE_STORAGE_CONTAINER)
+	@echo "🚀 Starting complete Quay deployment on ARO..."
+	@echo "Step 1/5: Deploying Quay operator and instance..."
+	make aro-quay-deploy
+	@echo ""
+	@echo "Step 2/5: Waiting for Quay to be ready..."
+	make aro-quay-wait-ready
+	@echo ""
+	@echo "Step 3/5: Configuring certificate trust..."
+	make aro-quay-trust-cert
+	@echo ""
+	@echo "Step 4/5: Getting connection information..."
+	make aro-quay-info
+	@echo ""
+	@echo "Step 5/5: Verifying trust configuration..."
+	make aro-quay-verify-trust
+	@echo ""
+	@echo "🎉 Complete Quay deployment finished!"
+	@echo "📋 Next steps:"
+	@echo "1. Create admin user: make aro-quay-create-admin (requires QUAY_ADMIN_PASSWORD, QUAY_ADMIN_EMAIL)"
+	@echo "2. Test login: make aro-quay-test-login"
+	@echo "3. If trust verification failed, wait for nodes to restart or trigger restart manually"
+
+.PHONY: aro-quay-status
+aro-quay-status:  ## Check Quay deployment status on ARO
+	@echo "📊 ARO Quay Registry Status:"
+	@echo "============================"
+	@echo "Operator CSV:"
+	@oc get csv -n openshift-operators | grep quay-operator || echo "No operator found"
+	@echo ""
+	@echo "Quay Registry:"
+	@oc get quayregistry -n openshift-operators || echo "No registry found"
+	@echo ""
+	@echo "Quay Pods:"
+	@oc get pods -n openshift-operators | grep test-registry || echo "No Quay pods found"
+
+.PHONY: aro-quay-delete
+aro-quay-delete:  ## Delete Quay registry and operator from ARO
+	@echo "🗑️ Deleting Quay registry from ARO..."
+	oc delete quayregistry test-registry -n openshift-operators --ignore-not-found=true
+	@echo "⏳ Waiting for Quay pods to terminate..."
+	@timeout 120 bash -c 'while oc get pods -n openshift-operators | grep -q test-registry; do echo "Waiting..."; sleep 10; done' || echo "Timeout waiting for pods"
+	@echo "🗑️ Deleting Quay operator..."
+	oc delete subscription quay-operator -n openshift-operators --ignore-not-found=true
+	oc delete csv -n openshift-operators -l operators.coreos.com/quay-operator.openshift-operators --ignore-not-found=true
+	@echo "🧹 Cleaning up secrets and configmaps..."
+	oc delete secret config-bundle-secret -n openshift-operators --ignore-not-found=true
+	@echo "✅ Quay cleanup completed on ARO"
+
+# Generic Quay Registry targets (work on any cluster with oc context)
+.PHONY: quay-deploy-generic
+quay-deploy-generic:  ## Deploy Quay registry on current oc context (generic)
+	@echo "📦 Deploying Quay registry operator (generic)..."
+	oc apply -f edge-integration-cell/quay-registry/quay-operator-subscription.yaml
+	@echo "⏳ Waiting for Quay operator to be ready..."
+	@timeout 300 bash -c 'until oc get csv -n openshift-operators | grep -q "quay-operator.*Succeeded"; do echo "Waiting for operator..."; sleep 10; done'
+	@echo "🔧 Creating Quay configuration..."
+	oc apply -f edge-integration-cell/quay-registry/quay-config-secret.yaml
+	@echo "🚀 Creating Quay registry instance..."
+	oc apply -f edge-integration-cell/quay-registry/quay-registry.yaml
+	@echo "✅ Quay deployment initiated (generic)"
+
+.PHONY: quay-info-generic
+quay-info-generic:  ## Get Quay registry connection information (generic)
+	@echo "📋 Quay Registry Information (Generic):"
+	@echo "======================================="
+	@ENDPOINT=$$(oc get quayregistry test-registry -o json 2>/dev/null | jq -r '.status.registryEndpoint // "Not ready"'); \
+	if [ "$$ENDPOINT" != "Not ready" ]; then \
+		REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+		echo "Registry Endpoint: $$ENDPOINT"; \
+		echo "Registry Host: $$REGISTRY"; \
+		echo "Admin User Path: $$REGISTRY/quayadmin"; \
+		echo ""; \
+		echo "🔑 Create admin user with QUAY_ADMIN_PASSWORD and QUAY_ADMIN_EMAIL set"; \
+		echo "🔒 Configure certificate trust as needed"; \
+	else \
+		echo "❌ Quay registry not ready yet"; \
+	fi
+
 .PHONY: aro-validate-test-config
 aro-validate-test-config:  ## Validate test configuration before deployment
 	@echo "🔍 Validating test deployment configuration..."
