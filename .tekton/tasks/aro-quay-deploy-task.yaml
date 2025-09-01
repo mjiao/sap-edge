@@ -25,7 +25,7 @@ spec:
     - name: source
   steps:
     - name: setup-environment
-      image: registry.redhat.io/ubi8/ubi:latest
+      image: registry.access.redhat.com/ubi9/ubi
       workingDir: $(workspaces.source.path)
       env:
         - name: CLIENT_ID
@@ -70,14 +70,17 @@ spec:
         
         # Install required tools
         echo "📦 Installing required tools..."
-        dnf update -y
-        dnf install -y curl jq make
+        # Install make, libicu, and jq first (needed for makefile operations and Bicep)
+        dnf install -y make libicu jq
         
         # Install Azure CLI
         echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
         rpm --import https://packages.microsoft.com/keys/microsoft.asc
-        dnf install -y https://packages.microsoft.com/config/rhel/8/packages-microsoft-prod.rpm
-        dnf install -y azure-cli
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
         
         # Install OpenShift CLI
         echo "📦 Installing OpenShift CLI..."
@@ -86,8 +89,7 @@ spec:
         
         # Login to Azure
         echo "🔐 Logging into Azure..."
-        az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
-        az account set --subscription "$(az account show --query id -o tsv)"
+        make azure-login
         
         # Get ARO credentials and login to cluster
         echo "🔐 Getting ARO credentials..."
@@ -98,8 +100,8 @@ spec:
         echo "✅ Verifying cluster access..."
         oc get nodes
         
-        # Note: This pipeline deploys ARO without PostgreSQL/Redis since they're not needed
-        echo "ℹ️  Note: ARO deployed without Azure PostgreSQL/Redis services for this use case"
+        # Note: ARO cluster should already be deployed by the deploy-aro task
+        echo "ℹ️  Note: Using existing ARO cluster for Quay deployment"
         
         # Step 1: Create Azure storage for Quay
         echo "🏗️ Creating Azure storage for Quay..."

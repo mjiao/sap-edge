@@ -165,20 +165,32 @@ aro-cleanup-failed:  ## Force delete failed ARO cluster
 .PHONY: aro-wait-for-ready
 aro-wait-for-ready:  ## Wait for ARO cluster to reach ready state
 	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
-	@while true; do \
-		STATUS=$$(make aro-cluster-status | tail -1); \
-		echo "Cluster status: $$STATUS"; \
-		if [ "$$STATUS" = "Succeeded" ]; then \
-			echo "✅ Cluster is ready!"; \
-			break; \
-		elif [ "$$STATUS" = "Failed" ]; then \
-			echo "❌ Cluster deployment failed"; \
-			exit 1; \
+	@WAIT_COUNT=0; \
+	MAX_WAIT=120; \
+	while [ $$WAIT_COUNT -lt $$MAX_WAIT ]; do \
+		if STATUS=$$(az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --query "provisioningState" -o tsv 2>/dev/null); then \
+			echo "Cluster status: $$STATUS"; \
+			if [ "$$STATUS" = "Succeeded" ]; then \
+				echo "✅ Cluster is ready!"; \
+				break; \
+			elif [ "$$STATUS" = "Failed" ]; then \
+				echo "❌ Cluster deployment failed"; \
+				exit 1; \
+			else \
+				echo "⏳ Still provisioning... waiting 60 seconds ($$WAIT_COUNT/$$MAX_WAIT)"; \
+			fi; \
 		else \
-			echo "⏳ Still provisioning... waiting 60 seconds"; \
-			sleep 60; \
+			echo "❌ Cluster '${ARO_CLUSTER_NAME}' not found in resource group '${ARO_RESOURCE_GROUP}'"; \
+			echo "💡 The cluster may have failed to deploy or was deleted"; \
+			exit 1; \
 		fi; \
-	done
+		sleep 60; \
+		WAIT_COUNT=$$((WAIT_COUNT + 1)); \
+	done; \
+	if [ $$WAIT_COUNT -ge $$MAX_WAIT ]; then \
+		echo "❌ Timeout waiting for cluster to be ready after $$((MAX_WAIT * 60)) seconds"; \
+		exit 1; \
+	fi
 
 .PHONY: aro-services-deploy-with-retry
 aro-services-deploy-with-retry:  ## Deploy Azure services with retry logic
@@ -297,6 +309,60 @@ aro-cleanup-all-services:  ## Clean up all ARO services (PostgreSQL, Redis, othe
 	make aro-resources-cleanup
 
 # Testing-optimized deployment targets
+.PHONY: aro-deploy-only
+aro-deploy-only:  ## Deploy ARO cluster only (no PostgreSQL/Redis services)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET)
+	@echo "🧪 Deploying ARO cluster only (no Azure services)..."
+	@echo "🔍 Checking for existing deployment..."
+	@EXISTING_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound"); \
+	if [ "$$EXISTING_STATE" = "Running" ]; then \
+		echo "⏳ Found existing deployment in progress. Waiting for it to complete..."; \
+		echo "💡 If you want to cancel it, run: az deployment group cancel --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy"; \
+		while [ "$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null)" = "Running" ]; do \
+			echo "⏳ Still running... checking again in 60 seconds"; \
+			sleep 60; \
+		done; \
+		FINAL_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy --query "properties.provisioningState" -o tsv 2>/dev/null); \
+		if [ "$$FINAL_STATE" = "Succeeded" ]; then \
+			echo "✅ Previous deployment completed successfully!"; \
+			exit 0; \
+		else \
+			echo "❌ Previous deployment failed with state: $$FINAL_STATE"; \
+			echo "🔄 Proceeding with new deployment..."; \
+		fi; \
+	elif [ "$$EXISTING_STATE" = "Succeeded" ]; then \
+		echo "🔍 Found successful deployment record. Checking if cluster actually exists..."; \
+		if make aro-cluster-exists | tail -1 | grep -q "true"; then \
+			echo "✅ ARO cluster exists. Skipping new deployment."; \
+			exit 0; \
+		else \
+			echo "⚠️  Deployment succeeded but cluster was deleted. Proceeding with new deployment..."; \
+		fi; \
+	fi
+	@echo "🔐 Preparing secure deployment parameters..."
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
+	TEMP_PARAMS=$$(mktemp); \
+	echo "{ \
+		\"servicePrincipalClientId\": { \"value\": \"${CLIENT_ID}\" }, \
+		\"servicePrincipalClientSecret\": { \"value\": \"${CLIENT_SECRET}\" }, \
+		\"pullSecret\": { \"value\": \"$$PULL_SECRET_BASE64\" }, \
+		\"deployPostgres\": { \"value\": false }, \
+		\"deployRedis\": { \"value\": false } \
+	}" > $$TEMP_PARAMS; \
+	echo "🚀 Starting Bicep deployment..."; \
+	if az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--name aro-deploy \
+		--template-file bicep/aro.bicep \
+		--parameters @bicep/test.parameters.json \
+		--parameters @$$TEMP_PARAMS; then \
+		echo "✅ Bicep deployment completed successfully"; \
+	else \
+		echo "❌ Bicep deployment failed"; \
+		rm -f $$TEMP_PARAMS; \
+		exit 1; \
+	fi; \
+	rm -f $$TEMP_PARAMS
+
 .PHONY: aro-deploy-test
 aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
