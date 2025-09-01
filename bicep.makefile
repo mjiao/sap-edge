@@ -49,7 +49,9 @@ resource-group:  ## Create resource group
 .PHONY: azure-login
 azure-login:  ## Login to Azure using service principal
 	$(call required-environment-variables,CLIENT_ID CLIENT_SECRET TENANT_ID)
-	@az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}"
+	@echo "🔐 Logging into Azure with service principal..."
+	@az login --service-principal -u "${CLIENT_ID}" -p "${CLIENT_SECRET}" --tenant "${TENANT_ID}" > /dev/null 2>&1 || { echo "❌ Azure login failed"; exit 1; }
+	@echo "✅ Azure login successful"
 
 .PHONY: azure-set-subscription
 azure-set-subscription:  ## Set Azure subscription to current account
