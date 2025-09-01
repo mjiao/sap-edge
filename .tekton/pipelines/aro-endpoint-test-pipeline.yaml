@@ -74,7 +74,7 @@ spec:
 
     - name: deploy-aro
       runAfter: [fetch-repository]
-      taskRef: { name: aro-deploy }
+      taskRef: { name: aro-deploy-with-eic-services }
       params:
         - name: aroLocation
           value: $(params.aroLocation)

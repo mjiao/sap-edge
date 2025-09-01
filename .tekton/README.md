@@ -39,7 +39,8 @@ This directory contains Tekton CI/CD pipeline definitions for SAP Edge Integrati
 ## Tasks
 
 ### Core Deployment Tasks
-- `aro-deploy`: Deploy ARO cluster using Bicep templates
+- `aro-deploy-with-eic-services`: Deploy ARO cluster with EIC services (PostgreSQL and Redis) using Bicep templates
+- `aro-deploy-only`: Deploy ARO cluster only (without PostgreSQL and Redis) using Bicep templates
 - `aro-validate-and-get-access`: Validate ARO deployment and configure access
 - `aro-teardown`: Clean up ARO cluster and resources
 

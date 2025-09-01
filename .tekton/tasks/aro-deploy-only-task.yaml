@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-deploy-only
+spec:
+  description: Deploy ARO cluster only (no PostgreSQL/Redis services)
+  params:
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-aro-only
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_ID
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_SECRET
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: TENANT_ID
+        - name: ARO_RESOURCE_GROUP
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_RESOURCE_GROUP
+        - name: ARO_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_DOMAIN
+        - name: PULL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.pullSecretName)
+              key: PULL_SECRET
+        - name: ARO_LOCATION
+          value: $(params.aroLocation)
+        - name: ARO_CLUSTER_NAME
+          value: $(params.aroClusterName)
+        - name: ARO_VERSION
+          value: $(params.aroVersion)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🚀 Starting ARO cluster deployment (no PostgreSQL/Redis)..."
+        
+        # Install required tools
+        echo "📦 Installing required tools..."
+        # Install make, libicu, and jq first (needed for makefile operations and Bicep)
+        dnf install -y make libicu jq
+        
+        # Install Azure CLI
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
+        
+        # Login to Azure
+        echo "🔐 Logging into Azure..."
+        make azure-login
+        
+        echo "📋 ARO Deployment Configuration:"
+        echo "  Cluster Name: ${ARO_CLUSTER_NAME}"
+        echo "  Location: ${ARO_LOCATION}"
+        echo "  Version: ${ARO_VERSION}"
+        echo "  Resource Group: ${ARO_RESOURCE_GROUP}"
+        echo "  Domain: ${ARO_DOMAIN}"
+        echo "  PostgreSQL: false (not deployed)"
+        echo "  Redis: false (not deployed)"
+        echo ""
+        
+        # Check if resource group exists, create if needed
+        echo "🏗️ Ensuring resource group exists..."
+        make aro-resource-group-create
+        
+        # Deploy ARO cluster only (no PostgreSQL/Redis)
+        echo "🚀 Deploying ARO cluster only..."
+        if ! make aro-deploy-only; then
+          echo "❌ ARO cluster deployment failed"
+          exit 1
+        fi
+        
+        # Wait for cluster to be ready
+        echo "⏳ Waiting for ARO cluster to be ready..."
+        if ! make aro-wait-for-ready; then
+          echo "❌ ARO cluster failed to become ready"
+          exit 1
+        fi
+        
+        echo "✅ ARO cluster deployment completed successfully!"
+        
+        # Get cluster information
+        echo "📋 Getting cluster information..."
+        make aro-cluster-status
+        echo "API URL: $(make aro-cluster-url | tail -1)"
+        
+        # Save deployment info
+        cat > aro-deployment-info.txt << EOF
+        ARO_CLUSTER_NAME=${ARO_CLUSTER_NAME}
+        ARO_RESOURCE_GROUP=${ARO_RESOURCE_GROUP}
+        ARO_LOCATION=${ARO_LOCATION}
+        ARO_VERSION=${ARO_VERSION}
+        POSTGRES_DEPLOYED=false
+        REDIS_DEPLOYED=false
+        DEPLOYMENT_STATUS=SUCCESS
+        EOF
+        
+        echo "💾 ARO deployment information saved to aro-deployment-info.txt"

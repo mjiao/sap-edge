@@ -7,8 +7,9 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: aro-deploy
+  name: aro-deploy-with-eic-services
 spec:
+  description: Deploy ARO cluster with EIC services (PostgreSQL and Redis)
   params:
     - name: aroLocation
       type: string
@@ -44,7 +45,7 @@ spec:
   workspaces:
     - name: source
   steps:
-    - name: deploy-aro
+    - name: deploy-aro-with-eic-services
       image: registry.access.redhat.com/ubi9/ubi
       timeout: "120m"      # ARO deployment can take up to 2 hours
       workingDir: $(workspaces.source.path)
@@ -161,7 +162,7 @@ spec:
             fi
           fi
         else
-          echo "📋 No existing cluster found - will deploy full ARO cluster"
+          echo "📋 No existing cluster found - will deploy full ARO cluster with EIC services"
         fi
         
         echo "🏗️ Creating resource group (idempotent)..."
@@ -178,7 +179,7 @@ spec:
             echo "✅ Cluster exists and all services are ready - nothing to deploy!"
           fi
         else
-          echo "🚀 Deploying full ARO cluster with public services..."
+          echo "🚀 Deploying full ARO cluster with EIC services (PostgreSQL and Redis)..."
           
           # Final safety check - double-check cluster doesn't exist before deploying
           echo "🔍 Final safety check before deployment..."
@@ -190,4 +191,4 @@ spec:
           make domain-records
         fi
 
-        echo "✅ ARO deployment completed successfully!" 
+        echo "✅ ARO deployment with EIC services completed successfully!" 

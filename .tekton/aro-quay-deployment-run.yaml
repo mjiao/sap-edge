@@ -27,7 +27,7 @@ spec:
     - name: aroLocation
       value: "northeurope"
     - name: aroClusterName
-      value: "sapeic"
+      value: "sapelm-quay"
     - name: aroVersion
       value: "4.17.27"
     - name: azureSecretName
