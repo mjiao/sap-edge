@@ -1,0 +1,216 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: aro-quay-deployment-pipeline
+spec:
+  params:
+    - name: repoUrl
+      type: string
+    - name: revision
+      type: string
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
+    - name: jiraSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Jira credentials"
+    - name: jiraIssueKey
+      type: string
+      description: "Jira issue key to update with deployment results"
+  workspaces:
+    - name: source
+  tasks:
+    - name: fetch-repository
+      taskRef: { name: git-clone }
+      params:
+        - name: url
+          value: $(params.repoUrl)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: output
+          workspace: source
+
+    - name: deploy-aro
+      runAfter: [fetch-repository]
+      taskRef: { name: aro-deploy }
+      params:
+        - name: aroLocation
+          value: $(params.aroLocation)
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: aroVersion
+          value: $(params.aroVersion)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: pullSecretName
+          value: $(params.pullSecretName)
+        - name: deployPostgres
+          value: "false"
+        - name: deployRedis
+          value: "false"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: validate-and-get-access
+      runAfter: [deploy-aro]
+      taskRef: { name: aro-validate-and-get-access }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: deploy-quay
+      runAfter: [validate-and-get-access]
+      taskRef: { name: aro-quay-deploy }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: quayAdminPasswordSecretName
+          value: $(params.quayAdminPasswordSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Manual approval step after ARO and Quay deployment
+    - name: manual-approval-post-deployment
+      runAfter: [deploy-quay]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+        - name: description
+          value: "ARO cluster and Quay registry are deployed. Please verify the deployments and approve to proceed with edgelm namespace pod checks."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '168h'
+
+    - name: check-edgelm-pods
+      runAfter: [manual-approval-post-deployment]
+      taskRef: { name: edgelm-pod-status-check }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: namespace
+          value: "edgelm"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: update-jira-deployment-status
+      runAfter: [check-edgelm-pods]
+      taskRef:
+        name: jira-add-comment-custom
+      params:
+        - name: jiraSecretName
+          value: $(params.jiraSecretName)
+        - name: jiraIssueKey
+          value: $(params.jiraIssueKey)
+        - name: comment
+          value: |
+            h2. ✅ ARO + Quay Deployment Pipeline Completed
+
+            ARO cluster, Quay registry, and edgelm namespace pod validation have completed successfully.
+
+            *ARO Cluster Configuration:*
+            * *Cluster Name:* $(params.aroClusterName)
+            * *Location:* $(params.aroLocation)
+            * *ARO Version:* $(params.aroVersion)
+            * *PostgreSQL Deployment:* false (not required)
+            * *Redis Deployment:* false (not required)
+
+            *Deployment Status:*
+            * Repository cloned: ✅
+            * ARO deployment: ✅ Completed
+            * Validation and access setup: ✅ Completed
+            * Quay registry deployment: ✅ Completed
+            * Azure storage configuration: ✅ Completed
+            * Certificate trust configuration: ✅ Completed
+            * Edgelm namespace pod validation: ✅ Completed
+
+            *Infrastructure Components:*
+            * ARO cluster deployed and validated ✅
+            * Quay registry with Azure storage ✅
+            * OpenShift certificate trust configured ✅
+            * Kubeconfig and service access configured ✅
+            * All edgelm pods running/completed ✅
+
+            *Pipeline Details:*
+            * *Repository:* $(params.repoUrl)
+            * *Revision:* $(params.revision)
+
+            Ready for final approval or additional operations. The infrastructure is fully deployed and operational.
+
+    # Final manual approval step
+    - name: manual-approval-final
+      runAfter: [update-jira-deployment-status]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+        - name: description
+          value: "ARO cluster, Quay registry, and edgelm namespace validation completed successfully. Final approval for pipeline completion."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '168h'
+
+    - name: final-status-report
+      runAfter: [manual-approval-final]
+      taskRef: { name: deployment-status-report }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: deploymentType
+          value: "aro-quay-complete"
+      workspaces:
+        - name: source
+          workspace: source
