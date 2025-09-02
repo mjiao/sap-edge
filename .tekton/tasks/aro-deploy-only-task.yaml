@@ -98,6 +98,11 @@ spec:
         # Pin to a stable version to avoid HTTP client issues
         dnf install -y azure-cli-2.59.0
         
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+        mv oc kubectl /usr/local/bin/
+        
         # Login to Azure
         echo "🔐 Logging into Azure..."
         make azure-login
@@ -130,6 +135,23 @@ spec:
         fi
         
         echo "✅ ARO cluster deployment completed successfully!"
+        
+        # Get ARO credentials and login to cluster for configuration
+        echo "🔐 Getting ARO credentials..."
+        rm -f kubeconfig kubeconfig.backup
+        az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        echo "🔧 Adding insecure TLS settings to kubeconfig..."
+        cp kubeconfig kubeconfig.backup
+        sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        # Verify cluster access
+        echo "✅ Verifying cluster access..."
+        oc get nodes
+        
+        # Enable scheduling on master nodes
+        echo "🔧 Enabling scheduling on master nodes..."
+        make aro-enable-master-scheduling
         
         # Create domain records for ARO
         echo "🔄 Creating domain records for ARO..."
