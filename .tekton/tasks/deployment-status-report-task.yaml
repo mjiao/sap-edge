@@ -56,7 +56,7 @@ spec:
         #!/bin/bash
         set -euo pipefail
         
-        echo "📊 Generating final deployment status report..."
+        echo "📊 Generating final deployment status report for cluster: ${ARO_CLUSTER_NAME}"
         
         # Install required tools
         echo "📦 Installing required tools..."

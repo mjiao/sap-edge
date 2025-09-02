@@ -40,6 +40,7 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
         
+        echo "🔧 Validating ARO cluster: ${ARO_CLUSTER_NAME}"
         echo "📦 Installing dependencies..."
         # Install Azure CLI using the official Microsoft repository
         rpm --import https://packages.microsoft.com/keys/microsoft.asc

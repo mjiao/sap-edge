@@ -79,6 +79,11 @@ spec:
         
         echo "🚀 Starting ARO cluster deployment (no PostgreSQL/Redis)..."
         
+        echo "🔧 Using configuration:"
+        echo "  ARO_CLUSTER_NAME: ${ARO_CLUSTER_NAME}"
+        echo "  ARO_LOCATION: ${ARO_LOCATION}"
+        echo "  ARO_VERSION: ${ARO_VERSION}"
+        
         # Install required tools
         echo "📦 Installing required tools..."
         # Install make, libicu, and jq first (needed for makefile operations and Bicep)
@@ -97,7 +102,7 @@ spec:
         echo "🔐 Logging into Azure..."
         make azure-login
         
-        echo "📋 ARO Deployment Configuration:"
+        echo "📋 Complete ARO Deployment Configuration:"
         echo "  Cluster Name: ${ARO_CLUSTER_NAME}"
         echo "  Location: ${ARO_LOCATION}"
         echo "  Version: ${ARO_VERSION}"
@@ -105,7 +110,6 @@ spec:
         echo "  Domain: ${ARO_DOMAIN}"
         echo "  PostgreSQL: false (not deployed)"
         echo "  Redis: false (not deployed)"
-        echo ""
         
         # Check if resource group exists, create if needed
         echo "🏗️ Ensuring resource group exists..."
@@ -126,6 +130,10 @@ spec:
         fi
         
         echo "✅ ARO cluster deployment completed successfully!"
+        
+        # Create domain records for ARO
+        echo "🔄 Creating domain records for ARO..."
+        make domain-records
         
         # Get cluster information
         echo "📋 Getting cluster information..."

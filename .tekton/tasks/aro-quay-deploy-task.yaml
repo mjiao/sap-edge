@@ -67,6 +67,7 @@ spec:
         set -euo pipefail
         
         echo "🚀 Starting Quay registry deployment on ARO..."
+        echo "🔧 Using ARO cluster: ${ARO_CLUSTER_NAME} in ${ARO_LOCATION}"
         
         # Install required tools
         echo "📦 Installing required tools..."
