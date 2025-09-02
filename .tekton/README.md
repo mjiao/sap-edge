@@ -158,7 +158,7 @@ oc patch approvaltask <approval-task-name> --type=merge -p '{"spec":{"approved":
 ### Common Issues
 1. **Task timeouts**: Check individual task logs for specific failures
 2. **Secret not found**: Verify all required secrets are created
-3. **Azure authentication**: Check service principal permissions
+3. **Azure authentication**: Check service principal permissions 
 4. **Quay deployment fails**: Verify Azure storage account creation
 5. **Pod status check fails**: Check if edgelm namespace exists
 
