@@ -560,55 +560,70 @@ aro-quay-create-admin:  ## Create Quay admin user on ARO
 	USER_CREATION_ENDPOINT="$$ENDPOINT/api/v1/user/initialize"; \
 	echo "Registry endpoint: $$ENDPOINT"; \
 	echo "Creating user at: $$USER_CREATION_ENDPOINT"; \
-	echo "🔄 Attempting to create admin user..."; \
-	HTTP_CODE=$$(curl -X POST -k "$$USER_CREATION_ENDPOINT" \
-		--header 'Content-Type: application/json' \
-		--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
-		--write-out "%{http_code}" \
-		--output /tmp/quay_response.json \
-		--silent); \
-	case "$$HTTP_CODE" in \
-		200) \
-			echo "✅ Admin user created successfully"; \
-			echo "📋 User creation response:"; \
-			cat /tmp/quay_response.json | jq -r .; \
-			;; \
-		400) \
-			echo "ℹ️  Admin user already exists (HTTP 400)"; \
-			echo "✅ Admin user is available"; \
-			;; \
-		503) \
-			echo "⚠️  Quay service not ready yet (HTTP 503), retrying in 15 seconds..."; \
-			sleep 15; \
-			HTTP_CODE=$$(curl -X POST -k "$$USER_CREATION_ENDPOINT" \
-				--header 'Content-Type: application/json' \
-				--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
-				--write-out "%{http_code}" \
-				--output /tmp/quay_response.json \
-				--silent); \
-			case "$$HTTP_CODE" in \
-				200) \
-					echo "✅ Admin user created successfully on retry"; \
-					cat /tmp/quay_response.json | jq -r .; \
-					;; \
-				400) \
-					echo "ℹ️  Admin user already exists (HTTP 400)"; \
-					echo "✅ Admin user is available"; \
-					;; \
-				*) \
-					echo "❌ Failed to create admin user after retry (HTTP $$HTTP_CODE)"; \
+	echo "🔍 Checking pod status before user creation..."; \
+	RUNNING_PODS=$$(oc get pods -n openshift-operators | grep test-registry | grep Running | wc -l); \
+	echo "Running Quay pods: $$RUNNING_PODS"; \
+	if [ "$$RUNNING_PODS" -lt 5 ]; then \
+		echo "⚠️  Only $$RUNNING_PODS Quay pods running, waiting for more..."; \
+		echo "📋 Current pod status:"; \
+		oc get pods -n openshift-operators | grep test-registry; \
+	fi; \
+	echo "🔄 Attempting to create admin user with retries..."; \
+	for attempt in 1 2 3 4 5; do \
+		echo "Attempt $$attempt/5:"; \
+		HTTP_CODE=$$(curl -X POST -k "$$USER_CREATION_ENDPOINT" \
+			--header 'Content-Type: application/json' \
+			--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
+			--write-out "%{http_code}" \
+			--output /tmp/quay_response.json \
+			--silent \
+			--max-time 30); \
+		case "$$HTTP_CODE" in \
+			200) \
+				echo "✅ Admin user created successfully on attempt $$attempt"; \
+				echo "📋 User creation response:"; \
+				cat /tmp/quay_response.json | jq -r .; \
+				rm -f /tmp/quay_response.json; \
+				exit 0; \
+				;; \
+			400) \
+				echo "ℹ️  Admin user already exists (HTTP 400)"; \
+				echo "✅ Admin user is available"; \
+				rm -f /tmp/quay_response.json; \
+				exit 0; \
+				;; \
+			503) \
+				echo "⚠️  Quay service not ready yet (HTTP 503)"; \
+				if [ "$$attempt" -lt 5 ]; then \
+					echo "Waiting 30 seconds before retry..."; \
+					sleep 30; \
+				fi; \
+				;; \
+			000) \
+				echo "⚠️  Connection timeout or network error"; \
+				if [ "$$attempt" -lt 5 ]; then \
+					echo "Waiting 20 seconds before retry..."; \
+					sleep 20; \
+				fi; \
+				;; \
+			*) \
+				echo "⚠️  Unexpected response (HTTP $$HTTP_CODE)"; \
+				if [ "$$attempt" -lt 5 ]; then \
+					echo "Response body:"; \
 					cat /tmp/quay_response.json 2>/dev/null || echo "No response body"; \
-					exit 1; \
-					;; \
-			esac; \
-			;; \
-		*) \
-			echo "❌ Failed to create admin user (HTTP $$HTTP_CODE)"; \
-			cat /tmp/quay_response.json 2>/dev/null || echo "No response body"; \
-			exit 1; \
-			;; \
-	esac; \
-	rm -f /tmp/quay_response.json
+					echo "Waiting 20 seconds before retry..."; \
+					sleep 20; \
+				fi; \
+				;; \
+		esac; \
+	done; \
+	echo "❌ Failed to create admin user after 5 attempts"; \
+	echo "📋 Final pod status:"; \
+	oc get pods -n openshift-operators | grep test-registry; \
+	echo "📋 Final response:"; \
+	cat /tmp/quay_response.json 2>/dev/null || echo "No response body"; \
+	rm -f /tmp/quay_response.json; \
+	exit 1
 	@echo "✅ Admin user creation completed on ARO"
 
 .PHONY: aro-quay-trust-cert
