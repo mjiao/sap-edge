@@ -123,6 +123,11 @@ spec:
         cp kubeconfig kubeconfig-$(params.aroClusterName).yaml
         echo "✅ Kubeconfig saved as: kubeconfig-$(params.aroClusterName).yaml"
         
+        # Enable scheduling on master nodes
+        echo ""
+        echo "🔧 Enabling scheduling on master nodes..."
+        make aro-enable-master-scheduling
+        
         echo ""
         echo "🔍 Getting Azure services information..."
         
