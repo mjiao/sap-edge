@@ -64,8 +64,11 @@ aro-cluster-status:  ## Get ARO cluster provisioning state
 
 .PHONY: aro-cluster-exists
 aro-cluster-exists:  ## Check if ARO cluster exists
-	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP)
-	@az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1 && echo "true" || echo "false"
+	@if [ -z "${ARO_CLUSTER_NAME}" ] || [ -z "${ARO_RESOURCE_GROUP}" ]; then \
+		echo "false"; \
+	else \
+		az aro show --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1 && echo "true" || echo "false"; \
+	fi
 
 .PHONY: aro-cluster-url
 aro-cluster-url:  ## Get ARO cluster URL
@@ -315,34 +318,23 @@ aro-cleanup-all-services:  ## Clean up all ARO services (PostgreSQL, Redis, othe
 aro-deploy-only:  ## Deploy ARO cluster only (no PostgreSQL/Redis services)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET)
 	@echo "🧪 Deploying ARO cluster only (no Azure services)..."
-	@echo "🔍 Checking for existing deployment..."
+	@echo "🔍 Checking if cluster already exists..."
+	@CLUSTER_CHECK_RESULT=$$(make --no-print-directory aro-cluster-exists 2>/dev/null | grep -E '^(true|false)$$' | tail -1); \
+	echo "🔍 Cluster check result: '$$CLUSTER_CHECK_RESULT'"; \
+	if [ "$$CLUSTER_CHECK_RESULT" = "true" ]; then \
+		echo "✅ ARO cluster '${ARO_CLUSTER_NAME}' already exists. Skipping deployment."; \
+		exit 0; \
+	else \
+		echo "🔍 Cluster '${ARO_CLUSTER_NAME}' not found, proceeding with deployment..."; \
+	fi
+	@echo "🔍 Checking for running deployments..."
 	@EXISTING_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound"); \
 	if [ "$$EXISTING_STATE" = "Running" ]; then \
-		echo "⏳ Found existing deployment in progress. Waiting for it to complete..."; \
-		echo "💡 If you want to cancel it, run: az deployment group cancel --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME}"; \
+		echo "⏳ Found deployment in progress. Waiting for completion..."; \
 		while [ "$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null)" = "Running" ]; do \
-			echo "⏳ Still running... checking again in 60 seconds"; \
+			echo "⏳ Still running... waiting 60 seconds"; \
 			sleep 60; \
 		done; \
-		FINAL_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null); \
-		if [ "$$FINAL_STATE" = "Succeeded" ]; then \
-			echo "✅ Previous deployment completed successfully!"; \
-			exit 0; \
-		else \
-			echo "❌ Previous deployment failed with state: $$FINAL_STATE"; \
-			echo "🔄 Proceeding with new deployment..."; \
-		fi; \
-	elif [ "$$EXISTING_STATE" = "Succeeded" ]; then \
-		echo "🔍 Found successful deployment record for aro-deploy-${ARO_CLUSTER_NAME}. Checking if cluster actually exists..."; \
-		echo "🔍 Looking for cluster: ${ARO_CLUSTER_NAME} in resource group: ${ARO_RESOURCE_GROUP}"; \
-		CLUSTER_EXISTS_RESULT=$$(make aro-cluster-exists | tail -1); \
-		echo "🔍 Cluster exists check returned: $$CLUSTER_EXISTS_RESULT"; \
-		if [ "$$CLUSTER_EXISTS_RESULT" = "true" ]; then \
-			echo "✅ ARO cluster exists. Skipping new deployment."; \
-			exit 0; \
-		else \
-			echo "⚠️  Deployment record exists but cluster '${ARO_CLUSTER_NAME}' not found. Proceeding with new deployment..."; \
-		fi; \
 	fi
 	@echo "🔐 Preparing secure deployment parameters..."
 	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
@@ -374,34 +366,19 @@ aro-deploy-only:  ## Deploy ARO cluster only (no PostgreSQL/Redis services)
 aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
 	@echo "🧪 Deploying ARO cluster with test-optimized settings..."
-	@echo "🔍 Checking for existing deployment..."
+	@echo "🔍 Checking if cluster already exists..."
+	@if $$(make aro-cluster-exists | tail -1 | grep -q "true"); then \
+		echo "✅ ARO cluster '${ARO_CLUSTER_NAME}' already exists. Skipping deployment."; \
+		exit 0; \
+	fi
+	@echo "🔍 Checking for running deployments..."
 	@EXISTING_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound"); \
 	if [ "$$EXISTING_STATE" = "Running" ]; then \
-		echo "⏳ Found existing deployment in progress. Waiting for it to complete..."; \
-		echo "💡 If you want to cancel it, run: az deployment group cancel --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME}"; \
+		echo "⏳ Found deployment in progress. Waiting for completion..."; \
 		while [ "$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null)" = "Running" ]; do \
-			echo "⏳ Still running... checking again in 60 seconds"; \
+			echo "⏳ Still running... waiting 60 seconds"; \
 			sleep 60; \
 		done; \
-		FINAL_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null); \
-		if [ "$$FINAL_STATE" = "Succeeded" ]; then \
-			echo "✅ Previous deployment completed successfully!"; \
-			exit 0; \
-		else \
-			echo "❌ Previous deployment failed with state: $$FINAL_STATE"; \
-			echo "🔄 Proceeding with new deployment..."; \
-		fi; \
-	elif [ "$$EXISTING_STATE" = "Succeeded" ]; then \
-		echo "🔍 Found successful deployment record for aro-deploy-${ARO_CLUSTER_NAME}. Checking if cluster actually exists..."; \
-		echo "🔍 Looking for cluster: ${ARO_CLUSTER_NAME} in resource group: ${ARO_RESOURCE_GROUP}"; \
-		CLUSTER_EXISTS_RESULT=$$(make aro-cluster-exists | tail -1); \
-		echo "🔍 Cluster exists check returned: $$CLUSTER_EXISTS_RESULT"; \
-		if [ "$$CLUSTER_EXISTS_RESULT" = "true" ]; then \
-			echo "✅ ARO cluster exists. Skipping new deployment."; \
-			exit 0; \
-		else \
-			echo "⚠️  Deployment record exists but cluster '${ARO_CLUSTER_NAME}' not found. Proceeding with new deployment..."; \
-		fi; \
 	fi
 	@echo "🔐 Preparing secure deployment parameters..."
 	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
@@ -492,8 +469,9 @@ aro-cost-estimate:  ## Get cost estimate for test deployment
 aro-quay-storage-create:  ## Create Azure storage account for Quay registry
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
 	@echo "🏗️ Creating Azure storage account for Quay registry..."
-	@STORAGE_ACCOUNT_NAME="quay$${ARO_CLUSTER_NAME}$$(date +%s | tail -c 6)"; \
-	echo "Storage account name: $$STORAGE_ACCOUNT_NAME"; \
+	@CLUSTER_HASH=$$(echo "${ARO_CLUSTER_NAME}" | sha256sum | cut -c1-8); \
+	STORAGE_ACCOUNT_NAME="quay$$CLUSTER_HASH$$(date +%s | tail -c 6)"; \
+	echo "Storage account name: $$STORAGE_ACCOUNT_NAME (for cluster: ${ARO_CLUSTER_NAME})"; \
 	az storage account create \
 		--name "$$STORAGE_ACCOUNT_NAME" \
 		--resource-group "${ARO_RESOURCE_GROUP}" \

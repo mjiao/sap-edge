@@ -83,7 +83,11 @@ spec:
         
         # Get ARO credentials and login to cluster
         echo "🔐 Getting ARO credentials..."
+        rm -f kubeconfig kubeconfig.backup
         az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        echo "🔧 Adding insecure TLS settings to kubeconfig..."
+        cp kubeconfig kubeconfig.backup
+        sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
         export KUBECONFIG="$(pwd)/kubeconfig"
         
         echo "📋 Generating comprehensive deployment report..."
