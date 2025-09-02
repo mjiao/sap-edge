@@ -62,7 +62,7 @@ spec:
         #!/bin/bash
         set -euo pipefail
         
-        echo "🔍 Starting pod status check in namespace: ${NAMESPACE}"
+        echo "🔍 Starting pod status check in namespace: ${NAMESPACE} on cluster: ${ARO_CLUSTER_NAME}"
         
         # Install required tools
         echo "📦 Installing required tools..."
