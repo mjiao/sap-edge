@@ -108,19 +108,21 @@ spec:
         # Note: ARO cluster should already be deployed by the deploy-aro task
         echo "ℹ️  Note: Using existing ARO cluster for Quay deployment"
         
-        # Step 1: Create Azure storage for Quay
-        echo "🏗️ Creating Azure storage for Quay..."
+        # Step 1: Ensure Azure storage for Quay (idempotent)
+        echo "🏗️ Ensuring Azure storage for Quay..."
         make aro-quay-storage-create
         
         # Extract storage info for environment variables
         echo "📋 Getting storage account information..."
-        STORAGE_ACCOUNTS=$(az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].name" -o tsv)
+        STORAGE_ACCOUNTS=$(az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay' && tags.cluster=='${ARO_CLUSTER_NAME}'].name" -o tsv)
         if [ -z "$STORAGE_ACCOUNTS" ]; then
-          echo "❌ No Quay storage account found"
+          echo "❌ No Quay storage account found for cluster: ${ARO_CLUSTER_NAME}"
+          echo "🔍 Available Quay storage accounts:"
+          az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{name:name,cluster:tags.cluster}" -o table
           exit 1
         fi
         
-        # Use the first (and should be only) storage account
+        # Use the storage account for this cluster
         AZURE_STORAGE_ACCOUNT_NAME=$(echo "$STORAGE_ACCOUNTS" | head -1)
         AZURE_STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group "${ARO_RESOURCE_GROUP}" --account-name "$AZURE_STORAGE_ACCOUNT_NAME" --query "[0].value" -o tsv)
         export AZURE_STORAGE_ACCOUNT_NAME
@@ -130,16 +132,21 @@ spec:
         echo "✅ Storage configuration:"
         echo "  Account: $AZURE_STORAGE_ACCOUNT_NAME"
         echo "  Container: $AZURE_STORAGE_CONTAINER"
+        echo "  Cluster: ${ARO_CLUSTER_NAME}"
         
         # Step 2: Deploy Quay with complete automation
         echo "🚀 Deploying Quay registry with complete automation..."
         make aro-quay-deploy-complete
         
-        # Step 3: Create admin user
+        # Step 3: Wait for HTTP service to be ready
+        echo "⏳ Waiting for Quay HTTP service to be ready..."
+        make aro-quay-wait-http-ready
+        
+        # Step 4: Create admin user
         echo "👤 Creating Quay admin user..."
         make aro-quay-create-admin
         
-        # Step 4: Get final status and information
+        # Step 5: Get final status and information
         echo "📋 Getting Quay registry information..."
         make aro-quay-info
         

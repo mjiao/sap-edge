@@ -52,28 +52,33 @@ validate_requirements() {
 create_storage_account() {
     echo "🏗️ Creating Azure storage account for Quay registry..."
     
-    # Generate unique storage account name using cluster hash
+    # Generate deterministic storage account name using cluster hash (no timestamp)
     local cluster_hash
-    cluster_hash=$(echo "${ARO_CLUSTER_NAME}" | sha256sum | cut -c1-8)
-    local timestamp
-    timestamp=$(date +%s | tail -c 6)
-    local storage_account_name="quay${cluster_hash}${timestamp}"
+    cluster_hash=$(echo "${ARO_CLUSTER_NAME}" | sha256sum | cut -c1-16)
+    local storage_account_name="quay${cluster_hash}"
     
     echo "Storage account name: ${storage_account_name} (for cluster: ${ARO_CLUSTER_NAME})"
     
-    # Create storage account
-    if az storage account create \
-        --name "${storage_account_name}" \
-        --resource-group "${ARO_RESOURCE_GROUP}" \
-        --location "${ARO_LOCATION}" \
-        --sku Standard_LRS \
-        --kind StorageV2 \
-        --access-tier Hot \
-        --tags purpose=quay cluster="${ARO_CLUSTER_NAME}" team=sap-edge; then
-        echo "✅ Storage account created successfully"
+    # Check if storage account already exists
+    echo "🔍 Checking if storage account already exists..."
+    if az storage account show --name "${storage_account_name}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1; then
+        echo "✅ Storage account already exists: ${storage_account_name}"
+        echo "ℹ️  Reusing existing storage account for cluster: ${ARO_CLUSTER_NAME}"
     else
-        echo "❌ Failed to create storage account" >&2
-        exit 1
+        echo "📦 Creating new storage account..."
+        if az storage account create \
+            --name "${storage_account_name}" \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --location "${ARO_LOCATION}" \
+            --sku Standard_LRS \
+            --kind StorageV2 \
+            --access-tier Hot \
+            --tags purpose=quay cluster="${ARO_CLUSTER_NAME}" team=sap-edge; then
+            echo "✅ Storage account created successfully"
+        else
+            echo "❌ Failed to create storage account" >&2
+            exit 1
+        fi
     fi
     
     # Get storage account key
@@ -89,30 +94,43 @@ create_storage_account() {
         exit 1
     fi
     
-    # Create storage container
+    # Create storage container (idempotent)
     echo "📦 Creating storage container..."
-    if az storage container create \
+    echo "🔍 Checking if container 'quay-registry' already exists..."
+    if az storage container show \
         --name "quay-registry" \
         --account-name "${storage_account_name}" \
-        --account-key "${storage_key}"; then
-        echo "✅ Storage container created successfully"
+        --account-key "${storage_key}" >/dev/null 2>&1; then
+        echo "✅ Storage container already exists: quay-registry"
+        echo "ℹ️  Reusing existing container"
     else
-        echo "❌ Failed to create storage container" >&2
-        exit 1
+        echo "📦 Creating new storage container..."
+        if az storage container create \
+            --name "quay-registry" \
+            --account-name "${storage_account_name}" \
+            --account-key "${storage_key}"; then
+            echo "✅ Storage container created successfully"
+        else
+            echo "❌ Failed to create storage container" >&2
+            exit 1
+        fi
     fi
     
     # Output configuration information
     echo ""
-    echo "✅ Azure storage created successfully!"
+    echo "✅ Azure storage is ready!"
     echo "📋 Storage Configuration:"
     echo "   Account Name: ${storage_account_name}"
     echo "   Container: quay-registry"
     echo "   Resource Group: ${ARO_RESOURCE_GROUP}"
+    echo "   Cluster: ${ARO_CLUSTER_NAME}"
     echo ""
-    echo "🔑 Set these environment variables for Quay deployment:"
+    echo "🔑 Environment variables for Quay deployment:"
     echo "   export AZURE_STORAGE_ACCOUNT_NAME=${storage_account_name}"
     echo "   export AZURE_STORAGE_ACCOUNT_KEY=${storage_key}"
     echo "   export AZURE_STORAGE_CONTAINER=quay-registry"
+    echo ""
+    echo "♻️  Note: This storage account will be reused for future deployments of cluster '${ARO_CLUSTER_NAME}'"
 }
 
 main() {
