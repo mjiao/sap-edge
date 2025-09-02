@@ -511,6 +511,23 @@ aro-quay-wait-ready:  ## Wait for Quay registry to be ready on ARO
 	@timeout 300 bash -c 'until oc get quayregistry test-registry -n openshift-operators -o json 2>/dev/null | jq -r ".status.registryEndpoint // \"\"" | grep -q "https://"; do echo "Waiting for endpoint..."; sleep 10; done'
 	@echo "✅ Quay registry is ready on ARO!"
 
+.PHONY: aro-quay-wait-http-ready
+aro-quay-wait-http-ready:  ## Wait for Quay registry HTTP service to be ready
+	@echo "⏳ Waiting for Quay HTTP service to respond..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -n openshift-operators -o json | jq -r '.status.registryEndpoint'); \
+	if [ "$$ENDPOINT" = "null" ] || [ -z "$$ENDPOINT" ]; then \
+		echo "❌ Quay registry endpoint not ready. Run 'make aro-quay-wait-ready' first."; \
+		exit 1; \
+	fi; \
+	echo "Testing HTTP readiness at: $$ENDPOINT"; \
+	timeout 300 bash -c 'until curl -s -k --max-time 10 "'"$$ENDPOINT"'/health/instance" >/dev/null 2>&1; do echo "Waiting for HTTP service... $$(date)"; sleep 15; done' || { \
+		echo "❌ Timeout waiting for Quay HTTP service to respond"; \
+		echo "🔍 Current endpoint status:"; \
+		curl -s -k --max-time 5 "$$ENDPOINT/health/instance" || echo "Service not responding"; \
+		exit 1; \
+	}; \
+	echo "✅ Quay HTTP service is ready and responding!"
+
 .PHONY: aro-quay-info
 aro-quay-info:  ## Get Quay registry connection information on ARO
 	@echo "📋 ARO Quay Registry Information:"
@@ -543,10 +560,55 @@ aro-quay-create-admin:  ## Create Quay admin user on ARO
 	USER_CREATION_ENDPOINT="$$ENDPOINT/api/v1/user/initialize"; \
 	echo "Registry endpoint: $$ENDPOINT"; \
 	echo "Creating user at: $$USER_CREATION_ENDPOINT"; \
-	curl -X POST -k "$$USER_CREATION_ENDPOINT" \
+	echo "🔄 Attempting to create admin user..."; \
+	HTTP_CODE=$$(curl -X POST -k "$$USER_CREATION_ENDPOINT" \
 		--header 'Content-Type: application/json' \
 		--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
-		--fail --show-error || echo "User may already exist"
+		--write-out "%{http_code}" \
+		--output /tmp/quay_response.json \
+		--silent); \
+	case "$$HTTP_CODE" in \
+		200) \
+			echo "✅ Admin user created successfully"; \
+			echo "📋 User creation response:"; \
+			cat /tmp/quay_response.json | jq -r .; \
+			;; \
+		400) \
+			echo "ℹ️  Admin user already exists (HTTP 400)"; \
+			echo "✅ Admin user is available"; \
+			;; \
+		503) \
+			echo "⚠️  Quay service not ready yet (HTTP 503), retrying in 15 seconds..."; \
+			sleep 15; \
+			HTTP_CODE=$$(curl -X POST -k "$$USER_CREATION_ENDPOINT" \
+				--header 'Content-Type: application/json' \
+				--data '{"username": "quayadmin", "password":"${QUAY_ADMIN_PASSWORD}", "email": "${QUAY_ADMIN_EMAIL}", "access_token": true}' \
+				--write-out "%{http_code}" \
+				--output /tmp/quay_response.json \
+				--silent); \
+			case "$$HTTP_CODE" in \
+				200) \
+					echo "✅ Admin user created successfully on retry"; \
+					cat /tmp/quay_response.json | jq -r .; \
+					;; \
+				400) \
+					echo "ℹ️  Admin user already exists (HTTP 400)"; \
+					echo "✅ Admin user is available"; \
+					;; \
+				*) \
+					echo "❌ Failed to create admin user after retry (HTTP $$HTTP_CODE)"; \
+					cat /tmp/quay_response.json 2>/dev/null || echo "No response body"; \
+					exit 1; \
+					;; \
+			esac; \
+			;; \
+		*) \
+			echo "❌ Failed to create admin user (HTTP $$HTTP_CODE)"; \
+			cat /tmp/quay_response.json 2>/dev/null || echo "No response body"; \
+			exit 1; \
+			;; \
+	esac; \
+	rm -f /tmp/quay_response.json
 	@echo "✅ Admin user creation completed on ARO"
 
 .PHONY: aro-quay-trust-cert
