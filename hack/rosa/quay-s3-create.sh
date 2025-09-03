@@ -82,33 +82,73 @@ create_s3_bucket() {
     else
         echo "📦 Creating new S3 bucket..."
         
-        # Create bucket with region-specific configuration
-        if [[ "${AWS_REGION}" == "us-east-1" ]]; then
-            # us-east-1 doesn't need LocationConstraint
-            if aws s3api create-bucket \
-                --bucket "${bucket_name}" \
-                --region "${AWS_REGION}"; then
-                echo "✅ S3 bucket created successfully"
+        # Create bucket with region-specific configuration and retry logic
+        create_bucket_success=false
+        for attempt in 1 2 3 4 5; do
+            echo "Attempt ${attempt}/5 to create bucket..."
+            
+            if [[ "${AWS_REGION}" == "us-east-1" ]]; then
+                # us-east-1 doesn't need LocationConstraint
+                if create_result=$(aws s3api create-bucket \
+                    --bucket "${bucket_name}" \
+                    --region "${AWS_REGION}" 2>&1); then
+                    create_exit_code=0
+                else
+                    create_exit_code=$?
+                fi
             else
-                echo "❌ Failed to create S3 bucket" >&2
-                exit 1
+                # Other regions need LocationConstraint
+                if create_result=$(aws s3api create-bucket \
+                    --bucket "${bucket_name}" \
+                    --region "${AWS_REGION}" \
+                    --create-bucket-configuration LocationConstraint="${AWS_REGION}" 2>&1); then
+                    create_exit_code=0
+                else
+                    create_exit_code=$?
+                fi
             fi
-        else
-            # Other regions need LocationConstraint
-            if aws s3api create-bucket \
-                --bucket "${bucket_name}" \
-                --region "${AWS_REGION}" \
-                --create-bucket-configuration LocationConstraint="${AWS_REGION}"; then
+            
+            if [[ ${create_exit_code} -eq 0 ]]; then
                 echo "✅ S3 bucket created successfully"
+                create_bucket_success=true
+                break
             else
-                echo "❌ Failed to create S3 bucket" >&2
-                exit 1
+                echo "⚠️  Attempt ${attempt} failed: ${create_result}"
+                
+                if echo "${create_result}" | grep -q "OperationAborted.*conflicting conditional operation"; then
+                    echo "🔄 Conflicting operation detected, waiting 30 seconds before retry..."
+                    if [[ ${attempt} -lt 5 ]]; then
+                        sleep 30
+                    fi
+                elif echo "${create_result}" | grep -q "BucketAlreadyExists"; then
+                    echo "ℹ️  Bucket already exists (possibly just created by another process)"
+                    create_bucket_success=true
+                    break
+                elif echo "${create_result}" | grep -q "BucketAlreadyOwnedByYou"; then
+                    echo "ℹ️  Bucket already owned by you"
+                    create_bucket_success=true
+                    break
+                else
+                    echo "❌ Unexpected error: ${create_result}"
+                    if [[ ${attempt} -lt 5 ]]; then
+                        echo "Waiting 15 seconds before retry..."
+                        sleep 15
+                    fi
+                fi
             fi
+        done
+        
+        if [[ "${create_bucket_success}" != "true" ]]; then
+            echo "❌ Failed to create S3 bucket after 5 attempts" >&2
+            echo "💡 Try again in a few minutes or use a different cluster name" >&2
+            exit 1
         fi
         
         # Wait for bucket to be available
         echo "⏳ Waiting for bucket to be available..."
-        aws s3api wait bucket-exists --bucket "${bucket_name}"
+        aws s3api wait bucket-exists --bucket "${bucket_name}" || {
+            echo "⚠️  Bucket creation succeeded but wait failed, continuing anyway..."
+        }
     fi
     
     # Configure bucket versioning (recommended for Quay)

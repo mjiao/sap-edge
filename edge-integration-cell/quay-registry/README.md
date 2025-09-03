@@ -81,7 +81,7 @@ The current configuration uses Azure Blob Storage for container image storage. T
 - Dedicated container for Quay registry data
 
 ### Alternative Storage Options
-To use external S3 storage instead, modify `quay-config-secret.yaml`:
+To use external S3 storage instead, modify `aro-quay-config-secret.yaml`:
 
 ```yaml
 DISTRIBUTED_STORAGE_CONFIG:

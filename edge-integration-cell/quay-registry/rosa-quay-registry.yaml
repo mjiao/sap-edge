@@ -14,7 +14,7 @@ spec:
     - kind: postgres
       managed: true
     - kind: objectstorage
-      managed: true  # Use managed local storage for ROSA
+      managed: false  # Use external S3 storage via config bundle
     - kind: redis
       managed: true
     - kind: horizontalpodautoscaler

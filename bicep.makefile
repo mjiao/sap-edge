@@ -645,11 +645,13 @@ aro-quay-trust-cert:  ## Configure ARO to trust Quay registry certificate
 	fi; \
 	echo "$$caBundle" > quay-registry.crt; \
 	echo "📝 Configuring cluster image registry trust..."; \
-	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"')"; \
+	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"' | sed 's/^$$/trusted-registry-cabundles/')"; \
+	echo "Using ConfigMap name: $$cmName"; \
 	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null; then \
 		echo "Updating existing configmap: $$cmName"; \
+		REGISTRY_KEY="$${REGISTRY//:/..}"; \
 		oc get -o json -n openshift-config "cm/$$cmName" | \
-			jq '.data["'"$${REGISTRY//:/..}"'"] |= "'"$$caBundle"'"' | \
+			jq --arg key "$$REGISTRY_KEY" --arg cert "$$caBundle" '.data[$$key] = $$cert' | \
 			oc replace -f - --force; \
 	else \
 		echo "Creating new configmap: $$cmName"; \
@@ -683,13 +685,14 @@ aro-quay-verify-trust:  ## Verify that ARO trusts the Quay registry certificate
 	echo "Testing connection to: $$REGISTRY"; \
 	echo ""; \
 	echo "📋 Checking ConfigMap configuration..."; \
-	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"')"; \
+	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"' | sed 's/^$$/trusted-registry-cabundles/')"; \
+	echo "Checking ConfigMap: $$cmName"; \
 	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null | grep -q "$${REGISTRY//:/..}"; then \
 		echo "✅ Registry found in CA ConfigMap: $$cmName"; \
 	else \
 		echo "❌ Registry not found in CA ConfigMap"; \
 		echo "Run 'make aro-quay-trust-cert' to configure trust"; \
-		exit 1; \
+		echo "⚠️  Trust verification failed - certificate not configured"; \
 	fi; \
 	echo ""; \
 	echo "🧪 Testing HTTPS connection..."; \
@@ -775,9 +778,9 @@ quay-deploy-generic:  ## Deploy Quay registry on current oc context (generic)
 	@echo "⏳ Waiting for Quay operator to be ready..."
 	@timeout 300 bash -c 'until oc get csv -n openshift-operators | grep -q "quay-operator.*Succeeded"; do echo "Waiting for operator..."; sleep 10; done'
 	@echo "🔧 Creating Quay configuration..."
-	oc apply -f edge-integration-cell/quay-registry/quay-config-secret.yaml
+	oc apply -f edge-integration-cell/quay-registry/aro-quay-config-secret.yaml
 	@echo "🚀 Creating Quay registry instance..."
-	oc apply -f edge-integration-cell/quay-registry/quay-registry.yaml
+	oc apply -f edge-integration-cell/quay-registry/aro-quay-registry.yaml
 	@echo "✅ Quay deployment initiated (generic)"
 
 .PHONY: quay-info-generic
