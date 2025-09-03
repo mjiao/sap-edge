@@ -107,7 +107,7 @@ create_config_secret() {
             gsub(/\${AZURE_STORAGE_ACCOUNT_KEY_PLACEHOLDER}/, account_key)
             gsub(/\${AZURE_STORAGE_CONTAINER_PLACEHOLDER}/, container)
             print
-        }' "${PROJECT_ROOT}/edge-integration-cell/quay-registry/quay-config-secret.yaml" > "${temp_config}"
+        }' "${PROJECT_ROOT}/edge-integration-cell/quay-registry/aro-quay-config-secret.yaml" > "${temp_config}"
     
     echo "🔍 Template substitution completed, checking result..."
     if grep -q "PLACEHOLDER" "${temp_config}"; then
@@ -142,7 +142,7 @@ create_config_secret() {
 
 create_quay_registry() {
     echo "🚀 Creating Quay registry instance..."
-    oc apply -f "${PROJECT_ROOT}/edge-integration-cell/quay-registry/quay-registry.yaml"
+    oc apply -f "${PROJECT_ROOT}/edge-integration-cell/quay-registry/aro-quay-registry.yaml"
     echo "✅ Quay deployment initiated on ARO"
 }
 
