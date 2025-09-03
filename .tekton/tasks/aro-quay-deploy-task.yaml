@@ -71,8 +71,8 @@ spec:
         
         # Install required tools
         echo "📦 Installing required tools..."
-        # Install make, libicu, and jq first (needed for makefile operations and Bicep)
-        dnf install -y make libicu jq
+        # Install make, libicu, jq, and python3-pip first (needed for makefile operations and Ansible)
+        dnf install -y make libicu jq python3-pip
         
         # Install Azure CLI
         echo "📦 Installing Azure CLI..."
@@ -87,6 +87,11 @@ spec:
         echo "📦 Installing OpenShift CLI..."
         curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
         mv oc kubectl /usr/local/bin/
+        
+        # Install Ansible and required collections
+        echo "📦 Installing Ansible and required collections..."
+        pip3 install ansible kubernetes
+        ansible-galaxy collection install -r ansible/requirements.yml
         
         # Login to Azure
         echo "🔐 Logging into Azure..."

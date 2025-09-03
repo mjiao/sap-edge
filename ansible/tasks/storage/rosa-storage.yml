@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Ensure S3 storage for ROSA Quay deployment
+  block:
+    - name: Display S3 storage configuration
+      debug:
+        msg:
+          - "🪣 S3 Storage Configuration for ROSA"
+          - "Bucket: {{ s3_bucket_name }}"
+          - "Region: {{ s3_region }}"
+          - "Host: {{ s3_host }}"
+          - "Access Key: {{ aws_access_key_id }}"
+
+    - name: Validate S3 storage variables
+      assert:
+        that:
+          - s3_bucket_name | length > 0
+          - s3_region | length > 0
+          - s3_host | length > 0
+          - aws_access_key_id | length > 0
+          - aws_secret_access_key | length > 0
+        fail_msg: "Missing required S3 storage configuration"
+
+    # Note: S3 bucket creation is typically handled by external scripts
+    # This task validates that storage configuration is complete
+    
+  rescue:
+    - name: Handle storage configuration errors
+      fail:
+        msg: "S3 storage configuration failed: {{ ansible_failed_result.msg }}"

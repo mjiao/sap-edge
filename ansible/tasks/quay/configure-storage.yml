@@ -1,0 +1,164 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Configure Quay storage backend
+  block:
+    - name: Verify Quay operator CSV readiness after potential timeout
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: csv_verify_check
+      when: operator_csv_timeout | default(false)
+
+    - name: Display CSV status after timeout
+      debug:
+        msg:
+          - "🔍 CSV verification after timeout:"
+          - "Found CSVs: {{ csv_verify_check.resources | length }}"
+          - "Quay operator CSV found: {{ csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length > 0 }}"
+          - "{% if csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length > 0 %}CSV Phase: {{ (csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase }}{% endif %}"
+      when: operator_csv_timeout | default(false)
+
+    - name: Fail if CSV is not ready after timeout
+      fail:
+        msg: "Quay operator CSV is not in Succeeded phase - operator installation failed"
+      when: 
+        - operator_csv_timeout | default(false)
+        - csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length == 0 or (csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase != "Succeeded"
+
+    - name: Validate storage configuration for {{ platform }}
+      assert:
+        that:
+          - storage_config[platform] is defined
+        fail_msg: "Storage configuration not found for platform: {{ platform }}"
+
+    - name: Set storage facts
+      set_fact:
+        current_storage: "{{ storage_config[platform] }}"
+
+    - name: Validate Azure storage configuration (ARO)
+      assert:
+        that:
+          - current_storage.account_name | length > 0
+          - current_storage.account_key | length > 0
+          - current_storage.container | length > 0
+        fail_msg: "Missing Azure storage configuration for ARO"
+      when: platform == 'aro'
+
+    - name: Validate S3 storage configuration (ROSA)
+      assert:
+        that:
+          - current_storage.bucket_name | length > 0
+          - current_storage.access_key | length > 0
+          - current_storage.secret_key | length > 0
+          - current_storage.region | length > 0
+        fail_msg: "Missing S3 storage configuration for ROSA"
+      when: platform == 'rosa'
+
+    - name: Generate Quay configuration for Azure storage (ARO)
+      set_fact:
+        quay_config_yaml: |
+          ALLOW_PULLS_WITHOUT_STRICT_LOGGING: false
+          AUTHENTICATION_TYPE: Database
+          DEFAULT_TAG_EXPIRATION: 2w
+          ENTERPRISE_LOGO_URL: /static/img/RH_Logo_Quay_Black_UX-horizontal.svg
+          FEATURE_BUILD_SUPPORT: false
+          FEATURE_DIRECT_LOGIN: true
+          FEATURE_MAILING: false
+          REGISTRY_TITLE: Red Hat Quay
+          REGISTRY_TITLE_SHORT: Red Hat Quay
+          SETUP_COMPLETE: true
+          TAG_EXPIRATION_OPTIONS:
+          - 2w
+          TEAM_RESYNC_STALE_TIME: 60m
+          TESTING: false
+          FEATURE_USER_INITIALIZE: true
+          SUPER_USERS:
+          - {{ quay.admin_username }}
+          DISTRIBUTED_STORAGE_CONFIG:
+            azureStorage:
+              - AzureStorage
+              - azure_account_name: {{ current_storage.account_name }}
+                azure_container: {{ current_storage.container }}
+                storage_path: /datastorage/registry
+                azure_account_key: {{ current_storage.account_key }}
+          DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+          DISTRIBUTED_STORAGE_PREFERENCE:
+            - azureStorage
+      when: platform == 'aro'
+
+    - name: Generate Quay configuration for S3 storage (ROSA)
+      set_fact:
+        quay_config_yaml: |
+          ALLOW_PULLS_WITHOUT_STRICT_LOGGING: false
+          AUTHENTICATION_TYPE: Database
+          DEFAULT_TAG_EXPIRATION: 2w
+          ENTERPRISE_LOGO_URL: /static/img/RH_Logo_Quay_Black_UX-horizontal.svg
+          FEATURE_BUILD_SUPPORT: false
+          FEATURE_DIRECT_LOGIN: true
+          FEATURE_MAILING: false
+          REGISTRY_TITLE: Red Hat Quay
+          REGISTRY_TITLE_SHORT: Red Hat Quay
+          SETUP_COMPLETE: true
+          TAG_EXPIRATION_OPTIONS:
+          - 2w
+          TEAM_RESYNC_STALE_TIME: 60m
+          TESTING: false
+          FEATURE_USER_INITIALIZE: true
+          SUPER_USERS:
+          - {{ quay.admin_username }}
+          DISTRIBUTED_STORAGE_CONFIG:
+            s3Storage:
+              - S3Storage
+              - host: {{ current_storage.host }}
+                s3_access_key: {{ current_storage.access_key }}
+                s3_secret_key: {{ current_storage.secret_key }}
+                s3_bucket: {{ current_storage.bucket_name }}
+                s3_region: {{ current_storage.region }}
+                storage_path: /datastorage/registry
+          DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+          DISTRIBUTED_STORAGE_PREFERENCE:
+            - s3Storage
+      when: platform == 'rosa'
+
+    - name: Create Quay configuration secret
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: config-bundle-secret
+            namespace: "{{ quay.namespace }}"
+          type: Opaque
+          stringData:
+            config.yaml: "{{ quay_config_yaml }}"
+        state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+
+    - name: Verify configuration secret was created
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: config-bundle-secret
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: secret_check
+      
+    - name: Confirm secret exists
+      assert:
+        that:
+          - secret_check.resources | length > 0
+        fail_msg: "Configuration secret was not created successfully"
+
+    - name: Display storage configuration summary
+      debug:
+        msg:
+          - "✅ Quay storage configuration created"
+          - "Platform: {{ platform }}"
+          - "Storage Type: {{ current_storage.type }}"
+          - "Namespace: {{ quay.namespace }}"

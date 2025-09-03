@@ -22,8 +22,6 @@ export QUAY_ADMIN_PASSWORD="your-secure-password"
 export QUAY_ADMIN_EMAIL="your-email@sap.com"
 make aro-quay-create-admin
 
-# 5. Verify trust configuration is working
-make aro-quay-verify-trust
 
 # 6. Test login
 make aro-quay-test-login
@@ -37,7 +35,6 @@ If you prefer to run individual steps instead of the complete deployment:
 make aro-quay-deploy         # Deploy operator and instance
 make aro-quay-wait-ready     # Wait for readiness
 make aro-quay-trust-cert     # Configure certificate trust
-make aro-quay-verify-trust   # Verify trust configuration
 make aro-quay-info           # Get connection information
 make aro-quay-create-admin   # Create admin user
 make aro-quay-status         # Check overall status
@@ -54,34 +51,74 @@ make quay-info-generic
 # Manual admin user creation and certificate configuration required
 ```
 
-### Future ROSA Support
-When ROSA support is added, similar targets will be available:
-- `make rosa-quay-deploy`
-- `make rosa-quay-info`
-- `make rosa-quay-create-admin`
-- etc.
+### ROSA Deployment with S3 Storage
+```bash
+# 1. Create S3 bucket for Quay storage
+make rosa-quay-s3-create
+
+# 2. Set S3 storage environment variables
+export S3_BUCKET_NAME=quay-sapeic-123456
+export S3_REGION=us-east-1
+export AWS_ACCESS_KEY_ID=your-access-key
+export AWS_SECRET_ACCESS_KEY=your-secret-key
+
+# 3. Set Quay admin credentials
+export QUAY_ADMIN_PASSWORD="your-secure-password"
+export QUAY_ADMIN_EMAIL="your-email@sap.com"
+
+# 4. Complete Quay deployment (includes S3 storage, deployment, wait, and trust configuration)
+make rosa-quay-deploy-complete
+
+
+# 6. Get connection information
+make rosa-quay-info
+```
+
+### Step-by-Step ROSA Deployment (for advanced users)
+```bash
+# Individual deployment steps
+make rosa-quay-deploy         # Deploy operator and instance with S3 storage
+make rosa-quay-wait-ready     # Wait for readiness
+make rosa-quay-trust-cert     # Configure certificate trust
+make rosa-quay-info           # Get connection information
+make rosa-quay-create-admin   # Create admin user
+make rosa-quay-status         # Check overall status
+```
 
 ## Environment Variables
 
-Required for Azure storage:
+Required for ARO with Azure storage:
 - `AZURE_STORAGE_ACCOUNT_NAME`: Azure storage account name
 - `AZURE_STORAGE_ACCOUNT_KEY`: Azure storage account access key  
 - `AZURE_STORAGE_CONTAINER`: Azure storage container name (default: quay-registry)
 
-Required for admin user creation:
+Required for ROSA with S3 storage:
+- `S3_BUCKET_NAME`: S3 bucket name for container images
+- `S3_REGION`: AWS region for S3 bucket
+- `AWS_ACCESS_KEY_ID`: AWS access key ID
+- `AWS_SECRET_ACCESS_KEY`: AWS secret access key
+- `S3_HOST`: S3 endpoint host (optional, defaults to s3.{region}.amazonaws.com)
+
+Required for admin user creation (both platforms):
 - `QUAY_ADMIN_PASSWORD`: Password for quayadmin user
 - `QUAY_ADMIN_EMAIL`: Email for quayadmin user
 
 ## Storage Management
 
-### Azure Storage (Default Configuration)
-The current configuration uses Azure Blob Storage for container image storage. The storage account is automatically created with:
+### Azure Storage (ARO Configuration)
+The ARO configuration uses Azure Blob Storage for container image storage. The storage account is automatically created with:
 - Standard_LRS replication
 - Hot access tier  
 - Dedicated container for Quay registry data
 
-### Alternative Storage Options
-To use external S3 storage instead, modify `aro-quay-config-secret.yaml`:
+### S3 Storage (ROSA Configuration)  
+The ROSA configuration uses AWS S3 for container image storage. The S3 bucket is automatically created with:
+- Default AWS settings for the specified region
+- Standard storage class
+- Dedicated bucket for Quay registry data
+
+### Custom Storage Configuration
+To modify storage settings, update the respective configuration secret:
 
 ```yaml
 DISTRIBUTED_STORAGE_CONFIG:
@@ -118,8 +155,7 @@ docker login your-registry-endpoint/quayadmin
 If OpenShift can't pull images from Quay after deployment:
 
 ```bash
-# Check if trust is configured
-make aro-quay-verify-trust
+# Certificate trust is configured automatically during deployment
 
 # Check node status (nodes may need restart to pick up CA bundle)
 oc get nodes -o wide
@@ -159,9 +195,11 @@ oc patch images.config.openshift.io cluster --type=merge \
 ## Cleanup
 
 ```bash
-# Delete Quay registry and operator
-make aro-quay-delete
+# ARO cleanup
+make aro-quay-delete                    # Delete Quay registry and operator
+make aro-quay-storage-delete            # Delete Azure storage (optional, will lose all registry data)
 
-# Delete Azure storage (optional, will lose all registry data)
-make aro-quay-storage-delete
+# ROSA cleanup  
+make rosa-quay-delete                   # Delete Quay registry and operator
+# Note: S3 bucket cleanup should be done manually via AWS console
 ```

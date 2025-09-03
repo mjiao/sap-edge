@@ -75,20 +75,8 @@ spec:
         - name: source
           workspace: source
 
-    - name: validate-and-get-access
-      runAfter: [deploy-aro]
-      taskRef: { name: aro-validate-and-get-access }
-      params:
-        - name: aroClusterName
-          value: $(params.aroClusterName)
-        - name: azureSecretName
-          value: $(params.azureSecretName)
-      workspaces:
-        - name: source
-          workspace: source
-
     - name: deploy-quay
-      runAfter: [validate-and-get-access]
+      runAfter: [deploy-aro]
       taskRef: { name: aro-quay-deploy }
       params:
         - name: aroClusterName
@@ -158,18 +146,16 @@ spec:
 
             *Deployment Status:*
             * Repository cloned: ✅
-            * ARO deployment: ✅ Completed
-            * Validation and access setup: ✅ Completed
+            * ARO deployment with master scheduling: ✅ Completed
             * Quay registry deployment: ✅ Completed
             * Azure storage configuration: ✅ Completed
             * Certificate trust configuration: ✅ Completed
             * Edgelm namespace pod validation: ✅ Completed
 
             *Infrastructure Components:*
-            * ARO cluster deployed and validated ✅
+            * ARO cluster deployed with master node scheduling ✅
             * Quay registry with Azure storage ✅
             * OpenShift certificate trust configured ✅
-            * Kubeconfig and service access configured ✅
             * All edgelm pods running/completed ✅
 
             *Pipeline Details:*

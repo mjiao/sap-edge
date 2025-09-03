@@ -71,8 +71,11 @@ aro-cluster-check:  ## Check ARO cluster status with detailed information
 	@hack/aro/cluster-check.sh
 
 .PHONY: aro-enable-master-scheduling
-aro-enable-master-scheduling:  ## Enable scheduling on master nodes (mastersSchedulable=true)
-	@hack/aro/enable-master-scheduling.sh
+aro-enable-master-scheduling:  ## Enable scheduling on master nodes (mastersSchedulable=true) (uses Ansible)
+	@echo "🔧 Enabling master node scheduling using Ansible..."
+	ansible-playbook ansible/enable-master-scheduling.yml \
+		-i ansible/inventory.yml \
+		-e kubeconfig_path="$(PWD)/kubeconfig"
 
 .PHONY: aro-cluster-url
 aro-cluster-url:  ## Get ARO cluster URL
@@ -499,9 +502,19 @@ aro-quay-storage-delete:  ## Delete Azure storage account for Quay (requires AZU
 
 # ARO Quay Registry deployment targets
 .PHONY: aro-quay-deploy
-aro-quay-deploy:  ## Deploy Quay registry operator and instance on ARO with Azure storage
-	$(call required-environment-variables,ARO_CLUSTER_NAME ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME AZURE_STORAGE_ACCOUNT_KEY AZURE_STORAGE_CONTAINER)
-	@hack/aro/quay-deploy.sh
+aro-quay-deploy:  ## Deploy Quay registry operator and instance on ARO with Azure storage (uses Ansible)
+	$(call required-environment-variables,ARO_CLUSTER_NAME AZURE_STORAGE_ACCOUNT_NAME AZURE_STORAGE_ACCOUNT_KEY AZURE_STORAGE_CONTAINER QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
+	@echo "🚀 Deploying Quay on ARO using Ansible..."
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=aro \
+		-e cluster_name="${ARO_CLUSTER_NAME}" \
+		-e azure_storage_account_name="${AZURE_STORAGE_ACCOUNT_NAME}" \
+		-e azure_storage_account_key="${AZURE_STORAGE_ACCOUNT_KEY}" \
+		-e azure_storage_container="${AZURE_STORAGE_CONTAINER}" \
+		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
+		-e quay_admin_email="${QUAY_ADMIN_EMAIL}" \
+		-e kubeconfig_path="$(PWD)/kubeconfig"
 
 .PHONY: aro-quay-wait-ready
 aro-quay-wait-ready:  ## Wait for Quay registry to be ready on ARO
@@ -627,43 +640,12 @@ aro-quay-create-admin:  ## Create Quay admin user on ARO
 	@echo "✅ Admin user creation completed on ARO"
 
 .PHONY: aro-quay-trust-cert
-aro-quay-trust-cert:  ## Configure ARO to trust Quay registry certificate
-	@echo "🔒 Configuring ARO to trust Quay registry certificate..."
-	@echo "📋 Getting Quay registry endpoint..."
-	@ENDPOINT=$$(oc get quayregistry test-registry -n openshift-operators -o json | jq -r '.status.registryEndpoint'); \
-	if [ "$$ENDPOINT" = "null" ] || [ -z "$$ENDPOINT" ]; then \
-		echo "❌ Quay registry endpoint not ready. Run 'make aro-quay-wait-ready' first."; \
-		exit 1; \
-	fi; \
-	REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
-	echo "Registry hostname: $$REGISTRY"; \
-	echo "🔑 Extracting OpenShift ingress CA certificate..."; \
-	caBundle="$$(oc get -n openshift-ingress-operator -o json secret/router-ca | jq -r '.data as $$d | $$d | keys[] | select(test("\\.(?:crt|pem)$$")) | $$d[.] | @base64d')"; \
-	if [ -z "$$caBundle" ]; then \
-		echo "❌ Failed to extract CA certificate"; \
-		exit 1; \
-	fi; \
-	echo "$$caBundle" > quay-registry.crt; \
-	echo "📝 Configuring cluster image registry trust..."; \
-	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"' | sed 's/^$$/trusted-registry-cabundles/')"; \
-	echo "Using ConfigMap name: $$cmName"; \
-	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null; then \
-		echo "Updating existing configmap: $$cmName"; \
-		REGISTRY_KEY="$${REGISTRY//:/..}"; \
-		oc get -o json -n openshift-config "cm/$$cmName" | \
-			jq --arg key "$$REGISTRY_KEY" --arg cert "$$caBundle" '.data[$$key] = $$cert' | \
-			oc replace -f - --force; \
-	else \
-		echo "Creating new configmap: $$cmName"; \
-		oc create configmap -n openshift-config "$$cmName" \
-			--from-literal="$${REGISTRY//:/..}=$$caBundle"; \
-		oc patch images.config.openshift.io cluster --type=merge \
-			-p '{"spec":{"additionalTrustedCA":{"name":"'"$$cmName"'"}}}'; \
-	fi; \
-	echo "✅ Certificate trust configured for $$REGISTRY"; \
-	echo ""; \
-	echo "⚠️  Note: OpenShift nodes may need to restart to pick up the new CA bundle."; \
-	echo "🔍 Use 'make aro-quay-verify-trust' to test the configuration."
+aro-quay-trust-cert:  ## Configure ARO to trust Quay registry certificate (uses Ansible)
+	@echo "🔒 Configuring certificate trust using Ansible..."
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=aro \
+		--tags trust
 
 .PHONY: aro-quay-test-login
 aro-quay-test-login:  ## Test login to ARO Quay registry (requires podman/docker)
@@ -673,45 +655,6 @@ aro-quay-test-login:  ## Test login to ARO Quay registry (requires podman/docker
 	echo "Testing login to: $$REGISTRY/quayadmin"; \
 	echo "Use podman login $$REGISTRY/quayadmin or docker login $$REGISTRY/quayadmin"
 
-.PHONY: aro-quay-verify-trust
-aro-quay-verify-trust:  ## Verify that ARO trusts the Quay registry certificate
-	@echo "🔍 Verifying Quay registry certificate trust..."
-	@ENDPOINT=$$(oc get quayregistry test-registry -n openshift-operators -o json | jq -r '.status.registryEndpoint'); \
-	if [ "$$ENDPOINT" = "null" ] || [ -z "$$ENDPOINT" ]; then \
-		echo "❌ Quay registry endpoint not ready"; \
-		exit 1; \
-	fi; \
-	REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
-	echo "Testing connection to: $$REGISTRY"; \
-	echo ""; \
-	echo "📋 Checking ConfigMap configuration..."; \
-	cmName="$$(oc get images.config.openshift.io/cluster -o json | jq -r '.spec.additionalTrustedCA.name // "trusted-registry-cabundles"' | sed 's/^$$/trusted-registry-cabundles/')"; \
-	echo "Checking ConfigMap: $$cmName"; \
-	if oc get -n openshift-config "cm/$$cmName" 2>/dev/null | grep -q "$${REGISTRY//:/..}"; then \
-		echo "✅ Registry found in CA ConfigMap: $$cmName"; \
-	else \
-		echo "❌ Registry not found in CA ConfigMap"; \
-		echo "Run 'make aro-quay-trust-cert' to configure trust"; \
-		echo "⚠️  Trust verification failed - certificate not configured"; \
-	fi; \
-	echo ""; \
-	echo "🧪 Testing HTTPS connection..."; \
-	if curl -s --max-time 10 "$$ENDPOINT/health/instance" >/dev/null 2>&1; then \
-		echo "✅ HTTPS connection successful"; \
-	else \
-		echo "⚠️  HTTPS connection failed (this may be normal if nodes haven't restarted)"; \
-	fi; \
-	echo ""; \
-	echo "📊 Node trust status:"; \
-	echo "To check if all nodes have picked up the CA bundle, run:"; \
-	echo "  oc get nodes -o wide"; \
-	echo "  # Check if any nodes are in NotReady state"; \
-	echo ""; \
-	echo "🔧 If trust verification fails:"; \
-	echo "1. Ensure nodes have restarted to pick up new CA bundle"; \
-	echo "2. Check: oc get mcp -o wide"; \
-	echo "3. If needed, trigger node restart: oc patch mcp worker --type merge -p '{\"spec\":{\"paused\":false}}'"; \
-	echo "✅ Certificate trust verification completed"
 
 .PHONY: aro-quay-deploy-complete
 aro-quay-deploy-complete:  ## Complete Quay deployment with storage, registry, and trust configuration
@@ -722,27 +665,26 @@ aro-quay-deploy-complete:  ## Complete Quay deployment with storage, registry, a
 		echo "✅ Quay registry already exists, skipping deployment steps"; \
 		echo "📋 Going directly to status and verification..."; \
 	else \
-		echo "Step 1/5: Deploying Quay operator and instance..."; \
-		make aro-quay-deploy; \
+		echo "Step 1/4: Deploying Quay operator and instance..."; \
+		if ! AZURE_STORAGE_CONTAINER="${AZURE_STORAGE_CONTAINER}" make aro-quay-deploy; then \
+			echo "❌ Quay operator and registry deployment failed"; \
+			exit 1; \
+		fi; \
 		echo ""; \
-		echo "Step 2/5: Waiting for Quay to be ready..."; \
+		echo "Step 2/4: Waiting for Quay to be ready..."; \
 		make aro-quay-wait-ready; \
 	fi
 	@echo ""
-	@echo "Step 3/5: Configuring certificate trust..."
+	@echo "Step 3/4: Configuring certificate trust..."
 	make aro-quay-trust-cert
 	@echo ""
-	@echo "Step 4/5: Getting connection information..."
+	@echo "Step 4/4: Getting connection information..."
 	make aro-quay-info
-	@echo ""
-	@echo "Step 5/5: Verifying trust configuration..."
-	make aro-quay-verify-trust
 	@echo ""
 	@echo "🎉 Complete Quay deployment finished!"
 	@echo "📋 Next steps:"
 	@echo "1. Create admin user: make aro-quay-create-admin (requires QUAY_ADMIN_PASSWORD, QUAY_ADMIN_EMAIL)"
 	@echo "2. Test login: make aro-quay-test-login"
-	@echo "3. If trust verification failed, wait for nodes to restart or trigger restart manually"
 
 .PHONY: aro-quay-status
 aro-quay-status:  ## Check Quay deployment status on ARO
