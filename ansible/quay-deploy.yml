@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Deploy Quay Registry on OpenShift (ARO/ROSA)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Platform can be 'aro' or 'rosa'
+    platform: "{{ platform | default('aro') }}"
+    cluster_name: "{{ cluster_name | mandatory }}"
+    
+    # Storage configuration
+    storage_config:
+      aro:
+        type: azure
+        account_name: "{{ azure_storage_account_name | default('') }}"
+        account_key: "{{ azure_storage_account_key | default('') }}"
+        container: "{{ azure_storage_container | default('quay-registry') }}"
+      rosa:
+        type: s3
+        bucket_name: "{{ s3_bucket_name | default('') }}"
+        region: "{{ s3_region | default('us-east-1') }}"
+        host: "{{ s3_host | default('s3.amazonaws.com') }}"
+        access_key: "{{ aws_access_key_id | default('') }}"
+        secret_key: "{{ aws_secret_access_key | default('') }}"
+    
+    # Quay configuration
+    quay:
+      namespace: openshift-operators
+      registry_name: test-registry
+      admin_username: quayadmin
+      admin_password: "{{ quay_admin_password | mandatory }}"
+      admin_email: "{{ quay_admin_email | mandatory }}"
+
+  tasks:
+    - name: Validate platform parameter
+      assert:
+        that:
+          - platform in ['aro', 'rosa']
+        fail_msg: "Platform must be 'aro' or 'rosa', got '{{ platform }}'"
+
+    - name: Include platform-specific storage tasks
+      include_tasks: "tasks/storage/{{ platform }}-storage.yml"
+      tags: storage
+
+    - name: Deploy Quay operator
+      include_tasks: tasks/quay/deploy-operator.yml
+      tags: operator
+
+    - name: Configure Quay with storage backend
+      include_tasks: tasks/quay/configure-storage.yml
+      tags: config
+
+    - name: Deploy Quay registry instance
+      include_tasks: tasks/quay/deploy-registry.yml
+      tags: registry
+
+    - name: Wait for Quay to be ready
+      include_tasks: tasks/quay/wait-ready.yml
+      tags: wait
+
+    - name: Configure certificate trust
+      include_tasks: tasks/quay/configure-trust.yml
+      tags: trust
+
+    - name: Create admin user
+      include_tasks: tasks/quay/create-admin.yml
+      tags: admin
+
+    - name: Verify deployment
+      include_tasks: tasks/quay/verify-deployment.yml
+      tags: verify

@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Create Quay admin user
+  block:
+    - name: Get Quay registry endpoint
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: quay_registry
+
+    - name: Verify Quay registry endpoint is available
+      assert:
+        that:
+          - quay_registry.resources | length > 0
+          - quay_registry.resources[0].status.registryEndpoint is defined
+        fail_msg: "Quay registry endpoint not ready. Run wait-ready task first."
+
+    - name: Set registry endpoint facts
+      set_fact:
+        registry_endpoint: "{{ quay_registry.resources[0].status.registryEndpoint }}"
+        user_creation_endpoint: "{{ quay_registry.resources[0].status.registryEndpoint }}/api/v1/user/initialize"
+
+    - name: Check Quay pod readiness
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ quay.namespace }}"
+        label_selectors:
+          - "quay-component=quay-app"
+        field_selectors:
+          - "status.phase=Running"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: running_pods
+
+    - name: Display pod status
+      debug:
+        msg:
+          - "Registry endpoint: {{ registry_endpoint }}"
+          - "User creation endpoint: {{ user_creation_endpoint }}"
+          - "Running Quay pods: {{ running_pods.resources | length }}"
+
+    - name: Wait for sufficient Quay pods
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ quay.namespace }}"
+        label_selectors:
+          - "quay-component=quay-app"
+        field_selectors:
+          - "status.phase=Running"
+        wait: true
+        wait_timeout: 300
+        wait_condition:
+          type: Ready
+          status: "True"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: ready_pods
+
+    - name: Create Quay admin user via API
+      uri:
+        url: "{{ user_creation_endpoint }}"
+        method: POST
+        headers:
+          Content-Type: application/json
+        body_format: json
+        body:
+          username: "{{ quay.admin_username }}"
+          password: "{{ quay.admin_password }}"
+          email: "{{ quay.admin_email }}"
+          access_token: true
+        validate_certs: false
+        timeout: 30
+        status_code: [200, 400]  # 200 = created, 400 = already exists
+      register: user_creation_result
+      retries: 5
+      delay: 30
+      until: user_creation_result.status in [200, 400]
+
+    - name: Handle successful user creation
+      debug:
+        msg:
+          - "✅ Admin user created successfully"
+          - "Username: {{ quay.admin_username }}"
+          - "Response: {{ user_creation_result.json | default('No response body') }}"
+      when: user_creation_result.status == 200
+
+    - name: Handle existing user
+      debug:
+        msg:
+          - "ℹ️  Admin user already exists"
+          - "Username: {{ quay.admin_username }}"
+          - "✅ Admin user is available"
+      when: user_creation_result.status == 400
+
+    - name: Set admin user creation status
+      set_fact:
+        admin_user_created: true
+        admin_user_status: >-
+          {%- if user_creation_result.status == 200 -%}
+          created
+          {%- elif user_creation_result.status == 400 -%}
+          exists
+          {%- else -%}
+          unknown
+          {%- endif -%}
+
+  rescue:
+    - name: Handle admin user creation failure
+      debug:
+        msg:
+          - "❌ Failed to create admin user after retries"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          - "HTTP Status: {{ user_creation_result.status | default('N/A') }}"
+          - "Response: {{ user_creation_result.json | default('No response') }}"
+
+    - name: Display troubleshooting information
+      debug:
+        msg:
+          - "🔍 Troubleshooting steps:"
+          - "1. Check Quay pod status: kubectl get pods -n {{ quay.namespace }}"
+          - "2. Check Quay logs: kubectl logs -n {{ quay.namespace }} -l quay-component=quay-app"
+          - "3. Verify endpoint accessibility: curl -k {{ registry_endpoint }}/health/instance"
+          - "4. Wait longer for Quay to be fully ready"
+
+    - name: Set failed admin user creation status
+      set_fact:
+        admin_user_created: false
+        admin_user_status: failed
+
+    - name: Fail the task
+      fail:
+        msg: "Admin user creation failed after all retries"

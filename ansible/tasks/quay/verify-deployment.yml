@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Verify Quay deployment
+  block:
+    - name: Get Quay registry status
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+      register: quay_registry
+
+    - name: Get Quay pods
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ quay.namespace }}"
+        label_selectors:
+          - "quay-component"
+        field_selectors:
+          - "status.phase=Running"
+      register: quay_pods
+
+    - name: Test registry endpoint
+      uri:
+        url: "{{ quay_registry.resources[0].status.registryEndpoint }}/health/instance"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: health_check
+
+    - name: Display deployment verification results
+      debug:
+        msg:
+          - "🎉 Quay Registry Deployment Verification"
+          - "========================================="
+          - "✅ Registry Status: {{ quay_registry.resources[0].status | default('Unknown') }}"
+          - "✅ Registry Endpoint: {{ quay_registry.resources[0].status.registryEndpoint }}"
+          - "✅ Running Pods: {{ quay_pods.resources | length }}"
+          - "✅ Health Check: {{ health_check.status }}"
+          - "✅ Platform: {{ platform }}"
+          - "✅ Storage Type: {{ storage_config[platform].type }}"
+          - ""
+          - "🔑 Admin User: {{ quay.admin_username }}"
+          - "🌐 Registry URL: {{ quay_registry.resources[0].status.registryEndpoint }}"
+          - ""
+          - "📋 Next Steps:"
+          - "1. Login: podman login {{ quay_registry.resources[0].status.registryEndpoint | regex_replace('^https://') }}"
+          - "2. Access UI: {{ quay_registry.resources[0].status.registryEndpoint }}"
+          - "3. Admin Panel: {{ quay_registry.resources[0].status.registryEndpoint }}/{{ quay.admin_username }}"
+
+  rescue:
+    - name: Handle verification failure
+      debug:
+        msg:
+          - "❌ Deployment verification failed"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"

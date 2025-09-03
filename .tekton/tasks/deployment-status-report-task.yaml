@@ -128,10 +128,6 @@ spec:
         make aro-quay-storage-info || echo "Storage info not available"
         echo ""
         
-        # Certificate Trust Status
-        echo "🔒 Certificate Trust Status:"
-        make aro-quay-verify-trust || echo "Certificate trust verification not available"
-        echo ""
         
         # Edgelm Namespace Pods (if exists)
         echo "🔍 Edgelm Namespace Status:"

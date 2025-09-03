@@ -1,0 +1,132 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Configure OpenShift to trust Quay registry certificate
+  block:
+    - name: Get Quay registry endpoint
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+      register: quay_registry
+      failed_when: 
+        - quay_registry.resources | length == 0
+        - quay_registry.resources[0].status.registryEndpoint is not defined
+
+    - name: Extract registry hostname
+      set_fact:
+        registry_endpoint: "{{ quay_registry.resources[0].status.registryEndpoint }}"
+        registry_hostname: "{{ quay_registry.resources[0].status.registryEndpoint | regex_replace('^https://', '') }}"
+
+    - name: Display registry information
+      debug:
+        msg:
+          - "Registry Endpoint: {{ registry_endpoint }}"
+          - "Registry Hostname: {{ registry_hostname }}"
+
+    - name: Extract OpenShift ingress CA certificate
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: router-ca
+        namespace: openshift-ingress-operator
+      register: router_ca_secret
+
+    - name: Decode CA certificate
+      set_fact:
+        ca_bundle: >-
+          {{
+            router_ca_secret.resources[0].data
+            | dict2items
+            | selectattr('key', 'match', '.*\\.(crt|pem)$')
+            | map(attribute='value')
+            | first
+            | b64decode
+          }}
+
+    - name: Verify CA certificate was extracted
+      assert:
+        that:
+          - ca_bundle | length > 0
+        fail_msg: "Failed to extract CA certificate from router-ca secret"
+
+    - name: Get current cluster image configuration
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Image
+        name: cluster
+      register: cluster_image_config
+
+    - name: Determine ConfigMap name for trusted CAs
+      set_fact:
+        configmap_name: >-
+          {{
+            cluster_image_config.resources[0].spec.additionalTrustedCA.name
+            | default('trusted-registry-cabundles')
+            | default('trusted-registry-cabundles', true)
+          }}
+
+    - name: Create registry key for ConfigMap
+      set_fact:
+        registry_key: "{{ registry_hostname | regex_replace(':', '..') }}"
+
+    - name: Check if trusted CA ConfigMap exists
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ConfigMap
+        name: "{{ configmap_name }}"
+        namespace: openshift-config
+      register: existing_configmap
+
+    - name: Create or update trusted CA ConfigMap
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: "{{ configmap_name }}"
+            namespace: openshift-config
+          data: >-
+            {{
+              (existing_configmap.resources[0].data | default({}))
+              | combine({registry_key: ca_bundle})
+            }}
+        state: present
+      register: configmap_result
+
+    - name: Update cluster image configuration
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: config.openshift.io/v1
+          kind: Image
+          metadata:
+            name: cluster
+          spec:
+            additionalTrustedCA:
+              name: "{{ configmap_name }}"
+        state: present
+        merge_type: merge
+
+    - name: Display trust configuration results
+      debug:
+        msg:
+          - "✅ Certificate trust configured successfully"
+          - "ConfigMap: {{ configmap_name }}"
+          - "Registry: {{ registry_hostname }}"
+          - "⚠️  Note: OpenShift nodes may need to restart to pick up the new CA bundle"
+
+  rescue:
+    - name: Handle certificate trust configuration errors
+      debug:
+        msg:
+          - "❌ Certificate trust configuration failed"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          - "This is non-critical for basic Quay functionality"
+
+    - name: Set trust configuration status
+      set_fact:
+        trust_configured: false

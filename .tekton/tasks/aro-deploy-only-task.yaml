@@ -86,8 +86,8 @@ spec:
         
         # Install required tools
         echo "📦 Installing required tools..."
-        # Install make, libicu, and jq first (needed for makefile operations and Bicep)
-        dnf install -y make libicu jq
+        # Install make, libicu, jq, and python3-pip first (needed for makefile operations and Ansible)
+        dnf install -y make libicu jq python3-pip
         
         # Install Azure CLI
         echo "📦 Installing Azure CLI..."
@@ -102,6 +102,11 @@ spec:
         echo "📦 Installing OpenShift CLI..."
         curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
         mv oc kubectl /usr/local/bin/
+        
+        # Install Ansible and required collections
+        echo "📦 Installing Ansible and required collections..."
+        pip3 install ansible kubernetes
+        ansible-galaxy collection install -r ansible/requirements.yml
         
         # Login to Azure
         echo "🔐 Logging into Azure..."
@@ -145,6 +150,14 @@ spec:
         sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
         export KUBECONFIG="$(pwd)/kubeconfig"
         
+        # Create domain records for ARO (must be done before any oc commands)
+        echo "🔄 Creating domain records for ARO..."
+        make domain-records
+        
+        # Wait a moment for DNS propagation
+        echo "⏳ Waiting for DNS propagation..."
+        sleep 30
+        
         # Verify cluster access
         echo "✅ Verifying cluster access..."
         oc get nodes
@@ -152,10 +165,6 @@ spec:
         # Enable scheduling on master nodes
         echo "🔧 Enabling scheduling on master nodes..."
         make aro-enable-master-scheduling
-        
-        # Create domain records for ARO
-        echo "🔄 Creating domain records for ARO..."
-        make domain-records
         
         # Get cluster information
         echo "📋 Getting cluster information..."
