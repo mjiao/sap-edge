@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 SAP edge team
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Quay Registry Deployment
 
 This directory contains manifests for deploying Red Hat Quay registry on OpenShift.

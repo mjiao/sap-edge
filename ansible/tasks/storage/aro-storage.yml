@@ -22,9 +22,9 @@
           - azure_storage_container | length > 0
         fail_msg: "Missing required Azure storage configuration"
 
-    # Note: Storage account creation is typically handled by external scripts
-    # This task validates that storage is accessible
-    
+  # Note: Storage account creation is typically handled by external scripts
+  # This task validates that storage is accessible
+
   rescue:
     - name: Handle storage configuration errors
       fail:

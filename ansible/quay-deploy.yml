@@ -11,7 +11,7 @@
     # Platform can be 'aro' or 'rosa'
     platform: "{{ platform | default('aro') }}"
     cluster_name: "{{ cluster_name | mandatory }}"
-    
+
     # Storage configuration
     storage_config:
       aro:
@@ -26,7 +26,7 @@
         host: "{{ s3_host | default('s3.amazonaws.com') }}"
         access_key: "{{ aws_access_key_id | default('') }}"
         secret_key: "{{ aws_secret_access_key | default('') }}"
-    
+
     # Quay configuration
     quay:
       namespace: openshift-operators

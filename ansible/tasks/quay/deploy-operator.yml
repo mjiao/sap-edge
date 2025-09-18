@@ -41,7 +41,7 @@
       register: csv_check
       retries: 30
       delay: 20
-      until: 
+      until:
         - csv_check.resources | length > 0
         - csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length > 0
         - (csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase == "Succeeded"

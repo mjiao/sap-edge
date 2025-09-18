@@ -25,9 +25,9 @@
           - aws_secret_access_key | length > 0
         fail_msg: "Missing required S3 storage configuration"
 
-    # Note: S3 bucket creation is typically handled by external scripts
-    # This task validates that storage configuration is complete
-    
+  # Note: S3 bucket creation is typically handled by external scripts
+  # This task validates that storage configuration is complete
+
   rescue:
     - name: Handle storage configuration errors
       fail:
