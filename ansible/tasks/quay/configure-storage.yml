@@ -27,7 +27,7 @@
     - name: Fail if CSV is not ready after timeout
       fail:
         msg: "Quay operator CSV is not in Succeeded phase - operator installation failed"
-      when: 
+      when:
         - operator_csv_timeout | default(false)
         - csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length == 0 or (csv_verify_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase != "Succeeded"
 
@@ -148,7 +148,7 @@
         namespace: "{{ quay.namespace }}"
         kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: secret_check
-      
+
     - name: Confirm secret exists
       assert:
         that:

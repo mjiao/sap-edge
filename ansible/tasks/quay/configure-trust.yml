@@ -13,7 +13,7 @@
         name: "{{ quay.registry_name }}"
         namespace: "{{ quay.namespace }}"
       register: quay_registry
-      failed_when: 
+      failed_when:
         - quay_registry.resources | length == 0
         - quay_registry.resources[0].status.registryEndpoint is not defined
 

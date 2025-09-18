@@ -1,6 +1,6 @@
 {
-  "// SPDX-FileCopyrightText": "2024 SAP edge team",
-  "// SPDX-License-Identifier": "Apache-2.0",
+  "_comment1": "SPDX-FileCopyrightText: 2024 SAP edge team",
+  "_comment2": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {

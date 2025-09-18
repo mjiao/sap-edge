@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 SAP edge team
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Ansible-Based Quay Registry Deployment
 
 This directory contains Ansible playbooks for deploying Red Hat Quay registry on OpenShift platforms (ARO and ROSA) with improved reliability, idempotency, and error handling compared to the bash script approach.

@@ -163,7 +163,7 @@ create_s3_bucket() {
         --bucket "${bucket_name}" \
         --tagging 'TagSet=[
             {Key=purpose,Value=quay},
-            {Key=cluster,Value='${CLUSTER_NAME}'},
+            {Key=cluster,Value='"${CLUSTER_NAME}"'},
             {Key=team,Value=sap-edge},
             {Key=platform,Value=rosa}
         ]'

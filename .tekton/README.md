@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2024 SAP edge team
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Tekton Pipelines
 
 This directory contains Tekton CI/CD pipeline definitions for SAP Edge Integration Cell deployment and testing.

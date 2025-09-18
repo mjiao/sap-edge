@@ -35,7 +35,7 @@
       register: quay_registry
       retries: 30
       delay: 10
-      until: 
+      until:
         - quay_registry.resources | length > 0
         - quay_registry.resources[0].status.registryEndpoint is defined
         - quay_registry.resources[0].status.registryEndpoint | regex_search('^https://')
