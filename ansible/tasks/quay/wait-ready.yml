@@ -21,7 +21,10 @@
       register: quay_pods
       retries: 20
       delay: 30
-      until: quay_pods.resources | length >= 5
+      until:
+        - quay_pods is defined
+        - "'resources' in quay_pods"
+        - quay_pods.resources | length >= 5
 
     - name: Wait for Quay registry endpoint to be available
       kubernetes.core.k8s_info:
@@ -36,9 +39,11 @@
       retries: 30
       delay: 10
       until:
+        - quay_registry is defined
+        - "'resources' in quay_registry"
         - quay_registry.resources | length > 0
         - quay_registry.resources[0].status.registryEndpoint is defined
-        - quay_registry.resources[0].status.registryEndpoint | regex_search('^https://')
+        - quay_registry.resources[0].status.registryEndpoint | regex_search('^https://') is not none
 
     - name: Test Quay HTTP service readiness
       uri:
@@ -64,8 +69,8 @@
       debug:
         msg:
           - "❌ Timeout waiting for Quay registry to be ready"
-          - "Current pod count: {{ (quay_pods.resources | length) | default(0) if quay_pods is defined else 'Unknown' }}"
-          - "Registry endpoint: {{ quay_registry.resources[0].status.registryEndpoint | default('Not available') if quay_registry is defined and quay_registry.resources | length > 0 else 'Not available' }}"
+          - "Current pod count: {{ (quay_pods.resources | length) | default(0) if quay_pods is defined and 'resources' in quay_pods else 'Unknown' }}"
+          - "Registry endpoint: {{ quay_registry.resources[0].status.registryEndpoint | default('Not available') if quay_registry is defined and 'resources' in quay_registry and quay_registry.resources | length > 0 else 'Not available' }}"
           - "Health status: {{ health_check.status | default('Not responding') if health_check is defined else 'Not checked' }}"
 
     - name: Fail the readiness check
