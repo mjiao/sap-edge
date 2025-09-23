@@ -714,16 +714,36 @@ aro-quay-delete:  ## Delete Quay registry and operator from ARO
 
 # Generic Quay Registry targets (work on any cluster with oc context)
 .PHONY: quay-deploy-generic
-quay-deploy-generic:  ## Deploy Quay registry on current oc context (generic)
+quay-deploy-generic:  ## Deploy Quay registry on current oc context - specify PLATFORM=aro|rosa (default: detect)
 	@echo "📦 Deploying Quay registry operator (generic)..."
 	oc apply -f edge-integration-cell/quay-registry/quay-operator-subscription.yaml
 	@echo "⏳ Waiting for Quay operator to be ready..."
 	@timeout 300 bash -c 'until oc get csv -n openshift-operators | grep -q "quay-operator.*Succeeded"; do echo "Waiting for operator..."; sleep 10; done'
-	@echo "🔧 Creating Quay configuration..."
-	oc apply -f edge-integration-cell/quay-registry/aro-quay-config-secret.yaml
-	@echo "🚀 Creating Quay registry instance..."
-	oc apply -f edge-integration-cell/quay-registry/aro-quay-registry.yaml
-	@echo "✅ Quay deployment initiated (generic)"
+	@echo "🔧 Detecting platform and creating appropriate Quay configuration..."
+	@PLATFORM=${PLATFORM}; \
+	if [ -z "$$PLATFORM" ]; then \
+		if oc get nodes -o json | jq -r '.items[0].spec.providerID' | grep -q 'aws://'; then \
+			PLATFORM=rosa; \
+		elif oc get nodes -o json | jq -r '.items[0].spec.providerID' | grep -q 'azure://'; then \
+			PLATFORM=aro; \
+		else \
+			echo "⚠️  Cannot auto-detect platform. Defaulting to ARO. Set PLATFORM=aro or PLATFORM=rosa to override."; \
+			PLATFORM=aro; \
+		fi; \
+	fi; \
+	echo "🎯 Using platform: $$PLATFORM"; \
+	if [ "$$PLATFORM" = "rosa" ]; then \
+		echo "📝 Applying ROSA S3 configuration..."; \
+		oc apply -f edge-integration-cell/quay-registry/rosa-quay-config-secret.yaml; \
+		echo "🚀 Creating ROSA Quay registry instance..."; \
+		oc apply -f edge-integration-cell/quay-registry/rosa-quay-registry.yaml; \
+	else \
+		echo "📝 Applying ARO Azure configuration..."; \
+		oc apply -f edge-integration-cell/quay-registry/aro-quay-config-secret.yaml; \
+		echo "🚀 Creating ARO Quay registry instance..."; \
+		oc apply -f edge-integration-cell/quay-registry/aro-quay-registry.yaml; \
+	fi
+	@echo "✅ Quay deployment initiated ($$PLATFORM platform)"
 
 .PHONY: quay-info-generic
 quay-info-generic:  ## Get Quay registry connection information (generic)
@@ -741,6 +761,137 @@ quay-info-generic:  ## Get Quay registry connection information (generic)
 	else \
 		echo "❌ Quay registry not ready yet"; \
 	fi
+
+# ROSA (Red Hat OpenShift Service on AWS) Quay Registry targets
+.PHONY: rosa-quay-s3-create
+rosa-quay-s3-create:  ## Create S3 bucket for ROSA Quay registry
+	$(call required-environment-variables,CLUSTER_NAME AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
+	@echo "🪣 Creating S3 bucket for ROSA Quay registry..."
+	./hack/rosa/quay-s3-create.sh
+
+.PHONY: rosa-quay-deploy
+rosa-quay-deploy:  ## Deploy Quay registry operator and instance on ROSA with S3 storage (uses Ansible)
+	$(call required-environment-variables,CLUSTER_NAME S3_BUCKET_NAME S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
+	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
+	@echo "🚀 Deploying Quay registry on ROSA with S3 storage (Ansible)..."
+	@S3_HOST_DEFAULT=$${S3_HOST:-s3.$${S3_REGION}.amazonaws.com}; \
+	echo "Using S3 host: $$S3_HOST_DEFAULT"; \
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=rosa \
+		-e cluster_name="${CLUSTER_NAME}" \
+		-e s3_bucket_name="${S3_BUCKET_NAME}" \
+		-e s3_region="${S3_REGION}" \
+		-e s3_host="$$S3_HOST_DEFAULT" \
+		-e aws_access_key_id="${AWS_ACCESS_KEY_ID}" \
+		-e aws_secret_access_key="${AWS_SECRET_ACCESS_KEY}" \
+		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
+		-e quay_admin_email="${QUAY_ADMIN_EMAIL}" \
+		--tags operator,storage,config,registry,wait
+
+.PHONY: rosa-quay-wait-ready
+rosa-quay-wait-ready:  ## Wait for Quay registry to be ready on ROSA
+	@echo "⏳ Waiting for Quay registry to be ready on ROSA..."
+	@timeout 600 bash -c 'until oc get quayregistry test-registry -n openshift-operators -o json 2>/dev/null | jq -r ".status.conditions[] | select(.type==\"Available\") | .status" | grep -q "True"; do echo "Waiting for Quay registry..."; sleep 20; done'
+	@echo "✅ Quay registry is ready on ROSA"
+
+.PHONY: rosa-quay-wait-http-ready
+rosa-quay-wait-http-ready:  ## Wait for Quay registry HTTP service to be ready on ROSA
+	@echo "⏳ Waiting for Quay HTTP service to be ready on ROSA..."
+	@ENDPOINT=$$(oc get quayregistry test-registry -n openshift-operators -o json 2>/dev/null | jq -r '.status.registryEndpoint // "Not ready"'); \
+	if [ "$$ENDPOINT" != "Not ready" ]; then \
+		timeout 300 bash -c "until curl -k -s $$ENDPOINT/health/instance >/dev/null 2>&1; do echo 'Waiting for HTTP service...'; sleep 10; done"; \
+		echo "✅ Quay HTTP service is ready"; \
+	else \
+		echo "❌ Quay endpoint not available yet"; \
+		exit 1; \
+	fi
+
+.PHONY: rosa-quay-deploy-complete
+rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, registry, and trust configuration
+	$(call required-environment-variables,CLUSTER_NAME S3_BUCKET_NAME S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
+	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
+	@echo "🎯 Starting complete ROSA Quay deployment..."
+	@S3_HOST_DEFAULT=$${S3_HOST:-s3.$${S3_REGION}.amazonaws.com}; \
+	echo "Using S3 host: $$S3_HOST_DEFAULT"; \
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=rosa \
+		-e cluster_name="${CLUSTER_NAME}" \
+		-e s3_bucket_name="${S3_BUCKET_NAME}" \
+		-e s3_region="${S3_REGION}" \
+		-e s3_host="$$S3_HOST_DEFAULT" \
+		-e aws_access_key_id="${AWS_ACCESS_KEY_ID}" \
+		-e aws_secret_access_key="${AWS_SECRET_ACCESS_KEY}" \
+		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
+		-e quay_admin_email="${QUAY_ADMIN_EMAIL}"
+	@echo "✅ ROSA Quay deployment completed"
+
+.PHONY: rosa-quay-info
+rosa-quay-info:  ## Get ROSA Quay registry connection information
+	@echo "📋 ROSA Quay Registry Information:"
+	@echo "=================================="
+	@ENDPOINT=$$(oc get quayregistry test-registry -n openshift-operators -o json 2>/dev/null | jq -r '.status.registryEndpoint // "Not ready"'); \
+	if [ "$$ENDPOINT" != "Not ready" ]; then \
+		REGISTRY=$$(echo "$$ENDPOINT" | sed 's/^https:\/\///'); \
+		echo "Registry Endpoint: $$ENDPOINT"; \
+		echo "Registry Host: $$REGISTRY"; \
+		echo "Admin User Path: $$REGISTRY/quayadmin"; \
+		echo "S3 Bucket: $${S3_BUCKET_NAME:-Not set}"; \
+		echo "S3 Region: $${S3_REGION:-Not set}"; \
+		echo ""; \
+		echo "🔑 Admin user should be created automatically"; \
+		echo "🔗 Test login with: podman login $$REGISTRY/quayadmin or docker login $$REGISTRY/quayadmin"; \
+	else \
+		echo "❌ Quay registry not ready yet"; \
+	fi
+
+.PHONY: rosa-quay-create-admin
+rosa-quay-create-admin:  ## Create Quay admin user on ROSA (requires QUAY_ADMIN_PASSWORD, QUAY_ADMIN_EMAIL)
+	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
+	@echo "👤 Creating Quay admin user on ROSA..."
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=rosa \
+		-e cluster_name="${CLUSTER_NAME}" \
+		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
+		-e quay_admin_email="${QUAY_ADMIN_EMAIL}" \
+		--tags admin
+
+.PHONY: rosa-quay-trust-cert
+rosa-quay-trust-cert:  ## Configure ROSA to trust Quay registry certificate
+	@echo "🔒 Configuring ROSA to trust Quay registry certificate..."
+	ansible-playbook ansible/quay-deploy.yml \
+		-i ansible/inventory.yml \
+		-e platform=rosa \
+		-e cluster_name="${CLUSTER_NAME}" \
+		--tags trust
+
+.PHONY: rosa-quay-status
+rosa-quay-status:  ## Check Quay deployment status on ROSA
+	@echo "📊 ROSA Quay Deployment Status:"
+	@echo "==============================="
+	@echo "Operator Status:"
+	@oc get csv -n openshift-operators | grep quay-operator || echo "Quay operator not found"
+	@echo ""
+	@echo "Registry Status:"
+	@oc get quayregistry test-registry -n openshift-operators -o json 2>/dev/null | jq -r '.status.conditions[] | "- \(.type): \(.status) (\(.reason))"' || echo "Registry not found"
+	@echo ""
+	@echo "Pods Status:"
+	@oc get pods -n openshift-operators | grep test-registry || echo "No Quay pods found"
+
+.PHONY: rosa-quay-delete
+rosa-quay-delete:  ## Delete Quay registry and operator from ROSA
+	@echo "🗑️ Deleting Quay registry from ROSA..."
+	oc delete quayregistry test-registry -n openshift-operators --ignore-not-found=true
+	@echo "⏳ Waiting for Quay pods to terminate..."
+	@timeout 120 bash -c 'while oc get pods -n openshift-operators | grep -q test-registry; do echo "Waiting..."; sleep 10; done' || echo "Timeout waiting for pods"
+	@echo "🗑️ Deleting Quay operator..."
+	oc delete subscription quay-operator -n openshift-operators --ignore-not-found=true
+	oc delete csv -n openshift-operators -l operators.coreos.com/quay-operator.openshift-operators --ignore-not-found=true
+	@echo "🧹 Cleaning up secrets and configmaps..."
+	oc delete secret config-bundle-secret -n openshift-operators --ignore-not-found=true
+	@echo "✅ Quay cleanup completed on ROSA"
 
 .PHONY: aro-validate-test-config
 aro-validate-test-config:  ## Validate test configuration before deployment
