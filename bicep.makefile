@@ -641,10 +641,13 @@ aro-quay-create-admin:  ## Create Quay admin user on ARO
 
 .PHONY: aro-quay-trust-cert
 aro-quay-trust-cert:  ## Configure ARO to trust Quay registry certificate (uses Ansible)
+	$(call required-environment-variables,ARO_CLUSTER_NAME)
 	@echo "🔒 Configuring certificate trust using Ansible..."
 	ansible-playbook ansible/quay-deploy.yml \
 		-i ansible/inventory.yml \
 		-e platform=aro \
+		-e cluster_name="${ARO_CLUSTER_NAME}" \
+		-e kubeconfig_path="$(PWD)/kubeconfig" \
 		--tags trust
 
 .PHONY: aro-quay-test-login
@@ -860,6 +863,7 @@ rosa-quay-create-admin:  ## Create Quay admin user on ROSA (requires QUAY_ADMIN_
 
 .PHONY: rosa-quay-trust-cert
 rosa-quay-trust-cert:  ## Configure ROSA to trust Quay registry certificate
+	$(call required-environment-variables,CLUSTER_NAME)
 	@echo "🔒 Configuring ROSA to trust Quay registry certificate..."
 	ansible-playbook ansible/quay-deploy.yml \
 		-i ansible/inventory.yml \
