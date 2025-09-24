@@ -12,10 +12,16 @@
         kind: QuayRegistry
         name: "{{ quay.registry_name }}"
         namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: quay_registry
-      failed_when:
-        - quay_registry.resources | length == 0
-        - quay_registry.resources[0].status.registryEndpoint is not defined
+
+    - name: Validate Quay registry availability
+      assert:
+        that:
+          - quay_registry.resources | length > 0
+          - quay_registry.resources[0].status.registryEndpoint is defined
+          - quay_registry.resources[0].status.registryEndpoint | length > 0
+        fail_msg: "Quay registry not found or endpoint not available"
 
     - name: Extract registry hostname
       set_fact:
@@ -34,6 +40,7 @@
         kind: Secret
         name: router-ca
         namespace: openshift-ingress-operator
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: router_ca_secret
 
     - name: Decode CA certificate
@@ -59,6 +66,7 @@
         api_version: config.openshift.io/v1
         kind: Image
         name: cluster
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: cluster_image_config
 
     - name: Determine ConfigMap name for trusted CAs
@@ -80,6 +88,7 @@
         kind: ConfigMap
         name: "{{ configmap_name }}"
         namespace: openshift-config
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: existing_configmap
 
     - name: Create or update trusted CA ConfigMap
@@ -96,6 +105,7 @@
               | combine({registry_key: ca_bundle})
             }}
         state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       register: configmap_result
 
     - name: Update cluster image configuration
@@ -110,6 +120,7 @@
               name: "{{ configmap_name }}"
         state: present
         merge_type: merge
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
 
     - name: Display trust configuration results
       debug:

@@ -32,8 +32,8 @@
       namespace: openshift-operators
       registry_name: test-registry
       admin_username: quayadmin
-      admin_password: "{{ quay_admin_password | mandatory }}"
-      admin_email: "{{ quay_admin_email | mandatory }}"
+      admin_password: "{{ quay_admin_password | default('') }}"
+      admin_email: "{{ quay_admin_email | default('') }}"
 
   tasks:
     - name: Validate platform parameter

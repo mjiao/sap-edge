@@ -6,6 +6,12 @@
 ---
 - name: Create Quay admin user
   block:
+    - name: Validate required variables for admin user creation
+      assert:
+        that:
+          - quay.admin_password | length > 0
+          - quay.admin_email | length > 0
+        fail_msg: "QUAY_ADMIN_PASSWORD and QUAY_ADMIN_EMAIL must be set for admin user creation"
     - name: Get Quay registry endpoint
       kubernetes.core.k8s_info:
         api_version: quay.redhat.com/v1
