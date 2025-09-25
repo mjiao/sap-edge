@@ -62,8 +62,89 @@
       include_tasks: tasks/quay/wait-ready.yml
       tags: wait
 
-    - name: Configure certificate trust
-      include_tasks: tasks/quay/configure-trust.yml
+    - name: TRUST TEST - Direct trust configuration
+      debug:
+        msg: "🔍 Direct trust configuration in main playbook"
+      tags: trust
+
+    - name: Get Quay registry endpoint for trust
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: quay_registry_trust
+      tags: trust
+
+    - name: Extract registry hostname for trust
+      set_fact:
+        trust_registry_endpoint: "{{ quay_registry_trust.resources[0].status.registryEndpoint }}"
+        trust_registry_hostname: "{{ quay_registry_trust.resources[0].status.registryEndpoint | regex_replace('^https://', '') }}"
+      tags: trust
+
+    - name: Display registry information for trust
+      debug:
+        msg:
+          - "Registry Endpoint: {{ trust_registry_endpoint }}"
+          - "Registry Hostname: {{ trust_registry_hostname }}"
+      tags: trust
+
+    - name: Extract OpenShift ingress CA certificate for trust
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: router-ca
+        namespace: openshift-ingress-operator
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: router_ca_secret_trust
+      tags: trust
+
+    - name: Decode CA certificate for trust
+      set_fact:
+        trust_ca_bundle: "{{ router_ca_secret_trust.resources[0].data['tls.crt'] | b64decode }}"
+      when: "'tls.crt' in router_ca_secret_trust.resources[0].data"
+      tags: trust
+
+    - name: Create or update trusted CA ConfigMap
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: trusted-registry-cabundles
+            namespace: openshift-config
+          data:
+            "{{ trust_registry_hostname | regex_replace(':', '..') }}": "{{ trust_ca_bundle }}"
+        state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: trust_ca_bundle is defined
+      tags: trust
+
+    - name: Update cluster image configuration with trust
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: config.openshift.io/v1
+          kind: Image
+          metadata:
+            name: cluster
+          spec:
+            additionalTrustedCA:
+              name: trusted-registry-cabundles
+        state: present
+        merge_type: merge
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: trust_ca_bundle is defined
+      tags: trust
+
+    - name: Display trust configuration results
+      debug:
+        msg:
+          - "✅ Certificate trust configured successfully"
+          - "Registry: {{ trust_registry_hostname }}"
+          - "ConfigMap: trusted-registry-cabundles created in openshift-config"
+          - "⚠️  Note: OpenShift nodes may need to restart"
+      when: trust_ca_bundle is defined
       tags: trust
 
     - name: Create admin user
