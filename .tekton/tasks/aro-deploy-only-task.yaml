@@ -30,6 +30,17 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing Red Hat pull secret"
       default: "redhat-pull-secret"
+  results:
+    - name: aro-console-url
+      description: "ARO cluster console URL"
+    - name: aro-api-url
+      description: "ARO cluster API server URL"
+    - name: aro-username
+      description: "ARO cluster admin username"
+    - name: aro-password
+      description: "ARO cluster admin password"
+    - name: kubeconfig
+      description: "ARO cluster kubeconfig content"
   workspaces:
     - name: source
   steps:
@@ -170,6 +181,40 @@ spec:
         echo "📋 Getting cluster information..."
         make aro-cluster-status
         echo "API URL: $(make aro-cluster-url | tail -1)"
+
+        # Get ARO credentials and connection information
+        echo ""
+        echo "🔑 ARO Cluster Access Information:"
+        echo "=================================="
+        echo "🔍 Retrieving ARO credentials..."
+        ARO_CREDENTIALS=$(az aro list-credentials --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --output json 2>/dev/null)
+        if [ $? -ne 0 ] || [ -z "$ARO_CREDENTIALS" ]; then
+          echo "❌ Failed to retrieve ARO credentials"
+          exit 1
+        fi
+
+        ARO_API_URL=$(make aro-cluster-url | tail -1)
+        # Remove :6443 port from API URL and replace api. with console-openshift-console.apps.
+        ARO_CONSOLE_URL="${ARO_API_URL/api./console-openshift-console.apps.}"
+        ARO_CONSOLE_URL="${ARO_CONSOLE_URL/:6443/}"
+        ARO_USERNAME=$(echo "$ARO_CREDENTIALS" | jq -r '.kubeadminUsername' 2>/dev/null)
+        ARO_PASSWORD=$(echo "$ARO_CREDENTIALS" | jq -r '.kubeadminPassword' 2>/dev/null)
+
+        # Validate that we got valid credentials
+        if [ "$ARO_USERNAME" = "null" ] || [ "$ARO_PASSWORD" = "null" ] || [ -z "$ARO_USERNAME" ] || [ -z "$ARO_PASSWORD" ]; then
+          echo "❌ Failed to parse ARO credentials. Raw output:"
+          echo "$ARO_CREDENTIALS"
+          exit 1
+        fi
+
+        echo "🌐 Console URL: $ARO_CONSOLE_URL"
+        echo "👤 Admin Username: $ARO_USERNAME"
+        echo "🔐 Admin Password: $ARO_PASSWORD"
+        echo "🔗 API Server URL: $ARO_API_URL"
+        echo ""
+        echo "📋 Kubeconfig Content:"
+        echo "======================"
+        cat kubeconfig
         
         # Save deployment info
         cat > aro-deployment-info.txt << EOF
@@ -177,9 +222,49 @@ spec:
         ARO_RESOURCE_GROUP=${ARO_RESOURCE_GROUP}
         ARO_LOCATION=${ARO_LOCATION}
         ARO_VERSION=${ARO_VERSION}
+        ARO_CONSOLE_URL=$ARO_CONSOLE_URL
+        ARO_API_URL=$ARO_API_URL
+        ARO_USERNAME=$ARO_USERNAME
+        ARO_PASSWORD=$ARO_PASSWORD
         POSTGRES_DEPLOYED=false
         REDIS_DEPLOYED=false
         DEPLOYMENT_STATUS=SUCCESS
         EOF
         
         echo "💾 ARO deployment information saved to aro-deployment-info.txt"
+
+        # Write outputs to Tekton results for web UI display
+        echo "📤 Writing outputs to Tekton results..."
+        echo -n "$ARO_CONSOLE_URL" > $(results.aro-console-url.path)
+        echo -n "$ARO_API_URL" > $(results.aro-api-url.path)
+        echo -n "$ARO_USERNAME" > $(results.aro-username.path)
+        echo -n "$ARO_PASSWORD" > $(results.aro-password.path)
+
+        # Create a minimal kubeconfig for results (without certificates due to size limits)
+        cat > minimal-kubeconfig.yaml << EOF
+        apiVersion: v1
+        kind: Config
+        clusters:
+        - cluster:
+            server: $ARO_API_URL
+            insecure-skip-tls-verify: true
+          name: ${ARO_CLUSTER_NAME}
+        contexts:
+        - context:
+            cluster: ${ARO_CLUSTER_NAME}
+            user: kubeadmin
+          name: kubeadmin@${ARO_CLUSTER_NAME}
+        current-context: kubeadmin@${ARO_CLUSTER_NAME}
+        users:
+        - name: kubeadmin
+          user:
+            username: $ARO_USERNAME
+            password: $ARO_PASSWORD
+
+        # Note: Full kubeconfig with certificates saved as 'kubeconfig' file
+        # Use: oc login $ARO_API_URL -u $ARO_USERNAME -p $ARO_PASSWORD --insecure-skip-tls-verify
+        EOF
+
+        cat minimal-kubeconfig.yaml > $(results.kubeconfig.path)
+
+        echo "✅ All outputs available in Pipeline web UI 'Output' tab"
