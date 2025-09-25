@@ -177,7 +177,7 @@ spec:
             - rbhandar
             - ksatarin
         - name: description
-          value: "ARO cluster, Quay registry, and edgelm namespace validation completed successfully. Final approval for pipeline completion."
+          value: "ARO cluster , Quay registry, and edgelm namespace validation completed successfully. Final approval for pipeline completion."
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
