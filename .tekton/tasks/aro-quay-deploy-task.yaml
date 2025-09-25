@@ -167,3 +167,42 @@ spec:
         EOF
         
         echo "💾 Deployment information saved to quay-deployment-info.txt"
+
+        # Display certificate trust configuration status
+        echo ""
+        echo "🔒 Certificate Trust Configuration Status:"
+        echo "=========================================="
+
+        # Check if trusted CA ConfigMap exists
+        if oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ ConfigMap 'trusted-registry-cabundles' exists in openshift-config namespace"
+            echo "📋 ConfigMap contents:"
+            oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | grep -A 10 "data:" || echo "   (Unable to display data)"
+        else
+            echo "❌ ConfigMap 'trusted-registry-cabundles' not found in openshift-config namespace"
+        fi
+
+        # Check cluster Image configuration
+        echo ""
+        echo "🔧 Cluster Image Configuration:"
+        ADDITIONAL_TRUSTED_CA=$(oc get image.config.openshift.io cluster -o jsonpath='{.spec.additionalTrustedCA.name}' 2>/dev/null || echo "")
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ]; then
+            echo "✅ additionalTrustedCA configured: $ADDITIONAL_TRUSTED_CA"
+        else
+            echo "❌ additionalTrustedCA not configured"
+        fi
+
+        # Get Quay registry endpoint for reference
+        QUAY_ENDPOINT=$(oc get quayregistry test-registry -n openshift-operators -o jsonpath='{.status.registryEndpoint}' 2>/dev/null || echo "Not available")
+        echo ""
+        echo "📡 Quay Registry Endpoint: $QUAY_ENDPOINT"
+        echo ""
+        echo "🔍 Certificate Trust Summary:"
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ] && oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ Certificate trust is properly configured"
+            echo "✅ OpenShift nodes should trust the Quay registry certificates"
+        else
+            echo "⚠️  Certificate trust may not be fully configured"
+            echo "⚠️  You may need to run: make aro-quay-trust-cert"
+        fi
+        echo ""
