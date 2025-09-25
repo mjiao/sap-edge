@@ -176,8 +176,15 @@ spec:
         # Check if trusted CA ConfigMap exists
         if oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
             echo "✅ ConfigMap 'trusted-registry-cabundles' exists in openshift-config namespace"
-            echo "📋 ConfigMap contents:"
-            oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | grep -A 10 "data:" || echo "   (Unable to display data)"
+            echo ""
+            echo "📋 Certificate Content (copy-ready format):"
+            echo "============================================"
+            # Extract just the certificate data in a clean format
+            oc get configmap trusted-registry-cabundles -n openshift-config -o jsonpath='{.data}' | jq -r 'to_entries[] | .value' 2>/dev/null || {
+                echo "📋 Certificate data from ConfigMap:"
+                oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | sed -n '/^data:/,/^[^[:space:]]/p' | sed '$d' | sed 's/^  [^:]*: |$//' | sed 's/^    //'
+            }
+            echo "============================================"
         else
             echo "❌ ConfigMap 'trusted-registry-cabundles' not found in openshift-config namespace"
         fi
