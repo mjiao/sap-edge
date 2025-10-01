@@ -16,11 +16,11 @@ param ipv4Address string
 @description('A record time to live (TTL)')
 param TTL int = 3600
 
-resource domainZone 'Microsoft.Network/dnsZones@2018-05-01' existing = {
+resource domainZone 'Microsoft.Network/dnsZones@2023-07-01-preview' existing = {
   name: domainZoneName
 }
 
-resource record 'Microsoft.Network/dnsZones/A@2018-05-01' = {
+resource record 'Microsoft.Network/dnsZones/A@2023-07-01-preview' = {
   parent: domainZone
   name: recordName
   properties: {

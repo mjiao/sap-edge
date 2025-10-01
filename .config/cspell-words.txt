@@ -72,6 +72,9 @@ tostring
 quayregistry
 quayadmin
 esac
+eicadmin
+Burstable
+sslmode
 cabundles
 selectattr
 equalto
