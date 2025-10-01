@@ -66,3 +66,9 @@ Kodes
 tflint
 tfstate
 tfsec
+Schedulable
+elif
+tostring
+quayregistry
+quayadmin
+esac
