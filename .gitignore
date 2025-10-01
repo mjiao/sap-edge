@@ -9,7 +9,10 @@
 .env
 node_modules
 kubeconfig
+.vscode/
 rosa/terraform/.terraform
 rosa/terraform/terraform.tfvars
 rosa/terraform/backend.config
 rosa/terraform/.terraform.lock.hcl
+
+CLAUDE.md
