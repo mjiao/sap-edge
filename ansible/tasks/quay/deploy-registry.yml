@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Deploy Quay registry instance
+  block:
+    - name: Check if Quay registry already exists
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: existing_registry
+
+    - name: Create Quay registry instance
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: quay.redhat.com/v1
+          kind: QuayRegistry
+          metadata:
+            name: "{{ quay.registry_name }}"
+            namespace: "{{ quay.namespace }}"
+          spec:
+            configBundleSecret: config-bundle-secret
+            components:
+              - kind: clair
+                managed: true
+              - kind: postgres
+                managed: true
+              - kind: objectstorage
+                managed: false  # Use external storage via config bundle
+              - kind: redis
+                managed: true
+              - kind: horizontalpodautoscaler
+                managed: true
+              - kind: route
+                managed: true
+              - kind: mirror
+                managed: true
+              - kind: monitoring
+                managed: true
+              - kind: tls
+                managed: true
+              - kind: quay
+                managed: true
+              - kind: clairpostgres
+                managed: true
+        state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: existing_registry.resources | length == 0
+
+    - name: Wait for Quay registry to be created
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        wait: true
+        wait_timeout: 60
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: created_registry
+
+    - name: Display registry creation status
+      debug:
+        msg:
+          - "✅ Quay registry instance created"
+          - "Registry Name: {{ quay.registry_name }}"
+          - "Namespace: {{ quay.namespace }}"
+          - "Status: {{ created_registry.resources[0].status | default('Pending') }}"
+
+  rescue:
+    - name: Handle registry creation failure
+      debug:
+        msg:
+          - "❌ Failed to create Quay registry instance"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"
+
+    - name: Fail the registry creation
+      fail:
+        msg: "Quay registry instance creation failed"

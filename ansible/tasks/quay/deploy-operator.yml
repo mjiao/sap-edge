@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Deploy Quay operator
+  block:
+    - name: Check if Quay operator subscription already exists
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: quay-operator
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: existing_subscription
+
+    - name: Create Quay operator subscription
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: quay-operator
+            namespace: "{{ quay.namespace }}"
+          spec:
+            channel: stable-3.11
+            name: quay-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+        state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: existing_subscription.resources | length == 0
+
+    - name: Wait for Quay operator CSV to be installed
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: csv_check
+      retries: 30
+      delay: 20
+      until:
+        - csv_check.resources | length > 0
+        - csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | list | length > 0
+        - (csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase == "Succeeded"
+
+    - name: Display operator installation status
+      debug:
+        msg:
+          - "✅ Quay operator installed successfully"
+          - "CSV Name: {{ (csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).metadata.name }}"
+          - "CSV Version: {{ (csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).spec.version }}"
+          - "CSV Phase: {{ (csv_check.resources | selectattr('metadata.name', 'match', '^quay-operator\\.v.*') | first).status.phase }}"
+          - "Operator ready to create QuayRegistry resources"
+
+  rescue:
+    - name: Handle operator installation timeout
+      debug:
+        msg:
+          - "⚠️  Quay operator CSV check timed out"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          - "ℹ️  Operator may still be installing in background"
+          - "ℹ️  Continuing with deployment - will verify CSV status later"
+
+    - name: Set operator timeout flag
+      set_fact:
+        operator_csv_timeout: true

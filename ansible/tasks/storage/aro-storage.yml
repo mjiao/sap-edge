@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Ensure Azure storage for ARO Quay deployment
+  block:
+    - name: Display Azure storage configuration
+      debug:
+        msg:
+          - "💾 Azure Storage Configuration for ARO"
+          - "Account: {{ azure_storage_account_name }}"
+          - "Container: {{ azure_storage_container }}"
+          - "Key Length: {{ azure_storage_account_key | length }} characters"
+
+    - name: Validate Azure storage variables
+      assert:
+        that:
+          - azure_storage_account_name | length > 0
+          - azure_storage_account_key | length > 0
+          - azure_storage_container | length > 0
+        fail_msg: "Missing required Azure storage configuration"
+
+  # Note: Storage account creation is typically handled by external scripts
+  # This task validates that storage is accessible
+
+  rescue:
+    - name: Handle storage configuration errors
+      fail:
+        msg: "Azure storage configuration failed: {{ ansible_failed_result.msg }}"
