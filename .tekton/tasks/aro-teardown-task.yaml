@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-teardown
+spec:
+  params:
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials and ARO resource group"
+      default: "azure-sp-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: teardown-aro
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "60m"       # Teardown can take time
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ARO_CLUSTER_NAME
+          value: "$(params.aroClusterName)"
+      envFrom:
+        - secretRef:
+            name: $(params.azureSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "📦 Installing required packages..."
+        # Install make, libicu, and jq first (needed for makefile operations)
+        dnf install -y make libicu jq
+        
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        dnf install -y azure-cli
+
+        # Environment variables are now directly available from secrets (no conversion needed)
+        
+        echo "🔐 Logging into Azure..."
+        make azure-login
+
+
+        echo "📋 Setting subscription..."
+        make azure-set-subscription
+        
+        # Check if resource group exists
+        if ! make aro-resource-group-exists >/dev/null 2>&1; then
+          echo "✅ Resource group $ARO_RESOURCE_GROUP does not exist - nothing to clean up"
+          exit 0
+        fi
+        
+        echo "🗑️ Starting ARO cluster teardown..."
+        
+        # Check if cluster exists and delete it
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
+        if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
+          echo "🗑️ Deleting ARO cluster..."
+          az aro delete --name "$ARO_CLUSTER_NAME" --resource-group "$ARO_RESOURCE_GROUP" --yes --no-wait
+          
+          echo "⏳ Waiting for cluster deletion to complete..."
+          while true; do
+            CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
+            if [[ "$CLUSTER_EXISTS_RESULT" == "false" ]]; then
+              echo "✅ ARO cluster deleted successfully!"
+              break
+            else
+              echo "⏳ Cluster still being deleted... waiting 60 seconds"
+              sleep 60
+            fi
+          done
+        else
+          echo "ℹ️ ARO cluster $ARO_CLUSTER_NAME does not exist"
+        fi
+        
+        # Clean up ARO-related resources only (keeping resource group)
+        make aro-cleanup-all-services
+        
+        echo "✅ ARO cluster teardown completed successfully!"
+        echo "ℹ️ Resource group '$ARO_RESOURCE_GROUP' has been preserved" 

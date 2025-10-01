@@ -1,0 +1,270 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-deploy-only
+spec:
+  description: Deploy ARO cluster only (no PostgreSQL/Redis services)
+  params:
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+  results:
+    - name: aro-console-url
+      description: "ARO cluster console URL"
+    - name: aro-api-url
+      description: "ARO cluster API server URL"
+    - name: aro-username
+      description: "ARO cluster admin username"
+    - name: aro-password
+      description: "ARO cluster admin password"
+    - name: kubeconfig
+      description: "ARO cluster kubeconfig content"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-aro-only
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_ID
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_SECRET
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: TENANT_ID
+        - name: ARO_RESOURCE_GROUP
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_RESOURCE_GROUP
+        - name: ARO_DOMAIN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_DOMAIN
+        - name: PULL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.pullSecretName)
+              key: PULL_SECRET
+        - name: ARO_LOCATION
+          value: $(params.aroLocation)
+        - name: ARO_CLUSTER_NAME
+          value: $(params.aroClusterName)
+        - name: ARO_VERSION
+          value: $(params.aroVersion)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🚀 Starting ARO cluster deployment (no PostgreSQL/Redis)..."
+        
+        echo "🔧 Using configuration:"
+        echo "  ARO_CLUSTER_NAME: ${ARO_CLUSTER_NAME}"
+        echo "  ARO_LOCATION: ${ARO_LOCATION}"
+        echo "  ARO_VERSION: ${ARO_VERSION}"
+        
+        # Install required tools
+        echo "📦 Installing required tools..."
+        # Install make, libicu, jq, and python3-pip first (needed for makefile operations and Ansible)
+        dnf install -y make libicu jq python3-pip
+        
+        # Install Azure CLI
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
+        
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+        mv oc kubectl /usr/local/bin/
+        
+        # Install Ansible and required collections
+        echo "📦 Installing Ansible and required collections..."
+        pip3 install ansible kubernetes
+        ansible-galaxy collection install -r ansible/requirements.yml
+        
+        # Login to Azure
+        echo "🔐 Logging into Azure..."
+        make azure-login
+        
+        echo "📋 Complete ARO Deployment Configuration:"
+        echo "  Cluster Name: ${ARO_CLUSTER_NAME}"
+        echo "  Location: ${ARO_LOCATION}"
+        echo "  Version: ${ARO_VERSION}"
+        echo "  Resource Group: ${ARO_RESOURCE_GROUP}"
+        echo "  Domain: ${ARO_DOMAIN}"
+        echo "  PostgreSQL: false (not deployed)"
+        echo "  Redis: false (not deployed)"
+        
+        # Check if resource group exists, create if needed
+        echo "🏗️ Ensuring resource group exists..."
+        make aro-resource-group-create
+        
+        # Deploy ARO cluster only (no PostgreSQL/Redis)
+        echo "🚀 Deploying ARO cluster only..."
+        if ! make aro-deploy-only; then
+          echo "❌ ARO cluster deployment failed"
+          exit 1
+        fi
+        
+        # Wait for cluster to be ready
+        echo "⏳ Waiting for ARO cluster to be ready..."
+        if ! make aro-wait-for-ready; then
+          echo "❌ ARO cluster failed to become ready"
+          exit 1
+        fi
+        
+        echo "✅ ARO cluster deployment completed successfully!"
+        
+        # Get ARO credentials and login to cluster for configuration
+        echo "🔐 Getting ARO credentials..."
+        rm -f kubeconfig kubeconfig.backup
+        az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        echo "🔧 Adding insecure TLS settings to kubeconfig..."
+        cp kubeconfig kubeconfig.backup
+        sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        # Create domain records for ARO (must be done before any oc commands)
+        echo "🔄 Creating domain records for ARO..."
+        make domain-records
+        
+        # Wait a moment for DNS propagation
+        echo "⏳ Waiting for DNS propagation..."
+        sleep 30
+        
+        # Verify cluster access
+        echo "✅ Verifying cluster access..."
+        oc get nodes
+        
+        # Enable scheduling on master nodes
+        echo "🔧 Enabling scheduling on master nodes..."
+        make aro-enable-master-scheduling
+        
+        # Get cluster information
+        echo "📋 Getting cluster information..."
+        make aro-cluster-status
+        echo "API URL: $(make aro-cluster-url | tail -1)"
+
+        # Get ARO credentials and connection information
+        echo ""
+        echo "🔑 ARO Cluster Access Information:"
+        echo "=================================="
+        echo "🔍 Retrieving ARO credentials..."
+        ARO_CREDENTIALS=$(az aro list-credentials --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --output json 2>/dev/null)
+        if [ $? -ne 0 ] || [ -z "$ARO_CREDENTIALS" ]; then
+          echo "❌ Failed to retrieve ARO credentials"
+          exit 1
+        fi
+
+        ARO_API_URL=$(make aro-cluster-url | tail -1)
+        # Remove :6443 port from API URL and replace api. with console-openshift-console.apps.
+        ARO_CONSOLE_URL="${ARO_API_URL/api./console-openshift-console.apps.}"
+        ARO_CONSOLE_URL="${ARO_CONSOLE_URL/:6443/}"
+        ARO_USERNAME=$(echo "$ARO_CREDENTIALS" | jq -r '.kubeadminUsername' 2>/dev/null)
+        ARO_PASSWORD=$(echo "$ARO_CREDENTIALS" | jq -r '.kubeadminPassword' 2>/dev/null)
+
+        # Validate that we got valid credentials
+        if [ "$ARO_USERNAME" = "null" ] || [ "$ARO_PASSWORD" = "null" ] || [ -z "$ARO_USERNAME" ] || [ -z "$ARO_PASSWORD" ]; then
+          echo "❌ Failed to parse ARO credentials. Raw output:"
+          echo "$ARO_CREDENTIALS"
+          exit 1
+        fi
+
+        echo "🌐 Console URL: $ARO_CONSOLE_URL"
+        echo "👤 Admin Username: $ARO_USERNAME"
+        echo "🔐 Admin Password: $ARO_PASSWORD"
+        echo "🔗 API Server URL: $ARO_API_URL"
+        echo ""
+        echo "📋 Kubeconfig Content:"
+        echo "======================"
+        cat kubeconfig
+        
+        # Save deployment info
+        cat > aro-deployment-info.txt << EOF
+        ARO_CLUSTER_NAME=${ARO_CLUSTER_NAME}
+        ARO_RESOURCE_GROUP=${ARO_RESOURCE_GROUP}
+        ARO_LOCATION=${ARO_LOCATION}
+        ARO_VERSION=${ARO_VERSION}
+        ARO_CONSOLE_URL=$ARO_CONSOLE_URL
+        ARO_API_URL=$ARO_API_URL
+        ARO_USERNAME=$ARO_USERNAME
+        ARO_PASSWORD=$ARO_PASSWORD
+        POSTGRES_DEPLOYED=false
+        REDIS_DEPLOYED=false
+        DEPLOYMENT_STATUS=SUCCESS
+        EOF
+        
+        echo "💾 ARO deployment information saved to aro-deployment-info.txt"
+
+        # Write outputs to Tekton results for web UI display
+        echo "📤 Writing outputs to Tekton results..."
+        echo -n "$ARO_CONSOLE_URL" > $(results.aro-console-url.path)
+        echo -n "$ARO_API_URL" > $(results.aro-api-url.path)
+        echo -n "$ARO_USERNAME" > $(results.aro-username.path)
+        echo -n "$ARO_PASSWORD" > $(results.aro-password.path)
+
+        # Create a minimal kubeconfig for results (without certificates due to size limits)
+        cat > minimal-kubeconfig.yaml << EOF
+        apiVersion: v1
+        kind: Config
+        clusters:
+        - cluster:
+            server: $ARO_API_URL
+            insecure-skip-tls-verify: true
+          name: ${ARO_CLUSTER_NAME}
+        contexts:
+        - context:
+            cluster: ${ARO_CLUSTER_NAME}
+            user: kubeadmin
+          name: kubeadmin@${ARO_CLUSTER_NAME}
+        current-context: kubeadmin@${ARO_CLUSTER_NAME}
+        users:
+        - name: kubeadmin
+          user:
+            username: $ARO_USERNAME
+            password: $ARO_PASSWORD
+
+        # Note: Full kubeconfig with certificates saved as 'kubeconfig' file
+        # Use: oc login $ARO_API_URL -u $ARO_USERNAME -p $ARO_PASSWORD --insecure-skip-tls-verify
+        EOF
+
+        cat minimal-kubeconfig.yaml > $(results.kubeconfig.path)
+
+        echo "✅ All outputs available in Pipeline web UI 'Output' tab"

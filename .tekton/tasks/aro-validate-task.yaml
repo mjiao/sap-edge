@@ -1,0 +1,260 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-validate-and-get-access
+spec:
+  params:
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials and ARO resource group"
+      default: "azure-sp-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "azure-postgres-admin-password"
+  workspaces:
+    - name: source
+  steps:
+    - name: validate-and-get-access
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "30m"       # Validation should be quick
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ARO_CLUSTER_NAME
+          value: "$(params.aroClusterName)"
+      envFrom:
+        - secretRef:
+            name: $(params.azureSecretName)
+        - secretRef:
+            name: $(params.postgresAdminPasswordSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "🔧 Validating ARO cluster: ${ARO_CLUSTER_NAME}"
+        echo "📦 Installing dependencies..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Install required tools
+        dnf install -y azure-cli tar jq make libicu
+
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz -C /usr/local/bin oc
+        
+        # Environment variables are now directly available from secrets (no conversion needed)
+        
+        echo "🔐 Logging into Azure..."
+        make azure-login
+        
+        echo "📋 Setting subscription..."
+        make azure-set-subscription
+        
+        echo "🔍 Validating ARO cluster..."
+        
+        # Wait for cluster to be ready
+        echo "⏳ Waiting for ARO cluster to be ready..."
+        while true; do
+          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
+          echo "Cluster status: '$CLUSTER_STATUS'"
+          echo "Status length: ${#CLUSTER_STATUS}"
+          
+          if [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
+            echo "✅ ARO cluster is ready!"
+            break
+          elif [[ "$CLUSTER_STATUS" == "Failed" ]]; then
+            echo "❌ ARO cluster deployment failed!"
+            exit 1
+          else
+            echo "⏳ Cluster still provisioning... waiting 60 seconds"
+            sleep 60
+          fi
+        done
+        
+        # Get cluster URL and credentials
+        CLUSTER_URL=$(make aro-cluster-url | tail -1)
+        echo "🔍 Debug: Getting credentials..."
+        CREDENTIALS_RAW=$(make aro-credentials)
+        echo "🔍 Debug: Raw credentials output:"
+        echo "$CREDENTIALS_RAW"
+        echo "🔍 Debug: End raw credentials"
+        CREDENTIALS_JSON=$(echo "$CREDENTIALS_RAW" | grep -v "Variable is not defined" | grep -v "Not all required variables are defined" | grep -v "az aro list-credentials")
+        echo "🔍 Debug: Filtered JSON:"
+        echo "$CREDENTIALS_JSON"
+        echo "🔍 Debug: End filtered JSON"
+        USERNAME=$(echo "$CREDENTIALS_JSON" | jq -r '.kubeadminUsername')
+        PASSWORD=$(echo "$CREDENTIALS_JSON" | jq -r '.kubeadminPassword')
+        
+        echo "🌐 Cluster URL: $CLUSTER_URL"
+        echo "👤 Username: $USERNAME"
+        echo "🔑 Password: $PASSWORD"
+        
+        # Test cluster connectivity
+        echo "🔗 Testing cluster connectivity..."
+        oc login "$CLUSTER_URL" -u "$USERNAME" -p "$PASSWORD" --insecure-skip-tls-verify=true
+        
+        echo "✅ Cluster validation completed successfully!"
+        echo ""
+        
+        # Generate kubeconfig
+        echo "📄 Generating kubeconfig..."
+        # Get kubeconfig with insecure TLS settings
+        make aro-get-kubeconfig
+        
+        echo "✅ Kubeconfig generated and configured with insecure TLS!"
+        echo "📁 Kubeconfig saved to: $(pwd)/kubeconfig"
+
+        echo "==== BEGIN KUBECONFIG ===="
+        cat kubeconfig
+        echo "==== END KUBECONFIG ===="
+        
+        # Create a downloadable file in workspace
+        cp kubeconfig kubeconfig-$(params.aroClusterName).yaml
+        echo "✅ Kubeconfig saved as: kubeconfig-$(params.aroClusterName).yaml"
+        
+        # Enable scheduling on master nodes
+        echo ""
+        echo "🔧 Enabling scheduling on master nodes..."
+        make aro-enable-master-scheduling
+        
+        echo ""
+        echo "🔍 Getting Azure services information..."
+        
+        # Set expected service names based on cluster name
+        EXPECTED_POSTGRES_NAME="postgres-${ARO_CLUSTER_NAME}"
+        EXPECTED_REDIS_NAME="redis-${ARO_CLUSTER_NAME}"
+        
+        # Get PostgreSQL server information directly
+        POSTGRES_SERVER_NAME=""
+        POSTGRES_SERVER_FQDN=""
+        POSTGRES_ADMIN_USERNAME="eicadmin"
+        POSTGRES_DATABASE_NAME="eic"
+        POSTGRES_CONNECTION_STRING=""
+        
+        POSTGRES_EXISTS=$(make postgres-exists | tail -1)
+        if [[ -n "$POSTGRES_EXISTS" ]]; then
+          POSTGRES_SERVER_NAME="$EXPECTED_POSTGRES_NAME"
+          # Use public FQDN for PostgreSQL server
+          POSTGRES_SERVER_FQDN="${EXPECTED_POSTGRES_NAME}.postgres.database.azure.com"
+          
+          # Try to get connection string (requires admin password from secret)
+          if [[ -n "${POSTGRES_ADMIN_PASSWORD:-}" ]]; then
+            POSTGRES_CONNECTION_STRING="postgresql://${POSTGRES_ADMIN_USERNAME}:${POSTGRES_ADMIN_PASSWORD}@${POSTGRES_SERVER_FQDN}:5432/${POSTGRES_DATABASE_NAME}?sslmode=require"
+          fi
+          
+          echo "✅ Found PostgreSQL server: $POSTGRES_SERVER_NAME"
+        else
+          echo "⚠️ PostgreSQL server not found: $EXPECTED_POSTGRES_NAME"
+        fi
+        
+        # Get Redis cache information directly
+        REDIS_CACHE_NAME=""
+        REDIS_HOST_NAME=""
+        REDIS_PORT=""
+        REDIS_SSL_PORT=""
+        REDIS_ACCESS_KEY=""
+        REDIS_CONNECTION_STRING=""
+        
+        # Get Redis connection information
+        make redis-get-info
+        
+        echo ""
+        echo "📋 ==================================="
+        echo "📋 CLUSTER & SERVICES SUMMARY"
+        echo "📋 ==================================="
+        echo "🌐 Cluster URL: $CLUSTER_URL"
+        echo "👤 Admin Username: $USERNAME"
+        echo "🔑 Admin Password: $PASSWORD"
+        echo "📁 Kubeconfig: kubeconfig-$(params.aroClusterName).yaml"
+        echo ""
+        
+        if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
+          echo "🗄️ PostgreSQL (Public Access):"
+          echo "  Server Name: $POSTGRES_SERVER_NAME"
+          echo "  Public FQDN: $POSTGRES_SERVER_FQDN"
+          echo "  Admin Username: $POSTGRES_ADMIN_USERNAME"
+          echo "  Database: $POSTGRES_DATABASE_NAME"
+          echo "  📡 Note: Accessible from internet (with proper firewall rules)"
+          if [[ -n "$POSTGRES_CONNECTION_STRING" ]]; then
+            echo "  Connection String: $POSTGRES_CONNECTION_STRING"
+          else
+            echo "  Connection String: (requires POSTGRES_ADMIN_PASSWORD from secret)"
+          fi
+          echo ""
+        else
+          echo "🗄️ PostgreSQL: Not deployed"
+          echo ""
+        fi
+        
+        if [[ -n "$REDIS_CACHE_NAME" ]]; then
+          echo "🔴 Redis:"
+          echo "  Cache Name: $REDIS_CACHE_NAME"
+          echo "  Host: $REDIS_HOST_NAME"
+          echo "  Port: $REDIS_PORT"
+          echo "  SSL Port: $REDIS_SSL_PORT"
+          if [[ -n "$REDIS_ACCESS_KEY" ]]; then
+            echo "  Access Key: $REDIS_ACCESS_KEY"
+            echo "  Connection String: $REDIS_CONNECTION_STRING"
+          else
+            echo "  Access Key: (not available - check permissions)"
+            echo "  Connection String: (not available - check permissions)"
+          fi
+          echo ""
+        else
+          echo "🔴 Redis: Not deployed"
+          echo ""
+        fi
+        
+        # Save comprehensive information to files
+        {
+          echo "ARO Cluster & Azure Services Information"
+          echo "======================================="
+          echo "Generated: $(date)"
+          echo "Cluster: $ARO_CLUSTER_NAME"
+          echo "Resource Group: $ARO_RESOURCE_GROUP"
+          echo ""
+          echo "CLUSTER ACCESS:"
+          echo "  Cluster URL: $CLUSTER_URL"
+          echo "  Admin Username: $USERNAME"
+          echo "  Admin Password: $PASSWORD"
+          echo "  Kubeconfig File: kubeconfig-$(params.aroClusterName).yaml"
+          echo ""
+          if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
+            echo "POSTGRESQL (Public Access):"
+            echo "  Server Name: $POSTGRES_SERVER_NAME"
+            echo "  Public FQDN: $POSTGRES_SERVER_FQDN"
+            echo "  Admin Username: $POSTGRES_ADMIN_USERNAME"
+            echo "  Database: $POSTGRES_DATABASE_NAME"
+            echo "  Note: Accessible from internet (with proper firewall rules)"
+            if [[ -n "$POSTGRES_CONNECTION_STRING" ]]; then
+              echo "  Connection String: $POSTGRES_CONNECTION_STRING"
+            fi
+            echo ""
+          fi
+          if [[ -n "$REDIS_CACHE_NAME" ]]; then
+            echo "REDIS:"
+            echo "  Cache Name: $REDIS_CACHE_NAME"
+            echo "  Host: $REDIS_HOST_NAME"
+            echo "  Port: $REDIS_PORT"
+            echo "  SSL Port: $REDIS_SSL_PORT"
+            if [[ -n "$REDIS_ACCESS_KEY" ]]; then
+              echo "  Access Key: $REDIS_ACCESS_KEY"
+              echo "  Connection String: $REDIS_CONNECTION_STRING"
+            fi
+            echo ""
+          fi
+        } > cluster-and-services-info.txt
+        
+        echo "✅ Comprehensive information saved to cluster-and-services-info.txt"
+        echo "🎉 ARO cluster validation, kubeconfig generation, and services discovery completed successfully!"

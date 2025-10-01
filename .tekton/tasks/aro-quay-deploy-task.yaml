@@ -1,0 +1,215 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-quay-deploy
+spec:
+  description: Deploy Quay registry on ARO cluster with Azure storage
+  params:
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: setup-environment
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_ID
+        - name: CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: CLIENT_SECRET
+        - name: TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: TENANT_ID
+        - name: ARO_RESOURCE_GROUP
+          valueFrom:
+            secretKeyRef:
+              name: $(params.azureSecretName)
+              key: ARO_RESOURCE_GROUP
+        - name: ARO_CLUSTER_NAME
+          value: $(params.aroClusterName)
+        - name: ARO_LOCATION
+          value: "northeurope"
+        - name: QUAY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: password
+        - name: QUAY_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: email
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        echo "🚀 Starting Quay registry deployment on ARO..."
+        echo "🔧 Using ARO cluster: ${ARO_CLUSTER_NAME} in ${ARO_LOCATION}"
+        
+        # Install required tools
+        echo "📦 Installing required tools..."
+        # Install make, libicu, jq, and python3-pip first (needed for makefile operations and Ansible)
+        dnf install -y make libicu jq python3-pip
+        
+        # Install Azure CLI
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
+        
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
+        mv oc kubectl /usr/local/bin/
+        
+        # Install Ansible and required collections
+        echo "📦 Installing Ansible and required collections..."
+        pip3 install ansible kubernetes
+        ansible-galaxy collection install -r ansible/requirements.yml
+        
+        # Login to Azure
+        echo "🔐 Logging into Azure..."
+        make azure-login
+        
+        # Get ARO credentials and login to cluster
+        echo "🔐 Getting ARO credentials..."
+        rm -f kubeconfig kubeconfig.backup
+        az aro get-admin-kubeconfig --name "${ARO_CLUSTER_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" --file kubeconfig
+        echo "🔧 Adding insecure TLS settings to kubeconfig..."
+        cp kubeconfig kubeconfig.backup
+        sed '/^    server:/a\    insecure-skip-tls-verify: true' kubeconfig.backup > kubeconfig
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        # Verify cluster access
+        echo "✅ Verifying cluster access..."
+        oc get nodes
+        
+        # Note: ARO cluster should already be deployed by the deploy-aro task
+        echo "ℹ️  Note: Using existing ARO cluster for Quay deployment"
+        
+        # Step 1: Ensure Azure storage for Quay (idempotent)
+        echo "🏗️ Ensuring Azure storage for Quay..."
+        make aro-quay-storage-create
+        
+        # Extract storage info for environment variables
+        echo "📋 Getting storage account information..."
+        STORAGE_ACCOUNTS=$(az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay' && tags.cluster=='${ARO_CLUSTER_NAME}'].name" -o tsv)
+        if [ -z "$STORAGE_ACCOUNTS" ]; then
+          echo "❌ No Quay storage account found for cluster: ${ARO_CLUSTER_NAME}"
+          echo "🔍 Available Quay storage accounts:"
+          az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{name:name,cluster:tags.cluster}" -o table
+          exit 1
+        fi
+        
+        # Use the storage account for this cluster
+        AZURE_STORAGE_ACCOUNT_NAME=$(echo "$STORAGE_ACCOUNTS" | head -1)
+        AZURE_STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group "${ARO_RESOURCE_GROUP}" --account-name "$AZURE_STORAGE_ACCOUNT_NAME" --query "[0].value" -o tsv)
+        export AZURE_STORAGE_ACCOUNT_NAME
+        export AZURE_STORAGE_ACCOUNT_KEY
+        export AZURE_STORAGE_CONTAINER="quay-registry"
+        
+        echo "✅ Storage configuration:"
+        echo "  Account: $AZURE_STORAGE_ACCOUNT_NAME"
+        echo "  Container: $AZURE_STORAGE_CONTAINER"
+        echo "  Cluster: ${ARO_CLUSTER_NAME}"
+        
+        # Step 2: Deploy Quay with complete automation
+        echo "🚀 Deploying Quay registry with complete automation..."
+        make aro-quay-deploy-complete
+        
+        # Step 3: Wait for HTTP service to be ready
+        echo "⏳ Waiting for Quay HTTP service to be ready..."
+        make aro-quay-wait-http-ready
+        
+        # Step 4: Create admin user
+        echo "👤 Creating Quay admin user..."
+        make aro-quay-create-admin
+        
+        # Step 5: Get final status and information
+        echo "📋 Getting Quay registry information..."
+        make aro-quay-info
+        
+        echo "✅ Quay registry deployment completed successfully!"
+        
+        # Save deployment info to workspace for next tasks
+        cat > quay-deployment-info.txt << EOF
+        AZURE_STORAGE_ACCOUNT_NAME=${AZURE_STORAGE_ACCOUNT_NAME}
+        AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
+        ARO_CLUSTER_NAME=${ARO_CLUSTER_NAME}
+        ARO_RESOURCE_GROUP=${ARO_RESOURCE_GROUP}
+        QUAY_DEPLOYMENT_STATUS=SUCCESS
+        EOF
+        
+        echo "💾 Deployment information saved to quay-deployment-info.txt"
+
+        # Display certificate trust configuration status
+        echo ""
+        echo "🔒 Certificate Trust Configuration Status:"
+        echo "=========================================="
+
+        # Check if trusted CA ConfigMap exists
+        if oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ ConfigMap 'trusted-registry-cabundles' exists in openshift-config namespace"
+            echo ""
+            echo "📋 Certificate Content (copy-ready format):"
+            echo "============================================"
+            # Extract just the certificate data in a clean format
+            oc get configmap trusted-registry-cabundles -n openshift-config -o jsonpath='{.data}' | jq -r 'to_entries[] | .value' 2>/dev/null || {
+                echo "📋 Certificate data from ConfigMap:"
+                oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | sed -n '/^data:/,/^[^[:space:]]/p' | sed '$d' | sed 's/^  [^:]*: |$//' | sed 's/^    //'
+            }
+            echo "============================================"
+        else
+            echo "❌ ConfigMap 'trusted-registry-cabundles' not found in openshift-config namespace"
+        fi
+
+        # Check cluster Image configuration
+        echo ""
+        echo "🔧 Cluster Image Configuration:"
+        ADDITIONAL_TRUSTED_CA=$(oc get image.config.openshift.io cluster -o jsonpath='{.spec.additionalTrustedCA.name}' 2>/dev/null || echo "")
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ]; then
+            echo "✅ additionalTrustedCA configured: $ADDITIONAL_TRUSTED_CA"
+        else
+            echo "❌ additionalTrustedCA not configured"
+        fi
+
+        # Get Quay registry endpoint for reference
+        QUAY_ENDPOINT=$(oc get quayregistry test-registry -n openshift-operators -o jsonpath='{.status.registryEndpoint}' 2>/dev/null || echo "Not available")
+        echo ""
+        echo "📡 Quay Registry Endpoint: $QUAY_ENDPOINT"
+        echo ""
+        echo "🔍 Certificate Trust Summary:"
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ] && oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ Certificate trust is properly configured"
+            echo "✅ OpenShift nodes should trust the Quay registry certificates"
+        else
+            echo "⚠️  Certificate trust may not be fully configured"
+            echo "⚠️  You may need to run: make aro-quay-trust-cert"
+        fi
+        echo ""
