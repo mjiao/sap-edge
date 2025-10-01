@@ -10,3 +10,13 @@ version = 1
 path = "./*"
 SPDX-FileCopyrightText = "2024 SAP edge team"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "bicep/*.json"
+SPDX-FileCopyrightText = "2024 SAP edge team"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "*.crt"
+SPDX-FileCopyrightText = "2024 SAP edge team"
+SPDX-License-Identifier = "Apache-2.0"
