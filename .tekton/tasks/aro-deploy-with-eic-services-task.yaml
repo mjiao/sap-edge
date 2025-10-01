@@ -1,0 +1,194 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: aro-deploy-with-eic-services
+spec:
+  description: Deploy ARO cluster with EIC services (PostgreSQL and Redis)
+  params:
+    - name: aroLocation
+      type: string
+      description: "ARO location"
+      default: "northeurope"
+    - name: aroClusterName
+      type: string
+      description: "ARO cluster name"
+    - name: aroVersion
+      type: string
+      description: "ARO version"
+      default: "4.15.35"
+    - name: azureSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Azure service principal credentials, ARO resource group, and ARO domain"
+      default: "azure-sp-secret"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "azure-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy PostgreSQL (true/false)"
+      default: "true"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy Redis (true/false)"
+      default: "true"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-aro-with-eic-services
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "120m"      # ARO deployment can take up to 2 hours
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ARO_LOCATION
+          value: "$(params.aroLocation)"
+        - name: ARO_CLUSTER_NAME
+          value: "$(params.aroClusterName)"
+        - name: ARO_VERSION
+          value: "$(params.aroVersion)"
+        - name: DEPLOY_POSTGRES
+          value: "$(params.deployPostgres)"
+        - name: DEPLOY_REDIS
+          value: "$(params.deployRedis)"
+      envFrom:
+        - secretRef:
+            name: $(params.azureSecretName)
+        - secretRef:
+            name: $(params.pullSecretName)
+        - secretRef:
+            name: $(params.postgresAdminPasswordSecretName)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        # Environment variables are now directly available from secrets (no conversion needed)
+        # PostgreSQL admin password is already available as environment variable from envFrom
+        echo "🔐 PostgreSQL admin password available from secret mount..."
+        
+        echo "📦 Installing required packages..."
+        # Install make, libicu, and jq first (needed for makefile operations)
+        dnf install -y make libicu jq
+        
+        echo "📦 Installing Azure CLI..."
+        # Install Azure CLI using the official Microsoft repository
+        rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+        dnf clean all
+        # Pin to a stable version to avoid HTTP client issues
+        dnf install -y azure-cli-2.59.0
+        
+        echo "🔐 Logging into Azure..."
+        make azure-login
+        
+        echo "🔍 Checking Azure services status..." 
+        # Set fixed PostgreSQL server name
+        POSTGRES_SERVER_NAME="postgres-${ARO_CLUSTER_NAME}"
+        
+        # Initialize deployment flags
+        CLUSTER_EXISTS=false
+        SERVICES_NEED_DEPLOYMENT=false
+        
+        # Check if cluster already exists
+        echo "🔍 Checking existing cluster status..."
+        echo "Using cluster name: $ARO_CLUSTER_NAME"
+        echo "Using resource group: $ARO_RESOURCE_GROUP"
+        
+        CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
+        if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
+          echo "✅ Cluster EXISTS"
+          CLUSTER_EXISTS=true
+          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
+          echo "Found existing cluster with status: $CLUSTER_STATUS"
+          
+          if [[ "$CLUSTER_STATUS" == "Failed" ]]; then
+            echo "🗑️ Cluster is in failed state, cleaning up..."
+            make aro-cleanup-failed
+            echo "⏳ Waiting for failed cluster deletion..."
+            sleep 30
+            CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
+          elif [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
+            echo "✅ Cluster already exists and is ready!"
+            # Check if services need deployment only when cluster exists and is ready
+            echo "🔍 Checking Azure services status..."
+            
+            if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
+              echo "📊 Checking PostgreSQL server status..."
+              POSTGRES_EXISTS=$(make postgres-exists | tail -1)
+              if [[ -n "$POSTGRES_EXISTS" ]]; then
+                echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
+              else
+                echo "📦 PostgreSQL server needs to be created"
+                SERVICES_NEED_DEPLOYMENT=true
+              fi
+            fi
+
+            if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
+              echo "📊 Checking Redis cache status..."
+              REDIS_EXISTS=$(make redis-exists | tail -1)
+              if [[ -n "$REDIS_EXISTS" ]]; then
+                echo "✅ Redis cache already exists: $REDIS_EXISTS"
+              else
+                echo "📦 Redis cache needs to be created"
+                SERVICES_NEED_DEPLOYMENT=true
+              fi
+            fi
+            
+            if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
+              echo "✅ All services are ready, exiting successfully!"
+              exit 0
+            fi
+            # If services need deployment, continue to deployment section
+            break
+          elif [[ "$CLUSTER_STATUS" == "Creating" || "$CLUSTER_STATUS" == "Updating" ]]; then
+            echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
+            if make aro-wait-for-ready; then
+              echo "✅ Cluster is ready!"
+              # Services will be checked in the main deployment section
+            else
+              echo "❌ Cluster deployment failed, cleaning up..."
+              make aro-cleanup-failed
+              sleep 30
+              CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
+            fi
+          fi
+        else
+          echo "📋 No existing cluster found - will deploy full ARO cluster with EIC services"
+        fi
+        
+        echo "🏗️ Creating resource group (idempotent)..."
+        make aro-resource-group-create
+        
+        # Deployment decision logic based on cluster existence
+        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS, SERVICES_NEED_DEPLOYMENT=$SERVICES_NEED_DEPLOYMENT"
+        
+        if [[ "$CLUSTER_EXISTS" == "true" ]]; then
+          if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
+            echo "🚀 Deploying Azure services only (cluster exists)..."
+            make aro-services-deploy-with-retry
+          else
+            echo "✅ Cluster exists and all services are ready - nothing to deploy!"
+          fi
+        else
+          echo "🚀 Deploying full ARO cluster with EIC services (PostgreSQL and Redis)..."
+          
+          # Final safety check - double-check cluster doesn't exist before deploying
+          echo "🔍 Final safety check before deployment..."
+          make aro-final-safety-check
+          
+          make aro-deploy-test
+
+          echo "🔄 Creating domain records for ARO..."
+          make domain-records
+        fi
+
+        echo "✅ ARO deployment with EIC services completed successfully!" 
