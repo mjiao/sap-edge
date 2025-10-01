@@ -1,0 +1,177 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-quay-deploy
+spec:
+  description: Deploy Quay registry on ROSA cluster with S3 storage and certificate trust
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: s3BucketName
+      type: string
+      description: "S3 bucket name for Quay storage"
+    - name: s3Region
+      type: string
+      description: "S3 region"
+      default: "us-east-1"
+    - name: s3Host
+      type: string
+      description: "S3 host"
+      default: "s3.amazonaws.com"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-rosa-quay
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: $(params.clusterName)
+        - name: S3_BUCKET_NAME
+          value: $(params.s3BucketName)
+        - name: S3_REGION
+          value: $(params.s3Region)
+        - name: S3_HOST
+          value: $(params.s3Host)
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: QUAY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: password
+        - name: QUAY_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: $(params.quayAdminPasswordSecretName)
+              key: email
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        echo "🚀 Starting ROSA Quay registry deployment..."
+        echo "============================================"
+        echo "🔧 Configuration:"
+        echo "  Cluster Name: ${CLUSTER_NAME}"
+        echo "  S3 Bucket: ${S3_BUCKET_NAME}"
+        echo "  S3 Region: ${S3_REGION}"
+        echo "  S3 Host: ${S3_HOST}"
+        echo ""
+
+        # Install required tools
+        echo "📦 Installing required tools..."
+        dnf install -y make libicu jq python3-pip
+
+        # Install Ansible and required collections
+        echo "📦 Installing Ansible and required collections..."
+        pip3 install ansible kubernetes
+        ansible-galaxy collection install -r ansible/requirements.yml
+
+        # Verify we can access the cluster
+        echo "🔍 Verifying ROSA cluster access..."
+        oc get nodes
+
+        # Step 1: Complete ROSA Quay deployment with S3 storage
+        echo ""
+        echo "Step 1/4: Deploying Quay registry with S3 storage..."
+        if ! make rosa-quay-deploy-complete; then
+            echo "❌ ROSA Quay deployment failed"
+            exit 1
+        fi
+
+        # Step 2: Wait for Quay to be ready
+        echo ""
+        echo "Step 2/4: Waiting for Quay registry to be ready..."
+        make rosa-quay-wait-ready
+
+        # Step 3: Wait for HTTP service to be ready
+        echo ""
+        echo "Step 3/4: Waiting for Quay HTTP service..."
+        make rosa-quay-wait-http-ready
+
+        # Step 4: Get final status and information
+        echo ""
+        echo "Step 4/4: Getting Quay registry information..."
+        make rosa-quay-info
+
+        echo "✅ ROSA Quay registry deployment completed successfully!"
+
+        # Save deployment info to workspace for next tasks
+        cat > rosa-quay-deployment-info.txt << EOF
+        S3_BUCKET_NAME=${S3_BUCKET_NAME}
+        S3_REGION=${S3_REGION}
+        S3_HOST=${S3_HOST}
+        CLUSTER_NAME=${CLUSTER_NAME}
+        QUAY_DEPLOYMENT_STATUS=SUCCESS
+        EOF
+
+        echo "💾 Deployment information saved to rosa-quay-deployment-info.txt"
+
+        # Display certificate trust configuration status
+        echo ""
+        echo "🔒 Certificate Trust Configuration Status:"
+        echo "=========================================="
+
+        # Check if trusted CA ConfigMap exists
+        if oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ ConfigMap 'trusted-registry-cabundles' exists in openshift-config namespace"
+            echo ""
+            echo "📋 Certificate Content (copy-ready format):"
+            echo "============================================"
+            # Extract just the certificate data in a clean format
+            oc get configmap trusted-registry-cabundles -n openshift-config -o jsonpath='{.data}' | jq -r 'to_entries[] | .value' 2>/dev/null || {
+                echo "📋 Certificate data from ConfigMap:"
+                oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | sed -n '/^data:/,/^[^[:space:]]/p' | sed '$d' | sed 's/^  [^:]*: |$//' | sed 's/^    //'
+            }
+            echo "============================================"
+        else
+            echo "❌ ConfigMap 'trusted-registry-cabundles' not found in openshift-config namespace"
+        fi
+
+        # Check cluster Image configuration
+        echo ""
+        echo "🔧 Cluster Image Configuration:"
+        ADDITIONAL_TRUSTED_CA=$(oc get image.config.openshift.io cluster -o jsonpath='{.spec.additionalTrustedCA.name}' 2>/dev/null || echo "")
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ]; then
+            echo "✅ additionalTrustedCA configured: $ADDITIONAL_TRUSTED_CA"
+        else
+            echo "❌ additionalTrustedCA not configured"
+        fi
+
+        # Get Quay registry endpoint for reference
+        QUAY_ENDPOINT=$(oc get quayregistry test-registry -n openshift-operators -o jsonpath='{.status.registryEndpoint}' 2>/dev/null || echo "Not available")
+        echo ""
+        echo "📡 Quay Registry Endpoint: $QUAY_ENDPOINT"
+        echo ""
+        echo "🔍 Certificate Trust Summary:"
+        if [ -n "$ADDITIONAL_TRUSTED_CA" ] && oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
+            echo "✅ Certificate trust is properly configured"
+            echo "✅ OpenShift nodes should trust the Quay registry certificates"
+        else
+            echo "⚠️  Certificate trust may not be fully configured"
+            echo "⚠️  You may need to run: make rosa-quay-trust-cert"
+        fi
+        echo ""
