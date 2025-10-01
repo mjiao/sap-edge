@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "clusterName": {
+      "value": "sapeic"
+    },
+    "domain": {
+      "value": "sapeic.saponrhel.org"
+    },
+    "version": {
+      "value": "4.17.27"
+    },
+    "masterVmSize": {
+      "value": "Standard_D8s_v3"
+    },
+    "workerVmSize": {
+      "value": "Standard_D4s_v3"
+    },
+    "workerCount": {
+      "value": 3
+    },
+    "workerDiskSizeGB": {
+      "value": 128
+    },
+    "deployPostgres": {
+      "value": true
+    },
+    "deployRedis": {
+      "value": true
+    },
+    "enableAutoShutdown": {
+      "value": true
+    },
+    "shutdownTime": {
+      "value": "19:00"
+    },
+    "testingTags": {
+      "value": {
+        "purpose": "testing",
+        "team": "sap-edge",
+        "autoCleanup": "enabled",
+        "maxLifetime": "7days",
+        "costOptimized": "true",
+        "environment": "test",
+        "owner": "sap-edge-team"
+      }
+    }
+  }
+}
