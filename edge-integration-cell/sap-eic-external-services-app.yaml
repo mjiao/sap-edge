@@ -9,6 +9,8 @@ kind: Application
 metadata:
   name: sap-edge-external-services
   namespace: openshift-gitops
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"  # Deploy before other applications
 spec:
   project: default
   source:
