@@ -37,6 +37,7 @@ validate_requirements() {
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         echo "❌ Missing required environment variables: ${missing_vars[*]}" >&2
         usage
+        exit 1
     fi
     
     # Set default location if not provided
@@ -51,13 +52,24 @@ validate_requirements() {
 
 create_storage_account() {
     echo "🏗️ Creating Azure storage account for Quay registry..."
-    
-    # Generate deterministic storage account name using cluster hash (no timestamp)
-    local cluster_hash
-    cluster_hash=$(echo "${ARO_CLUSTER_NAME}" | sha256sum | cut -c1-16)
-    local storage_account_name="quay${cluster_hash}"
-    
-    echo "Storage account name: ${storage_account_name} (for cluster: ${ARO_CLUSTER_NAME})"
+
+    # Use provided storage account name or generate deterministic one using cluster hash
+    local storage_account_name
+    if [[ -n "${AZURE_STORAGE_ACCOUNT_NAME:-}" ]]; then
+        storage_account_name="${AZURE_STORAGE_ACCOUNT_NAME}"
+        echo "Storage account name: ${storage_account_name} (provided via AZURE_STORAGE_ACCOUNT_NAME)"
+    else
+        # Check for sha256sum availability
+        if ! command -v sha256sum >/dev/null 2>&1; then
+            echo "❌ Error: sha256sum command not found. Please install coreutils or set AZURE_STORAGE_ACCOUNT_NAME manually." >&2
+            exit 1
+        fi
+
+        local cluster_hash
+        cluster_hash=$(echo "${ARO_CLUSTER_NAME}" | sha256sum | cut -c1-16)
+        storage_account_name="quay${cluster_hash}"
+        echo "Storage account name: ${storage_account_name} (generated for cluster: ${ARO_CLUSTER_NAME})"
+    fi
     
     # Check if storage account already exists
     echo "🔍 Checking if storage account already exists..."
@@ -73,7 +85,7 @@ create_storage_account() {
             --sku Standard_LRS \
             --kind StorageV2 \
             --access-tier Hot \
-            --tags purpose=quay cluster="${ARO_CLUSTER_NAME}" team=sap-edge; then
+            --tags "${AZURE_TAGS_QUAY:-purpose=quay cluster=${ARO_CLUSTER_NAME} team=sap-edge}"; then
             echo "✅ Storage account created successfully"
         else
             echo "❌ Failed to create storage account" >&2
@@ -95,18 +107,19 @@ create_storage_account() {
     fi
     
     # Create storage container (idempotent)
+    local container_name="${AZURE_STORAGE_CONTAINER:-quay-registry}"
     echo "📦 Creating storage container..."
-    echo "🔍 Checking if container 'quay-registry' already exists..."
+    echo "🔍 Checking if container '${container_name}' already exists..."
     if az storage container show \
-        --name "quay-registry" \
+        --name "${container_name}" \
         --account-name "${storage_account_name}" \
         --account-key "${storage_key}" >/dev/null 2>&1; then
-        echo "✅ Storage container already exists: quay-registry"
+        echo "✅ Storage container already exists: ${container_name}"
         echo "ℹ️  Reusing existing container"
     else
         echo "📦 Creating new storage container..."
         if az storage container create \
-            --name "quay-registry" \
+            --name "${container_name}" \
             --account-name "${storage_account_name}" \
             --account-key "${storage_key}"; then
             echo "✅ Storage container created successfully"
@@ -121,14 +134,17 @@ create_storage_account() {
     echo "✅ Azure storage is ready!"
     echo "📋 Storage Configuration:"
     echo "   Account Name: ${storage_account_name}"
-    echo "   Container: quay-registry"
+    echo "   Container: ${container_name}"
     echo "   Resource Group: ${ARO_RESOURCE_GROUP}"
     echo "   Cluster: ${ARO_CLUSTER_NAME}"
     echo ""
     echo "🔑 Environment variables for Quay deployment:"
     echo "   export AZURE_STORAGE_ACCOUNT_NAME=${storage_account_name}"
-    echo "   export AZURE_STORAGE_ACCOUNT_KEY=${storage_key}"
-    echo "   export AZURE_STORAGE_CONTAINER=quay-registry"
+    echo "   export AZURE_STORAGE_ACCOUNT_KEY=<use command below to retrieve>"
+    echo "   export AZURE_STORAGE_CONTAINER=${container_name}"
+    echo ""
+    echo "🔐 To securely retrieve the storage key:"
+    echo "   az storage account keys list --resource-group \"${ARO_RESOURCE_GROUP}\" --account-name \"${storage_account_name}\" --query '[0].value' -o tsv"
     echo ""
     echo "♻️  Note: This storage account will be reused for future deployments of cluster '${ARO_CLUSTER_NAME}'"
 }
