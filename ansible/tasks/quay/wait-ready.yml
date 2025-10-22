@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Wait for Quay registry to be ready
+  block:
+    - name: Wait for sufficient Quay pods to be running
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ quay.namespace }}"
+        label_selectors:
+          - "quay-component"
+        field_selectors:
+          - "status.phase=Running"
+        wait: true
+        wait_timeout: 600
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: quay_pods
+      retries: 20
+      delay: 30
+      until:
+        - quay_pods is defined
+        - "'resources' in quay_pods"
+        - quay_pods.resources | length >= 5
+
+    - name: Wait for Quay registry endpoint to be available
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        wait: true
+        wait_timeout: 300
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: quay_registry
+      retries: 30
+      delay: 10
+      until:
+        - quay_registry is defined
+        - "'resources' in quay_registry"
+        - quay_registry.resources | length > 0
+        - quay_registry.resources[0].status.registryEndpoint is defined
+        - quay_registry.resources[0].status.registryEndpoint | regex_search('^https://') is not none
+
+    - name: Test Quay HTTP service readiness
+      uri:
+        url: "{{ quay_registry.resources[0].status.registryEndpoint }}/health/instance"
+        method: GET
+        validate_certs: false
+        timeout: 10
+      register: health_check
+      retries: 20
+      delay: 15
+      until: health_check.status == 200
+
+    - name: Display readiness status
+      debug:
+        msg:
+          - "✅ Quay registry is ready!"
+          - "Registry Endpoint: {{ quay_registry.resources[0].status.registryEndpoint }}"
+          - "Running Pods: {{ quay_pods.resources | length }}"
+          - "Health Check: {{ health_check.status }}"
+
+  rescue:
+    - name: Handle readiness timeout
+      debug:
+        msg:
+          - "❌ Timeout waiting for Quay registry to be ready"
+          - "Current pod count: {{ (quay_pods.resources | length) | default(0) if quay_pods is defined and 'resources' in quay_pods else 'Unknown' }}"
+          - "Registry endpoint: {{ quay_registry.resources[0].status.registryEndpoint | default('Not available') if quay_registry is defined and 'resources' in quay_registry and quay_registry.resources | length > 0 else 'Not available' }}"
+          - "Health status: {{ health_check.status | default('Not responding') if health_check is defined else 'Not checked' }}"
+
+    - name: Fail the readiness check
+      fail:
+        msg: "Quay registry failed to become ready within timeout period"

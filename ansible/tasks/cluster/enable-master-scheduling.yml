@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Enable scheduling on OpenShift master nodes
+  block:
+    - name: Check current master node scheduling status
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Scheduler
+        name: cluster
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: scheduler_config
+
+    - name: Display current scheduler configuration
+      debug:
+        msg:
+          - "🔍 Current master node scheduling status"
+          - "Current mastersSchedulable: {{ scheduler_config.resources[0].spec.mastersSchedulable | default('null (default: false)') }}"
+
+    - name: Check if master scheduling is already enabled
+      set_fact:
+        masters_schedulable: "{{ scheduler_config.resources[0].spec.mastersSchedulable | default(false) }}"
+
+    - name: Skip if master scheduling already enabled
+      debug:
+        msg:
+          - "✅ Master nodes are already schedulable"
+          - "ℹ️  No changes needed"
+      when: masters_schedulable | bool
+
+    - name: Enable scheduling on master nodes
+      kubernetes.core.k8s:
+        api_version: config.openshift.io/v1
+        kind: Scheduler
+        name: cluster
+        definition:
+          spec:
+            mastersSchedulable: true
+        merge_type: merge
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: scheduler_patch
+      when: not (masters_schedulable | bool)
+
+    - name: Wait for configuration to propagate
+      pause:
+        seconds: 2
+      when: not (masters_schedulable | bool)
+
+    - name: Verify configuration change
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Scheduler
+        name: cluster
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: updated_scheduler_config
+      when: not (masters_schedulable | bool)
+
+    - name: Validate master scheduling is enabled
+      assert:
+        that:
+          - updated_scheduler_config.resources[0].spec.mastersSchedulable | bool
+        fail_msg: "❌ Configuration verification failed: mastersSchedulable = {{ updated_scheduler_config.resources[0].spec.mastersSchedulable }}"
+        success_msg: "✅ Configuration verified: mastersSchedulable = {{ updated_scheduler_config.resources[0].spec.mastersSchedulable }}"
+      when: not (masters_schedulable | bool)
+
+    - name: Get master nodes information
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        label_selectors:
+          - "node-role.kubernetes.io/master"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: master_nodes
+
+    - name: Display master nodes status
+      debug:
+        msg:
+          - "📋 Master nodes status:"
+          - "Found {{ master_nodes.resources | length }} master node(s)"
+          - "{% for node in master_nodes.resources %}{{ node.metadata.name }} - {{ node.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first }}{% endfor %}"
+          - ""
+          - "✅ Master nodes can now schedule workloads"
+          - "⚠️  Note: This change affects cluster resource allocation and may impact performance"
+          - "💡 Consider adding tolerations to workloads that should run on master nodes"
+
+  rescue:
+    - name: Handle master scheduling configuration errors
+      debug:
+        msg:
+          - "❌ Failed to enable master node scheduling"
+          - "Error: {{ ansible_failed_result.msg | default('Unknown error') }}"
+          - "Please ensure you have cluster-admin privileges"
+      failed_when: true

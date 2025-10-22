@@ -1,0 +1,163 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+- name: Deploy Quay Registry on OpenShift (ARO/ROSA)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Platform can be 'aro' or 'rosa'
+    platform: "{{ platform | default('aro') }}"
+    cluster_name: "{{ cluster_name | mandatory }}"
+
+    # Storage configuration
+    storage_config:
+      aro:
+        type: azure
+        account_name: "{{ azure_storage_account_name | default('') }}"
+        account_key: "{{ azure_storage_account_key | default('') }}"
+        container: "{{ azure_storage_container | default('quay-registry') }}"
+      rosa:
+        type: s3
+        bucket_name: "{{ s3_bucket_name | default('') }}"
+        region: "{{ s3_region | default('us-east-1') }}"
+        host: "{{ s3_host | default('s3.amazonaws.com') }}"
+        access_key: "{{ aws_access_key_id | default('') }}"
+        secret_key: "{{ aws_secret_access_key | default('') }}"
+
+    # Quay configuration
+    quay:
+      namespace: openshift-operators
+      registry_name: test-registry
+      admin_username: quayadmin
+      admin_password: "{{ quay_admin_password | default('') }}"
+      admin_email: "{{ quay_admin_email | default('') }}"
+
+  tasks:
+    - name: Validate platform parameter
+      assert:
+        that:
+          - platform in ['aro', 'rosa']
+        fail_msg: "Platform must be 'aro' or 'rosa', got '{{ platform }}'"
+
+    - name: Include platform-specific storage tasks
+      include_tasks: "tasks/storage/{{ platform }}-storage.yml"
+      tags: storage
+
+    - name: Deploy Quay operator
+      include_tasks: tasks/quay/deploy-operator.yml
+      tags: operator
+
+    - name: Configure Quay with storage backend
+      include_tasks: tasks/quay/configure-storage.yml
+      tags: config
+
+    - name: Deploy Quay registry instance
+      include_tasks: tasks/quay/deploy-registry.yml
+      tags: registry
+
+    - name: Wait for Quay to be ready
+      include_tasks: tasks/quay/wait-ready.yml
+      tags: wait
+
+    - name: TRUST TEST - Direct trust configuration
+      debug:
+        msg: "🔍 Direct trust configuration in main playbook"
+      tags: trust
+
+    - name: Get Quay registry endpoint for trust
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: "{{ quay.registry_name }}"
+        namespace: "{{ quay.namespace }}"
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: quay_registry_trust
+      tags: trust
+
+    - name: Extract registry hostname for trust
+      set_fact:
+        trust_registry_endpoint: "{{ quay_registry_trust.resources[0].status.registryEndpoint }}"
+        trust_registry_hostname: "{{ quay_registry_trust.resources[0].status.registryEndpoint | regex_replace('^https://', '') }}"
+      tags: trust
+
+    - name: Display registry information for trust
+      debug:
+        msg:
+          - "Registry Endpoint: {{ trust_registry_endpoint }}"
+          - "Registry Hostname: {{ trust_registry_hostname }}"
+      tags: trust
+
+    - name: Extract OpenShift ingress CA certificate for trust
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: router-ca
+        namespace: openshift-ingress-operator
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      register: router_ca_secret_trust
+      tags: trust
+
+    - name: Decode CA certificate for trust
+      set_fact:
+        trust_ca_bundle: "{{ router_ca_secret_trust.resources[0].data['tls.crt'] | b64decode }}"
+      when: "'tls.crt' in router_ca_secret_trust.resources[0].data"
+      tags: trust
+
+    - name: Create registry key for ConfigMap
+      set_fact:
+        registry_key: "{{ trust_registry_hostname | regex_replace(':', '..') }}"
+      tags: trust
+
+    - name: Create or update trusted CA ConfigMap
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: trusted-registry-cabundles
+            namespace: openshift-config
+          data: >-
+            {{
+              {registry_key: trust_ca_bundle}
+            }}
+        state: present
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: trust_ca_bundle is defined
+      tags: trust
+
+    - name: Update cluster image configuration with trust
+      kubernetes.core.k8s:
+        definition:
+          apiVersion: config.openshift.io/v1
+          kind: Image
+          metadata:
+            name: cluster
+          spec:
+            additionalTrustedCA:
+              name: trusted-registry-cabundles
+        state: present
+        merge_type: merge
+        kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+      when: trust_ca_bundle is defined
+      tags: trust
+
+    - name: Display trust configuration results
+      debug:
+        msg:
+          - "✅ Certificate trust configured successfully"
+          - "Registry: {{ trust_registry_hostname }}"
+          - "ConfigMap: trusted-registry-cabundles created in openshift-config"
+          - "⚠️  Note: OpenShift nodes may need to restart"
+      when: trust_ca_bundle is defined
+      tags: trust
+
+    - name: Create admin user
+      include_tasks: tasks/quay/create-admin.yml
+      tags: admin
+
+    - name: Verify deployment
+      include_tasks: tasks/quay/verify-deployment.yml
+      tags: verify
