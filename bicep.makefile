@@ -71,7 +71,7 @@ aro-cluster-check:  ## Check ARO cluster status with detailed information
 	@hack/aro/cluster-check.sh
 
 .PHONY: aro-enable-master-scheduling
-aro-enable-master-scheduling:  ## Enable scheduling on master nodes (mastersSchedulable=true) (uses Ansible)
+aro-enable-master-scheduling: aro-kubeconfig  ## Enable scheduling on master nodes (mastersSchedulable=true) (uses Ansible)
 	@echo "🔧 Enabling master node scheduling using Ansible..."
 	ansible-playbook ansible/enable-master-scheduling.yml \
 		-i ansible/inventory.yml \
