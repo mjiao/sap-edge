@@ -2,6 +2,9 @@ CLUSTER_NAME?=sapeic-cluster
 ROSA_VERSION?=4.14.0
 AWS_REGION?=eu-central-1
 
+# Import centralized tagging from bicep.makefile (if included)
+include bicep.makefile
+
 TERRAFORM_DIRECTORY=./rosa/terraform
 TERRAFORM?=terraform
 TERRAFORM_OPTIONS=-backend-config=./backend.config

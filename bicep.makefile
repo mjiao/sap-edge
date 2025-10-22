@@ -16,6 +16,19 @@ DEPLOY_POSTGRES?=true
 DEPLOY_REDIS?=true
 POSTGRES_ADMIN_PASSWORD?=
 
+# Centralized resource tagging
+COMMON_TAGS_TEAM?=sap-edge
+COMMON_TAGS_PURPOSE_QUAY?=quay
+
+# Centralized Quay configuration
+AZURE_STORAGE_CONTAINER?=quay-registry
+# Azure format: key=value key=value
+AZURE_TAGS_COMMON?=team=$(COMMON_TAGS_TEAM)
+AZURE_TAGS_QUAY?=purpose=$(COMMON_TAGS_PURPOSE_QUAY) cluster=${ARO_CLUSTER_NAME} $(AZURE_TAGS_COMMON)
+# AWS format: {Key=key,Value=value}
+AWS_TAGS_COMMON?={Key=team,Value=$(COMMON_TAGS_TEAM)}
+AWS_TAGS_QUAY?={Key=purpose,Value=$(COMMON_TAGS_PURPOSE_QUAY)},{Key=cluster,Value=$(CLUSTER_NAME)},$(AWS_TAGS_COMMON)
+
 .PHONY: install-bicep
 install-bicep:
 	az config set bicep.use_binary_from_path=false && az bicep install && az bicep version

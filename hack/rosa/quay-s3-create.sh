@@ -43,6 +43,7 @@ validate_requirements() {
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         echo "❌ Missing required environment variables: ${missing_vars[*]}" >&2
         usage
+        exit 1
     fi
     
     # Set default region if not provided
@@ -87,25 +88,14 @@ create_s3_bucket() {
         for attempt in 1 2 3 4 5; do
             echo "Attempt ${attempt}/5 to create bucket..."
             
-            if [[ "${AWS_REGION}" == "us-east-1" ]]; then
-                # us-east-1 doesn't need LocationConstraint
-                if create_result=$(aws s3api create-bucket \
-                    --bucket "${bucket_name}" \
-                    --region "${AWS_REGION}" 2>&1); then
-                    create_exit_code=0
-                else
-                    create_exit_code=$?
-                fi
+            # Create bucket with LocationConstraint for the specified region
+            if create_result=$(aws s3api create-bucket \
+                --bucket "${bucket_name}" \
+                --region "${AWS_REGION}" \
+                --create-bucket-configuration LocationConstraint="${AWS_REGION}" 2>&1); then
+                create_exit_code=0
             else
-                # Other regions need LocationConstraint
-                if create_result=$(aws s3api create-bucket \
-                    --bucket "${bucket_name}" \
-                    --region "${AWS_REGION}" \
-                    --create-bucket-configuration LocationConstraint="${AWS_REGION}" 2>&1); then
-                    create_exit_code=0
-                else
-                    create_exit_code=$?
-                fi
+                create_exit_code=$?
             fi
             
             if [[ ${create_exit_code} -eq 0 ]]; then
@@ -159,14 +149,11 @@ create_s3_bucket() {
     
     # Add tags to bucket
     echo "🏷️  Adding tags to bucket..."
+    # Use centralized tags from Makefile if available, otherwise use defaults
+    local tag_set="${AWS_TAGS_QUAY:-{Key=purpose,Value=quay},{Key=cluster,Value=${CLUSTER_NAME}},{Key=team,Value=sap-edge}},{Key=platform,Value=rosa}"
     aws s3api put-bucket-tagging \
         --bucket "${bucket_name}" \
-        --tagging 'TagSet=[
-            {Key=purpose,Value=quay},
-            {Key=cluster,Value='"${CLUSTER_NAME}"'},
-            {Key=team,Value=sap-edge},
-            {Key=platform,Value=rosa}
-        ]'
+        --tagging "TagSet=[${tag_set}]"
     
     # Output configuration information
     echo ""
