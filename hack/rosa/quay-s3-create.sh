@@ -43,7 +43,6 @@ validate_requirements() {
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         echo "❌ Missing required environment variables: ${missing_vars[*]}" >&2
         usage
-        exit 1
     fi
     
     # Set default region if not provided
