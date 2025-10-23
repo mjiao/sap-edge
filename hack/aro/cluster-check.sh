@@ -125,7 +125,6 @@ main() {
             *)
                 echo "Unknown option: $1" >&2
                 usage
-                exit 1
                 ;;
         esac
     done

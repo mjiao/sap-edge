@@ -72,3 +72,12 @@ tostring
 quayregistry
 quayadmin
 esac
+cabundles
+selectattr
+equalto
+endfor
+datastorage
+objectstorage
+horizontalpodautoscaler
+clairpostgres
+coreutils
