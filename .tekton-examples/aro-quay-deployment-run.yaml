@@ -16,7 +16,7 @@ spec:
   pipelineRef:
     name: aro-quay-deployment-pipeline
   timeouts:
-    pipeline: "240m"
+    pipeline: "168h"      # Total pipeline timeout (7 days)
     tasks: "120m"         # Individual task timeout (2 hours)
     finally: "30m"        # Finally tasks timeout
   params:
