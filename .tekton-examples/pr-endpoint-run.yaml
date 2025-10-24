@@ -11,7 +11,7 @@ metadata:
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
-    pipelinesascode.tekton.dev/task: "git-clone"
+    pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
 spec:
   pipelineRef:
     name: endpoint-test-pipeline
