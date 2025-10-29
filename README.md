@@ -37,7 +37,7 @@ For operational guidance on Crunchy Postgres and Redis, refer to the official do
 ## Prerequisites
 
 - Access to an OpenShift Container Platform cluster using an account with `cluster-admin` permissions.
-- Installed `oc`, `jq`, and `git` command line tools on your local system.
+- Installed `oc`, `jq`, `git`, and `tkn` command line tools on your local system.
 
 ## Shared Storage
 
@@ -117,7 +117,7 @@ This guide provides instructions for setting up and validating the Redis service
 ## Prerequisites
 
 - Access to an OpenShift Container Platform cluster using an account with `cluster-admin` permissions.
-- Installed `oc`, `jq`, and `git` command line tools on your local system.
+- Installed `oc`, `jq`, `git`, and `tkn` command line tools on your local system.
 
 ## Redis Setup
 
