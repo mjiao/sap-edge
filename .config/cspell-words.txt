@@ -84,3 +84,4 @@ objectstorage
 horizontalpodautoscaler
 clairpostgres
 coreutils
+quaysapeic
