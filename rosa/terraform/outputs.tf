@@ -7,22 +7,22 @@
 
 output "rosa_cluster_id" {
   description = "The ID of the ROSA cluster"
-  value       = module.rosa-hcp.cluster_id
+  value       = try(module.rosa-hcp.cluster_id, "")
 }
 
-output "rosa_cluster_api_url" {
-  description = "The API URL of the ROSA cluster"
-  value       = module.rosa-hcp.api_url
+output "rosa_cluster_name" {
+  description = "The name of the ROSA cluster"
+  value       = var.cluster_name
 }
 
-output "rosa_cluster_console_url" {
-  description = "The console URL of the ROSA cluster"
-  value       = module.rosa-hcp.console_url
+output "rosa_account_role_prefix" {
+  description = "The account role prefix"
+  value       = try(module.rosa-hcp.account_role_prefix, "")
 }
 
-output "rosa_oidc_endpoint_url" {
-  description = "The OIDC endpoint URL"
-  value       = module.rosa-hcp.oidc_endpoint_url
+output "rosa_operator_role_prefix" {
+  description = "The operator role prefix"
+  value       = try(module.rosa-hcp.operator_role_prefix, "")
 }
 
 ###########################################
@@ -55,22 +55,22 @@ output "public_subnets" {
 
 output "postgres_endpoint" {
   description = "PostgreSQL endpoint"
-  value       = var.deploy_postgres ? aws_db_instance.postgres[0].endpoint : ""
+  value       = var.deploy_postgres ? try(aws_db_instance.postgres[0].endpoint, "") : ""
 }
 
 output "postgres_address" {
   description = "PostgreSQL address"
-  value       = var.deploy_postgres ? aws_db_instance.postgres[0].address : ""
+  value       = var.deploy_postgres ? try(aws_db_instance.postgres[0].address, "") : ""
 }
 
 output "postgres_port" {
   description = "PostgreSQL port"
-  value       = var.deploy_postgres ? aws_db_instance.postgres[0].port : 0
+  value       = var.deploy_postgres ? try(aws_db_instance.postgres[0].port, 0) : 0
 }
 
 output "postgres_database_name" {
   description = "PostgreSQL database name"
-  value       = var.deploy_postgres ? aws_db_instance.postgres[0].db_name : ""
+  value       = var.deploy_postgres ? try(aws_db_instance.postgres[0].db_name, "") : ""
 }
 
 output "postgres_admin_username" {
@@ -80,7 +80,7 @@ output "postgres_admin_username" {
 
 output "postgres_connection_string" {
   description = "PostgreSQL connection string (password not included)"
-  value       = var.deploy_postgres ? "postgresql://${var.postgres_admin_username}:[PASSWORD]@${aws_db_instance.postgres[0].endpoint}/eic?sslmode=require" : ""
+  value       = var.deploy_postgres ? try("postgresql://${var.postgres_admin_username}:[PASSWORD]@${aws_db_instance.postgres[0].endpoint}/eic?sslmode=require", "") : ""
 }
 
 ###########################################
@@ -89,15 +89,15 @@ output "postgres_connection_string" {
 
 output "redis_endpoint" {
   description = "Redis endpoint"
-  value       = var.deploy_redis ? aws_elasticache_cluster.redis[0].cache_nodes[0].address : ""
+  value       = var.deploy_redis ? try(aws_elasticache_cluster.redis[0].cache_nodes[0].address, "") : ""
 }
 
 output "redis_port" {
   description = "Redis port"
-  value       = var.deploy_redis ? aws_elasticache_cluster.redis[0].cache_nodes[0].port : 0
+  value       = var.deploy_redis ? try(aws_elasticache_cluster.redis[0].cache_nodes[0].port, 0) : 0
 }
 
 output "redis_connection_string" {
   description = "Redis connection string"
-  value       = var.deploy_redis ? "redis://${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}" : ""
+  value       = var.deploy_redis ? try("redis://${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}", "") : ""
 }

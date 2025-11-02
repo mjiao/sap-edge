@@ -8,21 +8,25 @@
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
+  default     = "us-east-1"
 }
 
 variable "vpc_name" {
   description = "Name of the VPC"
   type        = string
+  default     = "rosa-vpc"
 }
 
 variable "cluster_name" {
   description = "Name of the cluster"
   type        = string
+  default     = "rosa-hcp-cluster"
 }
 
 variable "rosa_version" {
   type        = string
   description = "ROSA openshift version"
+  default     = "4.14.9"
 }
 
 variable "tags" {
@@ -59,13 +63,13 @@ variable "private_subnets" {
 variable "deploy_postgres" {
   description = "Deploy AWS RDS PostgreSQL"
   type        = bool
-  default     = true
+  default     = false  # Disabled by default - enable with TF_VAR_deploy_postgres=true
 }
 
 variable "deploy_redis" {
   description = "Deploy AWS ElastiCache Redis"
   type        = bool
-  default     = true
+  default     = false  # Disabled by default - enable with TF_VAR_deploy_redis=true
 }
 
 # PostgreSQL Configuration
@@ -97,6 +101,7 @@ variable "postgres_admin_password" {
   description = "PostgreSQL admin password"
   type        = string
   sensitive   = true
+  default     = ""  # Set via TF_VAR_postgres_admin_password or terraform.tfvars
 }
 
 variable "postgres_publicly_accessible" {
