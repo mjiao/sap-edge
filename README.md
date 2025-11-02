@@ -346,14 +346,16 @@ The Bicep templates support the following parameters:
 | `postgresAdminPassword` | PostgreSQL admin password | - | ✅ (if PostgreSQL enabled) |
 | `postgresSkuName` | PostgreSQL SKU (dev mode: Standard_B1ms) | `Standard_B1ms` | ❌ |
 | `postgresTier` | PostgreSQL tier (dev mode: Burstable) | `Burstable` | ❌ |
+| `deployQuay` | Deploy Azure Storage Account for Quay | `true` | ❌ |
 | `redisSku` | Redis SKU | `Basic` | ❌ |
 | `redisFamily` | Redis family (C=Standard, P=Premium) | `C` | ❌ |
 | `redisCapacity` | Redis capacity (0-6) | `0` | ❌ |
 
-> **🔒 Secure VNet Integration**  
+> **🔒 Secure VNet Integration & Storage**  
 > PostgreSQL and Redis are deployed with VNet integration for secure, private connectivity:
 > - **PostgreSQL**: Uses delegated subnet with private DNS zone
 > - **Redis**: Uses private endpoint in dedicated subnet
+> - **Quay Storage**: Azure Storage Account with private access only
 > - **Network isolation**: No public access, only accessible from within the ARO VNet
 
 #### Using Makefile with Bicep

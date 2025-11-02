@@ -101,3 +101,29 @@ output "redis_connection_string" {
   description = "Redis connection string"
   value       = var.deploy_redis ? try("redis://${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}", "") : ""
 }
+
+###########################################
+# Quay Storage Outputs
+###########################################
+
+output "quay_s3_bucket_name" {
+  description = "S3 bucket name for Quay registry"
+  value       = var.deploy_quay ? try(aws_s3_bucket.quay[0].id, "") : ""
+}
+
+output "quay_s3_bucket_region" {
+  description = "S3 bucket region for Quay registry"
+  value       = var.deploy_quay ? try(aws_s3_bucket.quay[0].region, "") : ""
+}
+
+output "quay_s3_access_key_id" {
+  description = "IAM access key ID for Quay S3 access"
+  value       = var.deploy_quay ? try(aws_iam_access_key.quay[0].id, "") : ""
+  sensitive   = true
+}
+
+output "quay_s3_secret_access_key" {
+  description = "IAM secret access key for Quay S3 access"
+  value       = var.deploy_quay ? try(aws_iam_access_key.quay[0].secret, "") : ""
+  sensitive   = true
+}
