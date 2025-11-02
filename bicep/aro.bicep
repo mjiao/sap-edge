@@ -127,8 +127,23 @@ resource aroCluster 'Microsoft.RedHatOpenShift/openShiftClusters@2023-11-22' = {
   }
 }
 
+// Deploy VNet with all required subnets
+module network 'network.bicep' = {
+  name: 'network-deployment'
+  params: {
+    location: location
+    vnetName: vnetName
+    masterSubnetName: masterSubnetName
+    workerSubnetName: workerSubnetName
+  }
+}
+
+// Reference the deployed VNet and subnets
 resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' existing = {
   name: vnetName
+  dependsOn: [
+    network
+  ]
 }
 
 resource masterSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
@@ -141,12 +156,25 @@ resource workerSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' exi
   parent: vnet
 }
 
+resource postgresSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
+  name: 'postgres-subnet'
+  parent: vnet
+}
+
+resource redisSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
+  name: 'redis-subnet'
+  parent: vnet
+}
+
 // Deploy Azure services using the azure-services.bicep module
 module azureServices 'azure-services.bicep' = if (deployPostgres || deployRedis) {
   name: 'azure-services-deployment'
   params: {
     clusterName: clusterName
     location: location
+    vnetId: vnet.id
+    postgresSubnetId: postgresSubnet.id
+    redisSubnetId: redisSubnet.id
     deployPostgres: deployPostgres
     deployRedis: deployRedis
     postgresAdminPassword: postgresAdminPassword
