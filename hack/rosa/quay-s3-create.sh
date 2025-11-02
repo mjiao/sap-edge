@@ -73,8 +73,7 @@ get_s3_credentials() {
     
     # Get IAM secret access key (retrieved to validate it exists, but not exported for security)
     # shellcheck disable=SC2034
-    local secret_access_key
-    secret_access_key=$(terraform output -raw quay_s3_secret_access_key 2>/dev/null)
+    local secret_access_key=$(terraform output -raw quay_s3_secret_access_key 2>/dev/null)
     
     # Construct S3 host
     local s3_host="s3.${bucket_region}.amazonaws.com"

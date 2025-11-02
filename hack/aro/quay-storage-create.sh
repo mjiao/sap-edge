@@ -74,8 +74,7 @@ get_storage_credentials() {
     
     # Get storage account key (retrieved to validate it exists, but not exported for security)
     # shellcheck disable=SC2034
-    local storage_key
-    storage_key=$(az deployment group show \
+    local storage_key=$(az deployment group show \
         --name "${deployment_name}" \
         --resource-group "${ARO_RESOURCE_GROUP}" \
         --query 'properties.outputs.quayStorageAccountKey.value' \
