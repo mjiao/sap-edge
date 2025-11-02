@@ -9,7 +9,7 @@ kind: Pipeline
 metadata:
   name: aro-edgelm-validation-pipeline
   annotations:
-    description: "Edge LM validation pipeline: deploys ARO (no external services) with Quay registry and validates edgelm namespace pods"
+    description: "Edge LM validation pipeline: deploys ARO cluster with Quay storage only (no PostgreSQL/Redis), deploys Quay registry operator, and validates edgelm namespace pods"
 spec:
   params:
     - name: repoUrl
@@ -61,7 +61,7 @@ spec:
 
     - name: deploy-aro
       runAfter: [fetch-repository]
-      taskRef: { name: aro-deploy-only }
+      taskRef: { name: aro-deploy-with-eic-services }
       params:
         - name: aroLocation
           value: $(params.aroLocation)
@@ -73,6 +73,14 @@ spec:
           value: $(params.azureSecretName)
         - name: pullSecretName
           value: $(params.pullSecretName)
+        - name: postgresAdminPasswordSecretName
+          value: "azure-postgres-admin-password"
+        - name: deployPostgres
+          value: "false"
+        - name: deployRedis
+          value: "false"
+        - name: deployQuay
+          value: "true"
       workspaces:
         - name: source
           workspace: source

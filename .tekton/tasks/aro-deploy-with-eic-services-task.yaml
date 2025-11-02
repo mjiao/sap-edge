@@ -9,7 +9,7 @@ kind: Task
 metadata:
   name: aro-deploy-with-eic-services
 spec:
-  description: Deploy ARO cluster with EIC services (PostgreSQL and Redis)
+  description: Deploy ARO cluster with EIC services (PostgreSQL, Redis, and Quay storage)
   params:
     - name: aroLocation
       type: string
@@ -42,6 +42,10 @@ spec:
       type: string
       description: "Whether to deploy Redis (true/false)"
       default: "true"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy Quay storage (true/false)"
+      default: "true"
   workspaces:
     - name: source
   steps:
@@ -60,6 +64,8 @@ spec:
           value: "$(params.deployPostgres)"
         - name: DEPLOY_REDIS
           value: "$(params.deployRedis)"
+        - name: DEPLOY_QUAY
+          value: "$(params.deployQuay)"
       envFrom:
         - secretRef:
             name: $(params.azureSecretName)
@@ -139,6 +145,28 @@ spec:
                 echo "✅ Redis cache already exists: $REDIS_EXISTS"
               else
                 echo "📦 Redis cache needs to be created"
+                SERVICES_NEED_DEPLOYMENT=true
+              fi
+            fi
+
+            if [[ "${DEPLOY_QUAY:-true}" == "true" ]]; then
+              echo "📊 Checking Quay storage status..."
+              # Check for Quay storage from Bicep deployment outputs
+              DEPLOYMENT_NAME="azure-services-deployment"
+              if az deployment group show --name "${DEPLOYMENT_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1; then
+                QUAY_STORAGE=$(az deployment group show \
+                  --name "${DEPLOYMENT_NAME}" \
+                  --resource-group "${ARO_RESOURCE_GROUP}" \
+                  --query 'properties.outputs.quayStorageAccountName.value' \
+                  -o tsv 2>/dev/null || echo "")
+                if [[ -n "$QUAY_STORAGE" ]] && [[ "$QUAY_STORAGE" != "null" ]]; then
+                  echo "✅ Quay storage already exists: $QUAY_STORAGE"
+                else
+                  echo "📦 Quay storage needs to be created"
+                  SERVICES_NEED_DEPLOYMENT=true
+                fi
+              else
+                echo "📦 Quay storage needs to be created (no Bicep deployment found)"
                 SERVICES_NEED_DEPLOYMENT=true
               fi
             fi
