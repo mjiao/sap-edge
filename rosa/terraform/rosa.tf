@@ -5,17 +5,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 module "rosa-hcp" {
-  source                 = "git::https://github.com/terraform-redhat/terraform-rhcs-rosa-hcp.git?ref=68c20d8"
-  version                = "1.6.9"
+  source  = "terraform-redhat/rosa-hcp/rhcs"
+  version = "1.6.2"
+
   cluster_name           = var.cluster_name
   openshift_version      = var.rosa_version
-  account_role_prefix    = var.cluster_name
-  operator_role_prefix   = var.cluster_name
-  replicas               = 3
-  aws_availability_zones = slice([for zone in data.aws_availability_zones.available.names : format("%s", zone)], 0, 3)
-  create_oidc            = true
-  private                = true
+  machine_cidr           = module.vpc[0].vpc_cidr_block
   aws_subnet_ids         = concat(module.vpc[0].private_subnets, module.vpc[0].public_subnets)
-  create_account_roles   = true
-  create_operator_roles  = true
+  aws_availability_zones = slice(data.aws_availability_zones.available.names, 0, 3)
+  replicas               = 3
+  
+  # Create account-wide and operator IAM roles
+  create_account_roles  = true
+  account_role_prefix   = var.cluster_name
+  create_oidc           = true
+  create_operator_roles = true
+  operator_role_prefix  = var.cluster_name
 }
