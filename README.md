@@ -324,6 +324,9 @@ export CLIENT_ID="your-azure-client-id"
 export CLIENT_SECRET="your-azure-client-secret"
 export PULL_SECRET='{"auths":{"registry.redhat.io":{"auth":"..."}}}'
 
+# Note: The Azure Red Hat OpenShift RP service principal requires Contributor role.
+# You can assign this role using: make arorp-service-principal
+
 # Create PostgreSQL admin password secret
 oc create secret generic azure-postgres-admin-password \
   --from-literal=password="your-secure-password"
