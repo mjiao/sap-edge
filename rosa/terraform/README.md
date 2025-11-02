@@ -47,8 +47,19 @@ This Terraform configuration also supports deploying AWS RDS PostgreSQL and Elas
 
 1. **Terraform**: Version >= 1.4.6
 2. **AWS CLI**: Configured with appropriate credentials
-3. **RHCS Token**: Red Hat Cloud Services token for OpenShift API access
-4. **S3 Backend**: Existing S3 bucket and DynamoDB table for state management
+3. **ROSA CLI**: Install the ROSA CLI
+   ```bash
+   rosa download rosa
+   rosa verify permissions
+   ```
+4. **Red Hat Account**: Valid Red Hat account with ROSA access
+5. **RHCS Token**: Red Hat Cloud Services token for OpenShift API access
+   ```bash
+   rosa login
+   # Or set environment variable:
+   export RHCS_TOKEN="your-token-here"
+   ```
+6. **S3 Backend** (Optional): Existing S3 bucket and DynamoDB table for state management
 
 ## Configuration
 
@@ -116,24 +127,57 @@ export TF_VAR_redis_node_type="cache.t3.micro"
 
 ## Usage
 
-1. **Initialize Terraform**:
+### Quick Start
+
+1. **Set required environment variables**:
    ```bash
-   make rosa-terraform-init
+   export CLUSTER_NAME="my-rosa-cluster"
+   export AWS_REGION="us-east-1"
+   export VPC_NAME="${CLUSTER_NAME}-vpc"
+   export RHCS_TOKEN="your-rhcs-token"
+   
+   # For AWS services (optional)
+   export TF_VAR_postgres_admin_password="your-secure-password"
    ```
 
-2. **Plan deployment**:
+2. **Initialize Terraform**:
    ```bash
-   make rosa-terraform-plan
+   terraform init
    ```
 
-3. **Apply configuration**: (not implemented yet)
-   ```bash
-   make rosa-terraform-apply
+3. **Create terraform.tfvars**:
+   ```hcl
+   cluster_name  = "my-rosa-cluster"
+   aws_region    = "us-east-1"
+   vpc_name      = "my-rosa-vpc"
+   rosa_version  = "4.14.9"
+   
+   # Optional: AWS Services
+   deploy_postgres = true
+   deploy_redis    = true
+   postgres_admin_password = "your-secure-password"
    ```
 
-4. **Destroy infrastructure** (not implemented yet):
+4. **Plan and apply**:
    ```bash
-   make rosa-terraform-destroy
+   terraform plan
+   terraform apply
+   ```
+
+5. **Access your cluster**:
+   ```bash
+   # Get cluster details
+   terraform output rosa_cluster_api_url
+   terraform output rosa_cluster_console_url
+   
+   # Login to cluster
+   rosa describe cluster -c $(terraform output -raw rosa_cluster_id)
+   rosa create admin -c $(terraform output -raw rosa_cluster_id)
+   ```
+
+6. **Destroy infrastructure**:
+   ```bash
+   terraform destroy
    ```
 
 ## License
