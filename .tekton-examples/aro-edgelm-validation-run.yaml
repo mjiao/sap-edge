@@ -7,14 +7,14 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: aro-quay-elm1-15-validation-
+  generateName: aro-edgelm-validation-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
 spec:
   pipelineRef:
-    name: aro-quay-deployment-pipeline
+    name: aro-edgelm-validation-pipeline
   timeouts:
     pipeline: "168h"      # Total pipeline timeout (7 days)
     tasks: "120m"         # Individual task timeout (2 hours)
@@ -27,7 +27,7 @@ spec:
     - name: aroLocation
       value: "northeurope"
     - name: aroClusterName
-      value: "sapelm-quay"
+      value: "sapedgelm"
     - name: aroVersion
       value: "4.17.27"
     - name: azureSecretName
