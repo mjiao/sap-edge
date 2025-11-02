@@ -71,7 +71,8 @@ get_s3_credentials() {
     local access_key_id
     access_key_id=$(terraform output -raw quay_s3_access_key_id 2>/dev/null)
     
-    # Get IAM secret access key
+    # Get IAM secret access key (retrieved to validate it exists, but not exported for security)
+    # shellcheck disable=SC2034
     local secret_access_key
     secret_access_key=$(terraform output -raw quay_s3_secret_access_key 2>/dev/null)
     
