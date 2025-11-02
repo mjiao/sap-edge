@@ -164,13 +164,68 @@ oc-login:  ## Login with oc to existing ARO cluster
 		-u "$(shell az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query 'kubeadminUsername' -o tsv)" \
 		-p "$(shell az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query 'kubeadminPassword' -o tsv)"
 
+.PHONY: aro-destroy
+.ONESHELL:
+aro-destroy:  ## Destroy all Bicep-deployed resources (like terraform destroy)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@echo "🗑️  Destroying ARO deployment and all resources..."
+	@echo ""
+	@echo "This will delete the following resources:"
+	@az resource list --resource-group ${ARO_RESOURCE_GROUP} --query "[].{Name:name, Type:type}" -o table
+	@echo ""
+	@read -p "Are you sure you want to destroy all resources? (yes/no): " CONFIRM; \
+	if [ "$$CONFIRM" = "yes" ]; then \
+		echo ""; \
+		echo "Step 1/4: Deleting ARO cluster..."; \
+		az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait || echo "ARO cluster not found or already deleted"; \
+		echo "⏳ Waiting for ARO cluster deletion to start..."; \
+		sleep 30; \
+		echo ""; \
+		echo "Step 2/4: Deleting Azure services (PostgreSQL, Redis)..."; \
+		make postgres-delete 2>/dev/null || echo "PostgreSQL not found"; \
+		make redis-delete 2>/dev/null || echo "Redis not found"; \
+		echo ""; \
+		echo "Step 3/4: Waiting for ARO cluster deletion to complete..."; \
+		while az aro show --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} 2>/dev/null; do \
+			echo "⏳ ARO cluster still deleting... waiting 30s"; \
+			sleep 30; \
+		done; \
+		echo ""; \
+		echo "Step 4/4: Cleaning up remaining resources..."; \
+		REMAINING_RESOURCES=$$(az resource list --resource-group ${ARO_RESOURCE_GROUP} --query "[].id" -o tsv); \
+		if [ -n "$$REMAINING_RESOURCES" ]; then \
+			echo "Deleting remaining resources..."; \
+			for RESOURCE_ID in $$REMAINING_RESOURCES; do \
+				echo "  - Deleting: $$RESOURCE_ID"; \
+				az resource delete --ids "$$RESOURCE_ID" --no-wait 2>/dev/null || echo "    (already deleted)"; \
+			done; \
+		fi; \
+		echo ""; \
+		echo "✅ All resources destroyed successfully!"; \
+		echo ""; \
+		echo "📝 Note: The resource group ${ARO_RESOURCE_GROUP} still exists."; \
+		echo "   To delete it completely, run: make aro-resource-group-delete"; \
+	else \
+		echo "❌ Destroy cancelled."; \
+		exit 1; \
+	fi
+
 .PHONY: aro-resource-group-delete
-aro-resource-group-delete:  ## Delete the Azure resource group
+aro-resource-group-delete:  ## Delete the entire Azure resource group (fastest cleanup)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP)
-	az group delete --name ${ARO_RESOURCE_GROUP} --yes --no-wait
+	@echo "🗑️  Deleting resource group: ${ARO_RESOURCE_GROUP}"
+	@echo "⚠️  This will delete ALL resources in the resource group!"
+	@read -p "Are you sure? (yes/no): " CONFIRM; \
+	if [ "$$CONFIRM" = "yes" ]; then \
+		az group delete --name ${ARO_RESOURCE_GROUP} --yes --no-wait; \
+		echo "✅ Resource group deletion initiated (running in background)"; \
+	else \
+		echo "❌ Cancelled."; \
+		exit 1; \
+	fi
 
 .PHONY: aro-delete-cluster
-aro-delete-cluster:  ## Delete the ARO cluster
+aro-delete-cluster:  ## Delete only the ARO cluster (leaves other resources)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
 	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait
 
