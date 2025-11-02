@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-teardown
+spec:
+  description: Teardown ROSA cluster and AWS services using Terraform destroy
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: teardown-rosa
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "60m"
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: "$(params.clusterName)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: token
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "🗑️ Starting ROSA cluster teardown..."
+        echo "====================================="
+        echo "Cluster Name: ${CLUSTER_NAME}"
+        echo ""
+        
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y wget unzip jq
+        
+        # Install Terraform
+        echo "📦 Installing Terraform..."
+        TERRAFORM_VERSION="1.6.6"
+        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        mv terraform /usr/local/bin/
+        terraform version
+        
+        # Install ROSA CLI
+        echo "📦 Installing ROSA CLI..."
+        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+        tar xzf rosa-linux.tar.gz
+        mv rosa /usr/local/bin/
+        rosa version
+        
+        # Install AWS CLI
+        echo "📦 Installing AWS CLI..."
+        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        ./aws/install
+        aws --version
+        
+        # Verify AWS credentials
+        echo "🔐 Verifying AWS credentials..."
+        if ! aws sts get-caller-identity; then
+          echo "❌ AWS credentials verification failed"
+          exit 1
+        fi
+        
+        # Login to Red Hat OCM
+        echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
+        rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Navigate to Terraform directory
+        cd rosa/terraform
+        
+        # Check if Terraform state exists
+        if [[ ! -f "terraform.tfstate" ]] && [[ ! -f ".terraform/terraform.tfstate" ]]; then
+          echo "⚠️  No Terraform state found"
+          echo "🔍 Checking if cluster exists via ROSA CLI..."
+          
+          if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+            echo "⚠️  Cluster exists but no Terraform state"
+            echo "🗑️ Attempting manual cleanup via ROSA CLI..."
+            rosa delete cluster -c "${CLUSTER_NAME}" --yes || echo "⚠️  Manual deletion initiated"
+          else
+            echo "✅ No cluster found, nothing to delete"
+          fi
+          
+          exit 0
+        fi
+        
+        # Initialize Terraform
+        echo "🔧 Initializing Terraform..."
+        terraform init
+        
+        # List resources to be destroyed
+        echo ""
+        echo "📋 Resources to be destroyed:"
+        terraform state list || echo "No resources found in state"
+        echo ""
+        
+        # Destroy infrastructure
+        echo "🗑️ Destroying ROSA infrastructure with Terraform..."
+        if terraform destroy -auto-approve; then
+          echo "✅ Terraform destroy completed successfully"
+        else
+          echo "❌ Terraform destroy failed"
+          echo "⚠️  Some resources may need manual cleanup"
+          
+          # Try to get cluster state
+          if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+            CLUSTER_STATE=$(rosa describe cluster -c "${CLUSTER_NAME}" -o json | jq -r '.state')
+            echo "Cluster state: ${CLUSTER_STATE}"
+            
+            if [[ "${CLUSTER_STATE}" != "uninstalling" ]]; then
+              echo "🗑️ Attempting manual cluster deletion..."
+              rosa delete cluster -c "${CLUSTER_NAME}" --yes || echo "Manual deletion initiated"
+            fi
+          fi
+          
+          exit 1
+        fi
+        
+        # Verify cleanup
+        echo ""
+        echo "🔍 Verifying cleanup..."
+        if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+          echo "⚠️  Cluster still exists, deletion may be in progress"
+          rosa describe cluster -c "${CLUSTER_NAME}"
+        else
+          echo "✅ Cluster successfully deleted"
+        fi
+        
+        cd ../..
+        
+        # Clean up workspace files
+        echo "🧹 Cleaning up workspace files..."
+        rm -f rosa-deployment-info.txt
+        rm -f cluster-info.json
+        rm -f admin-creds.json
+        rm -f kubeconfig
+        
+        echo ""
+        echo "✅ ROSA teardown completed!"
+        echo "📝 Note: It may take a few minutes for all AWS resources to be fully deleted"
+
