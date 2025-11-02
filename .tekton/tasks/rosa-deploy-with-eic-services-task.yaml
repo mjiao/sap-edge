@@ -1,0 +1,254 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-deploy-with-eic-services
+spec:
+  description: Deploy ROSA HCP cluster with EIC services (RDS PostgreSQL, ElastiCache Redis, and S3 for Quay) using Terraform
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name (max 15 characters)"
+    - name: awsRegion
+      type: string
+      description: "AWS region"
+      default: "us-east-1"
+    - name: rosaVersion
+      type: string
+      description: "ROSA version"
+      default: "4.17.0"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+    - name: postgresAdminPassword
+      type: string
+      description: "PostgreSQL admin password"
+      default: "ChangeMe123!"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy RDS PostgreSQL (true/false)"
+      default: "false"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy ElastiCache Redis (true/false)"
+      default: "false"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy S3 bucket for Quay (true/false)"
+      default: "true"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-rosa-with-terraform
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "120m"
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: "$(params.clusterName)"
+        - name: AWS_REGION
+          value: "$(params.awsRegion)"
+        - name: ROSA_VERSION
+          value: "$(params.rosaVersion)"
+        - name: POSTGRES_ADMIN_PASSWORD
+          value: "$(params.postgresAdminPassword)"
+        - name: DEPLOY_POSTGRES
+          value: "$(params.deployPostgres)"
+        - name: DEPLOY_REDIS
+          value: "$(params.deployRedis)"
+        - name: DEPLOY_QUAY
+          value: "$(params.deployQuay)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: token
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "🚀 Starting ROSA HCP cluster deployment with Terraform..."
+        echo "=============================================="
+        echo "📋 Configuration:"
+        echo "  Cluster Name: ${CLUSTER_NAME}"
+        echo "  AWS Region: ${AWS_REGION}"
+        echo "  ROSA Version: ${ROSA_VERSION}"
+        echo "  Deploy PostgreSQL: ${DEPLOY_POSTGRES}"
+        echo "  Deploy Redis: ${DEPLOY_REDIS}"
+        echo "  Deploy Quay S3: ${DEPLOY_QUAY}"
+        echo ""
+        
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y make wget unzip jq git
+        
+        # Install Terraform
+        echo "📦 Installing Terraform..."
+        TERRAFORM_VERSION="1.6.6"
+        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        mv terraform /usr/local/bin/
+        terraform version
+        
+        # Install ROSA CLI
+        echo "📦 Installing ROSA CLI..."
+        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+        tar xzf rosa-linux.tar.gz
+        mv rosa /usr/local/bin/
+        rosa version
+        
+        # Install AWS CLI
+        echo "📦 Installing AWS CLI..."
+        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        ./aws/install
+        aws --version
+        
+        # Verify AWS credentials
+        echo "🔐 Verifying AWS credentials..."
+        if ! aws sts get-caller-identity; then
+          echo "❌ AWS credentials verification failed"
+          exit 1
+        fi
+        
+        # Login to Red Hat OCM
+        echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
+        rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Navigate to Terraform directory
+        cd rosa/terraform
+        
+        # Create terraform.tfvars
+        echo "📝 Creating terraform.tfvars..."
+        cat > terraform.tfvars << EOF
+        # AWS Configuration
+        aws_region = "${AWS_REGION}"
+        
+        # VPC Configuration
+        vpc_name        = "${CLUSTER_NAME}-vpc"
+        vpc_cidr        = "10.0.0.0/16"
+        public_subnets  = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+        private_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+        
+        # ROSA Cluster Configuration
+        cluster_name  = "${CLUSTER_NAME}"
+        rosa_version  = "${ROSA_VERSION}"
+        
+        # AWS Services Configuration
+        deploy_postgres         = ${DEPLOY_POSTGRES}
+        deploy_redis            = ${DEPLOY_REDIS}
+        deploy_quay             = ${DEPLOY_QUAY}
+        postgres_admin_password = "${POSTGRES_ADMIN_PASSWORD}"
+        
+        # Tags
+        tags = {
+          Environment = "pipeline"
+          ManagedBy   = "tekton"
+          Cluster     = "${CLUSTER_NAME}"
+        }
+        EOF
+        
+        echo "✅ terraform.tfvars created"
+        cat terraform.tfvars
+        echo ""
+        
+        # Check if infrastructure already exists
+        echo "🔍 Checking if ROSA cluster already exists..."
+        if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+          CLUSTER_STATE=$(rosa describe cluster -c "${CLUSTER_NAME}" -o json | jq -r '.state')
+          echo "✅ ROSA cluster exists with state: ${CLUSTER_STATE}"
+          
+          if [[ "${CLUSTER_STATE}" == "ready" ]]; then
+            echo "✅ Cluster is ready, skipping deployment"
+            
+            # Still need to initialize Terraform for outputs
+            echo "🔧 Initializing Terraform for state management..."
+            terraform init
+            
+            exit 0
+          elif [[ "${CLUSTER_STATE}" == "error" || "${CLUSTER_STATE}" == "failed" ]]; then
+            echo "❌ Cluster is in ${CLUSTER_STATE} state"
+            echo "🗑️ Manual cleanup required. Please delete the cluster first:"
+            echo "   rosa delete cluster -c ${CLUSTER_NAME} --yes"
+            exit 1
+          else
+            echo "⏳ Cluster is in ${CLUSTER_STATE} state, waiting..."
+            rosa logs install -c "${CLUSTER_NAME}" --watch || true
+          fi
+        else
+          echo "📋 No existing ROSA cluster found - will deploy"
+        fi
+        
+        # Initialize Terraform
+        echo "🔧 Initializing Terraform..."
+        terraform init
+        
+        # Plan
+        echo "📋 Planning Terraform deployment..."
+        terraform plan -out=tfplan
+        
+        # Apply
+        echo "🚀 Applying Terraform configuration..."
+        if terraform apply tfplan; then
+          echo "✅ Terraform deployment completed successfully"
+        else
+          echo "❌ Terraform deployment failed"
+          exit 1
+        fi
+        
+        # Get outputs
+        echo ""
+        echo "📋 Deployment Outputs:"
+        echo "====================="
+        terraform output
+        
+        # Save deployment info
+        cd ../..
+        cat > rosa-deployment-info.txt << EOF
+        CLUSTER_NAME=${CLUSTER_NAME}
+        AWS_REGION=${AWS_REGION}
+        ROSA_CLUSTER_ID=$(cd rosa/terraform && terraform output -raw rosa_cluster_id 2>/dev/null || echo "")
+        VPC_ID=$(cd rosa/terraform && terraform output -raw vpc_id 2>/dev/null || echo "")
+        DEPLOY_POSTGRES=${DEPLOY_POSTGRES}
+        DEPLOY_REDIS=${DEPLOY_REDIS}
+        DEPLOY_QUAY=${DEPLOY_QUAY}
+        EOF
+        
+        if [[ "${DEPLOY_POSTGRES}" == "true" ]]; then
+          POSTGRES_ENDPOINT=$(cd rosa/terraform && terraform output -raw postgres_endpoint 2>/dev/null || echo "")
+          echo "POSTGRES_ENDPOINT=${POSTGRES_ENDPOINT}" >> rosa-deployment-info.txt
+        fi
+        
+        if [[ "${DEPLOY_REDIS}" == "true" ]]; then
+          REDIS_ENDPOINT=$(cd rosa/terraform && terraform output -raw redis_endpoint 2>/dev/null || echo "")
+          echo "REDIS_ENDPOINT=${REDIS_ENDPOINT}" >> rosa-deployment-info.txt
+        fi
+        
+        if [[ "${DEPLOY_QUAY}" == "true" ]]; then
+          S3_BUCKET=$(cd rosa/terraform && terraform output -raw quay_s3_bucket_name 2>/dev/null || echo "")
+          echo "S3_BUCKET_NAME=${S3_BUCKET}" >> rosa-deployment-info.txt
+        fi
+        
+        echo "✅ ROSA cluster deployment completed successfully!"
+        echo "💾 Deployment information saved to rosa-deployment-info.txt"
+

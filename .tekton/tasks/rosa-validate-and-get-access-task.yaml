@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-validate-and-get-access
+spec:
+  description: Validate ROSA cluster and retrieve AWS services information from Terraform outputs
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+  workspaces:
+    - name: source
+  steps:
+    - name: validate-and-get-access
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: "$(params.clusterName)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: token
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "✅ Validating ROSA cluster and retrieving access information..."
+        echo "=============================================="
+        
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y wget unzip jq
+        
+        # Install Terraform
+        echo "📦 Installing Terraform..."
+        TERRAFORM_VERSION="1.6.6"
+        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        mv terraform /usr/local/bin/
+        
+        # Install ROSA CLI
+        echo "📦 Installing ROSA CLI..."
+        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+        tar xzf rosa-linux.tar.gz
+        mv rosa /usr/local/bin/
+        
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+        tar xzf openshift-client-linux.tar.gz
+        mv oc kubectl /usr/local/bin/
+        
+        # Login to Red Hat OCM
+        echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
+        rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Get cluster info
+        echo "📋 Getting ROSA cluster information..."
+        rosa describe cluster -c "${CLUSTER_NAME}" -o json > cluster-info.json
+        
+        CLUSTER_ID=$(jq -r '.id' cluster-info.json)
+        CLUSTER_STATE=$(jq -r '.state' cluster-info.json)
+        API_URL=$(jq -r '.api.url' cluster-info.json)
+        CONSOLE_URL=$(jq -r '.console.url' cluster-info.json)
+        
+        echo "Cluster ID: ${CLUSTER_ID}"
+        echo "Cluster State: ${CLUSTER_STATE}"
+        echo "API URL: ${API_URL}"
+        echo "Console URL: ${CONSOLE_URL}"
+        
+        if [[ "${CLUSTER_STATE}" != "ready" ]]; then
+          echo "❌ Cluster is not ready yet (state: ${CLUSTER_STATE})"
+          exit 1
+        fi
+        
+        echo "✅ Cluster is ready"
+        
+        # Create admin user and get credentials
+        echo "👤 Creating cluster admin user..."
+        if rosa create admin -c "${CLUSTER_NAME}" -o json > admin-creds.json 2>&1; then
+          ADMIN_USERNAME=$(jq -r '.username // "cluster-admin"' admin-creds.json)
+          ADMIN_PASSWORD=$(jq -r '.password' admin-creds.json)
+          
+          echo "Admin Username: ${ADMIN_USERNAME}"
+          echo "Admin Password: [HIDDEN]"
+          
+          # Login to cluster
+          echo "🔐 Logging into ROSA cluster..."
+          oc login "${API_URL}" -u "${ADMIN_USERNAME}" -p "${ADMIN_PASSWORD}" --insecure-skip-tls-verify=true
+          
+          # Save kubeconfig
+          oc config view --raw > kubeconfig
+          echo "✅ Kubeconfig saved"
+        else
+          echo "⚠️  Admin user creation failed or already exists, trying to describe existing admin..."
+          rosa describe admin -c "${CLUSTER_NAME}"
+          echo "⚠️  You may need to manually get admin credentials"
+        fi
+        
+        # Verify cluster access
+        echo "🔍 Verifying cluster access..."
+        oc get nodes
+        oc get clusterversion
+        
+        # Get Terraform outputs for AWS services
+        echo "📋 Retrieving AWS services information from Terraform..."
+        cd rosa/terraform
+        
+        if [[ -f "terraform.tfstate" ]] || [[ -f ".terraform/terraform.tfstate" ]]; then
+          terraform init -backend=false
+          
+          echo ""
+          echo "📊 AWS Services Information:"
+          echo "============================"
+          
+          # VPC Info
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+          if [[ -n "${VPC_ID}" ]]; then
+            echo "VPC ID: ${VPC_ID}"
+          fi
+          
+          # PostgreSQL Info
+          POSTGRES_ENDPOINT=$(terraform output -raw postgres_endpoint 2>/dev/null || echo "")
+          if [[ -n "${POSTGRES_ENDPOINT}" ]] && [[ "${POSTGRES_ENDPOINT}" != "" ]]; then
+            echo ""
+            echo "📊 PostgreSQL Information:"
+            echo "  Endpoint: ${POSTGRES_ENDPOINT}"
+            echo "  Port: $(terraform output -raw postgres_port 2>/dev/null || echo '5432')"
+            echo "  Database: $(terraform output -raw postgres_database_name 2>/dev/null || echo 'eic')"
+            echo "  Username: $(terraform output -raw postgres_admin_username 2>/dev/null || echo 'eicadmin')"
+          fi
+          
+          # Redis Info
+          REDIS_ENDPOINT=$(terraform output -raw redis_endpoint 2>/dev/null || echo "")
+          if [[ -n "${REDIS_ENDPOINT}" ]] && [[ "${REDIS_ENDPOINT}" != "" ]]; then
+            echo ""
+            echo "📊 Redis Information:"
+            echo "  Endpoint: ${REDIS_ENDPOINT}"
+            echo "  Port: $(terraform output -raw redis_port 2>/dev/null || echo '6379')"
+          fi
+          
+          # S3 Quay Storage Info
+          S3_BUCKET=$(terraform output -raw quay_s3_bucket_name 2>/dev/null || echo "")
+          if [[ -n "${S3_BUCKET}" ]] && [[ "${S3_BUCKET}" != "" ]]; then
+            echo ""
+            echo "📊 Quay S3 Storage Information:"
+            echo "  Bucket: ${S3_BUCKET}"
+            echo "  Region: $(terraform output -raw quay_s3_bucket_region 2>/dev/null || echo '')"
+            S3_ACCESS_KEY=$(terraform output -raw quay_s3_access_key_id 2>/dev/null || echo "")
+            echo "  Access Key ID: ${S3_ACCESS_KEY}"
+            echo "  Secret Access Key: [HIDDEN]"
+          fi
+        else
+          echo "⚠️  Terraform state not found, skipping AWS services info"
+        fi
+        
+        cd ../..
+        
+        # Create cluster info ConfigMap for use by other tasks
+        echo ""
+        echo "📝 Creating cluster-info ConfigMap..."
+        oc create configmap "cluster-info-${CLUSTER_NAME}" \
+          --from-literal=cluster-name="${CLUSTER_NAME}" \
+          --from-literal=cluster-id="${CLUSTER_ID}" \
+          --from-literal=api-url="${API_URL}" \
+          --from-literal=console-url="${CONSOLE_URL}" \
+          --dry-run=client -o yaml | oc apply -f -
+        
+        echo "✅ Validation completed successfully!"
+
