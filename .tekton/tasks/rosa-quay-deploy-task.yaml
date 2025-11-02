@@ -9,21 +9,28 @@ kind: Task
 metadata:
   name: rosa-quay-deploy
 spec:
-  description: Deploy Quay registry on ROSA cluster with S3 storage and certificate trust
+  description: |
+    Deploy Quay registry on ROSA cluster with S3 storage and certificate trust.
+    
+    S3 bucket and credentials should be created by Terraform (rosa/terraform).
+    Get values from Terraform outputs:
+      - s3BucketName: terraform output -raw quay_s3_bucket_name
+      - s3Region: terraform output -raw quay_s3_bucket_region
+      - AWS credentials: terraform output -raw quay_s3_access_key_id / quay_s3_secret_access_key
   params:
     - name: clusterName
       type: string
-      description: "ROSA cluster name"
+      description: "ROSA cluster name (from Terraform output rosa_cluster_name)"
     - name: s3BucketName
       type: string
-      description: "S3 bucket name for Quay storage"
+      description: "S3 bucket name for Quay storage (from Terraform output quay_s3_bucket_name)"
     - name: s3Region
       type: string
-      description: "S3 region"
+      description: "S3 region (from Terraform output quay_s3_bucket_region)"
       default: "us-east-1"
     - name: s3Host
       type: string
-      description: "S3 host"
+      description: "S3 host (default: s3.<region>.amazonaws.com)"
       default: "s3.amazonaws.com"
     - name: awsSecretName
       type: string
@@ -74,6 +81,9 @@ spec:
 
         echo "🚀 Starting ROSA Quay registry deployment..."
         echo "============================================"
+        echo "ℹ️  Note: S3 bucket should be created by Terraform (rosa/terraform)"
+        echo "   S3 credentials are retrieved from Terraform outputs and passed as parameters"
+        echo ""
         echo "🔧 Configuration:"
         echo "  Cluster Name: ${CLUSTER_NAME}"
         echo "  S3 Bucket: ${S3_BUCKET_NAME}"
