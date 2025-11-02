@@ -15,7 +15,7 @@ module "rosa-hcp" {
   aws_availability_zones = slice([for zone in data.aws_availability_zones.available.names : format("%s", zone)], 0, 3)
   create_oidc            = true
   private                = true
-  aws_subnet_ids         = concat(var.private_subnets, var.public_subnets)
+  aws_subnet_ids         = concat(module.vpc[0].private_subnets, module.vpc[0].public_subnets)
   create_account_roles   = true
   create_operator_roles  = true
 }
