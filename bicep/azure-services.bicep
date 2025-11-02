@@ -9,6 +9,15 @@ param clusterName string
 @description('The location for the services')
 param location string = resourceGroup().location
 
+@description('VNet ID for VNet integration')
+param vnetId string
+
+@description('Postgres subnet ID for VNet integration')
+param postgresSubnetId string
+
+@description('Redis subnet ID for VNet integration')
+param redisSubnetId string
+
 @description('Whether to deploy PostgreSQL Flexible Server')
 param deployPostgres bool = true
 
@@ -46,12 +55,17 @@ param postgresVersion string = '15'
 param redisCacheName string = ''
 
 @description('Redis SKU (cost-optimized for testing)')
-@allowed(['Basic', 'Standard'])
+@allowed(['Basic', 'Standard', 'Premium'])
 param redisSku string = 'Basic'
 
-@description('Redis size (minimal for testing)')
-@allowed(['C0', 'C1', 'C2'])
-param redisSize string = 'C0'
+@description('Redis family')
+@allowed(['C', 'P'])
+param redisFamily string = 'C'
+
+@description('Redis capacity')
+@minValue(0)
+@maxValue(6)
+param redisCapacity int = 0
 
 @description('Testing-specific tags for resource management')
 param testingTags object = {
@@ -66,7 +80,29 @@ param testingTags object = {
 var postgresServerNameFinal = empty(postgresServerName) ? 'postgres-${clusterName}' : postgresServerName
 var redisCacheNameFinal = empty(redisCacheName) ? 'redis-${clusterName}' : redisCacheName
 
-// PostgreSQL Flexible Server
+// Private DNS Zone for PostgreSQL
+resource postgresDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (deployPostgres) {
+  name: '${postgresServerNameFinal}.private.postgres.database.azure.com'
+  location: 'global'
+  tags: union(testingTags, {
+    service: 'postgresql-dns'
+    clusterName: clusterName
+  })
+}
+
+resource postgresDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (deployPostgres) {
+  name: '${postgresServerNameFinal}-vnet-link'
+  parent: postgresDnsZone
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnetId
+    }
+  }
+}
+
+// PostgreSQL Flexible Server with VNet integration
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = if (deployPostgres) {
   name: postgresServerNameFinal
   location: location
@@ -86,8 +122,8 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-pr
       storageSizeGB: postgresStorageSize
     }
     network: {
-      delegatedSubnetResourceId: ''
-      privateDnsZoneArmResourceId: ''
+      delegatedSubnetResourceId: postgresSubnetId
+      privateDnsZoneArmResourceId: postgresDnsZone.id
     }
     backup: {
       backupRetentionDays: 7
@@ -103,6 +139,9 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-pr
       startMinute: 0
     }
   }
+  dependsOn: [
+    postgresDnsZoneVnetLink
+  ]
 }
 
 // PostgreSQL Database
@@ -115,7 +154,7 @@ resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2
   }
 }
 
-// Redis Cache
+// Redis Cache with private endpoint
 resource redisCache 'Microsoft.Cache/redis@2023-08-01' = if (deployRedis) {
   name: redisCacheNameFinal
   location: location
@@ -126,11 +165,76 @@ resource redisCache 'Microsoft.Cache/redis@2023-08-01' = if (deployRedis) {
   properties: {
     sku: {
       name: redisSku
-      family: 'C'
-      capacity: int(replace(redisSize, 'C', ''))
+      family: redisFamily
+      capacity: redisCapacity
     }
-    enableNonSslPort: true
+    enableNonSslPort: false
     minimumTlsVersion: '1.2'
+    publicNetworkAccess: 'Disabled'
+  }
+}
+
+// Private DNS Zone for Redis
+resource redisDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (deployRedis) {
+  name: 'privatelink.redis.cache.windows.net'
+  location: 'global'
+  tags: union(testingTags, {
+    service: 'redis-dns'
+    clusterName: clusterName
+  })
+}
+
+resource redisDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (deployRedis) {
+  name: '${redisCacheNameFinal}-vnet-link'
+  parent: redisDnsZone
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnetId
+    }
+  }
+}
+
+// Private Endpoint for Redis
+resource redisPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-01-01' = if (deployRedis) {
+  name: '${redisCacheNameFinal}-pe'
+  location: location
+  tags: union(testingTags, {
+    service: 'redis-private-endpoint'
+    clusterName: clusterName
+  })
+  properties: {
+    subnet: {
+      id: redisSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: '${redisCacheNameFinal}-connection'
+        properties: {
+          privateLinkServiceId: redisCache.id
+          groupIds: [
+            'redisCache'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+// DNS Zone Group for Private Endpoint
+resource redisDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-01-01' = if (deployRedis) {
+  name: 'default'
+  parent: redisPrivateEndpoint
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'redis-config'
+        properties: {
+          privateDnsZoneId: redisDnsZone.id
+        }
+      }
+    ]
   }
 }
 
