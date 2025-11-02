@@ -51,8 +51,14 @@ param postgresStorageSize int = 32
 @allowed(['13', '14', '15', '16'])
 param postgresVersion string = '15'
 
+@description('Whether to deploy Quay storage')
+param deployQuay bool = true
+
 @description('Redis cache name (auto-generated if not provided)')
 param redisCacheName string = ''
+
+@description('Quay storage account name (auto-generated if not provided)')
+param quayStorageAccountName string = ''
 
 @description('Redis SKU (cost-optimized for testing)')
 @allowed(['Basic', 'Standard', 'Premium'])
@@ -79,6 +85,7 @@ param testingTags object = {
 // Variables
 var postgresServerNameFinal = empty(postgresServerName) ? 'postgres-${clusterName}' : postgresServerName
 var redisCacheNameFinal = empty(redisCacheName) ? 'redis-${clusterName}' : redisCacheName
+var quayStorageAccountNameFinal = empty(quayStorageAccountName) ? 'quay${uniqueString(resourceGroup().id, clusterName)}' : quayStorageAccountName
 
 // Private DNS Zone for PostgreSQL
 resource postgresDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (deployPostgres) {
@@ -238,6 +245,51 @@ resource redisDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGro
   }
 }
 
+//##########################################
+// Quay Container Registry Storage
+//##########################################
+
+// Storage Account for Quay
+resource quayStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = if (deployQuay) {
+  name: quayStorageAccountNameFinal
+  location: location
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  tags: union(testingTags, {
+    service: 'quay'
+    clusterName: clusterName
+  })
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+// Blob Service for Quay
+resource quayBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = if (deployQuay) {
+  name: 'default'
+  parent: quayStorageAccount
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 7
+    }
+  }
+}
+
+// Blob Container for Quay Registry
+resource quayBlobContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = if (deployQuay) {
+  name: 'quay-registry'
+  parent: quayBlobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // Outputs
 output postgresServerName string = deployPostgres ? postgresServer.name : ''
 output postgresServerFqdn string = deployPostgres ? postgresServer.properties.fullyQualifiedDomainName : ''
@@ -248,6 +300,11 @@ output redisCacheName string = deployRedis ? redisCache.name : ''
 output redisHostName string = deployRedis ? redisCache.properties.hostName : ''
 output redisPort int = deployRedis ? redisCache.properties.port : 0
 output redisSslPort int = deployRedis ? redisCache.properties.sslPort : 0
+
+// Quay Storage outputs
+output quayStorageAccountName string = deployQuay ? quayStorageAccount.name : ''
+output quayStorageAccountKey string = deployQuay ? quayStorageAccount.listKeys().keys[0].value : ''
+output quayContainerName string = deployQuay ? 'quay-registry' : ''
 
 // Connection strings (without passwords - get from Azure portal)
 output postgresConnectionString string = deployPostgres ? 'postgresql://${postgresAdminUsername}:[PASSWORD]@${postgresServerNameFinal}.postgres.database.azure.com:5432/eic?sslmode=require' : ''

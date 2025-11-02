@@ -29,7 +29,9 @@ This Terraform configuration also supports deploying AWS RDS PostgreSQL and Elas
 ### AWS Services (Optional)
 - **RDS PostgreSQL**: Fully managed PostgreSQL database deployed in private subnets
 - **ElastiCache Redis**: Fully managed Redis cache deployed in private subnets
-- Both services are configured with security groups limiting access to VPC CIDR only
+- **S3 Bucket for Quay**: Object storage for Quay container registry (enabled by default)
+- Database services are configured with security groups limiting access to VPC CIDR only
+- S3 bucket includes versioning, encryption, and dedicated IAM user with minimal permissions
 
 ## Files
 
@@ -109,8 +111,9 @@ export TF_VAR_redis_node_type="cache.t3.micro"
 
 | Parameter | Description | Default | Required |
 |-----------|-------------|---------|----------|
-| `deploy_postgres` | Deploy AWS RDS PostgreSQL | `true` | ❌ |
-| `deploy_redis` | Deploy AWS ElastiCache Redis | `true` | ❌ |
+| `deploy_postgres` | Deploy AWS RDS PostgreSQL | `false` | ❌ |
+| `deploy_redis` | Deploy AWS ElastiCache Redis | `false` | ❌ |
+| `deploy_quay` | Deploy S3 bucket for Quay registry | `true` | ❌ |
 | `postgres_version` | PostgreSQL engine version | `15.5` | ❌ |
 | `postgres_instance_class` | RDS instance class | `db.t3.micro` | ❌ |
 | `postgres_allocated_storage` | Storage size in GB | `20` | ❌ |
@@ -123,7 +126,14 @@ export TF_VAR_redis_node_type="cache.t3.micro"
 | `redis_allowed_cidr_blocks` | CIDR blocks allowed to access Redis | `["10.0.0.0/16"]` (VPC CIDR) | ❌ |
 
 > **🔒 Security Note**  
-> By default, PostgreSQL and Redis are deployed in private subnets and only accessible from within the VPC (10.0.0.0/16). For production, further restrict CIDR blocks to specific subnet ranges.
+> **Database Services**: PostgreSQL and Redis are deployed in private subnets and only accessible from within the VPC (10.0.0.0/16). For production, further restrict CIDR blocks to specific subnet ranges.
+>
+> **Quay Storage**: S3 bucket is created with:
+> - Versioning enabled for data protection
+> - Server-side encryption (AES256)
+> - Public access blocked
+> - Dedicated IAM user with minimal S3 permissions
+> - Access keys available as Terraform outputs (sensitive)
 
 ## Usage
 

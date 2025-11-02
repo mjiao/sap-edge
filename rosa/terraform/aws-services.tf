@@ -177,3 +177,95 @@ resource "aws_elasticache_cluster" "redis" {
   )
 }
 
+###########################################
+# Quay Container Registry Storage
+###########################################
+
+resource "aws_s3_bucket" "quay" {
+  count  = var.deploy_quay ? 1 : 0
+  bucket = "${var.cluster_name}-quay-registry"
+
+  tags = merge(
+    var.tags,
+    {
+      Name    = "${var.cluster_name}-quay-registry"
+      Service = "quay"
+    }
+  )
+}
+
+resource "aws_s3_bucket_versioning" "quay" {
+  count  = var.deploy_quay ? 1 : 0
+  bucket = aws_s3_bucket.quay[0].id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "quay" {
+  count  = var.deploy_quay ? 1 : 0
+  bucket = aws_s3_bucket.quay[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "quay" {
+  count  = var.deploy_quay ? 1 : 0
+  bucket = aws_s3_bucket.quay[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# IAM User for Quay to access S3
+resource "aws_iam_user" "quay" {
+  count = var.deploy_quay ? 1 : 0
+  name  = "${var.cluster_name}-quay-s3-user"
+
+  tags = merge(
+    var.tags,
+    {
+      Name    = "${var.cluster_name}-quay-s3-user"
+      Service = "quay"
+    }
+  )
+}
+
+resource "aws_iam_access_key" "quay" {
+  count = var.deploy_quay ? 1 : 0
+  user  = aws_iam_user.quay[0].name
+}
+
+resource "aws_iam_user_policy" "quay_s3_access" {
+  count = var.deploy_quay ? 1 : 0
+  name  = "${var.cluster_name}-quay-s3-access"
+  user  = aws_iam_user.quay[0].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = [
+          aws_s3_bucket.quay[0].arn,
+          "${aws_s3_bucket.quay[0].arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
