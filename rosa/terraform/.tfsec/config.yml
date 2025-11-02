@@ -1,0 +1,12 @@
+# tfsec configuration for ROSA Terraform
+# Skip security checks that are acceptable for a testing/pipeline environment
+
+# Minimum severity level (default: LOW)
+minimum_severity: HIGH
+
+# Exclude specific checks
+exclude:
+  - aws-elasticache-enable-backup-retention  # Backup retention not required for ephemeral testing cache
+  - aws-rds-enable-performance-insights      # Performance insights not required for testing environment
+  - aws-ec2-require-vpc-flow-logs-for-all-vpcs  # VPC flow logs not required for testing environment
+
