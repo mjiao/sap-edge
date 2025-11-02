@@ -346,8 +346,15 @@ The Bicep templates support the following parameters:
 | `postgresAdminPassword` | PostgreSQL admin password | - | ✅ (if PostgreSQL enabled) |
 | `postgresSkuName` | PostgreSQL SKU (dev mode: Standard_B1ms) | `Standard_B1ms` | ❌ |
 | `postgresTier` | PostgreSQL tier (dev mode: Burstable) | `Burstable` | ❌ |
-| `redisSku` | Redis SKU (dev mode: Basic) | `Basic` | ❌ |
-| `redisSize` | Redis size (dev mode: C0) | `C0` | ❌ |
+| `redisSku` | Redis SKU | `Basic` | ❌ |
+| `redisFamily` | Redis family (C=Standard, P=Premium) | `C` | ❌ |
+| `redisCapacity` | Redis capacity (0-6) | `0` | ❌ |
+
+> **🔒 Secure VNet Integration**  
+> PostgreSQL and Redis are deployed with VNet integration for secure, private connectivity:
+> - **PostgreSQL**: Uses delegated subnet with private DNS zone
+> - **Redis**: Uses private endpoint in dedicated subnet
+> - **Network isolation**: No public access, only accessible from within the ARO VNet
 
 #### Using Makefile with Bicep
 
@@ -365,6 +372,38 @@ make aro-services-info
 # Deploy only ARO (without Azure services - modify test parameters)
 make aro-deploy-test POSTGRES_ADMIN_PASSWORD="your-password"
 ```
+
+#### Cleanup and Destroy
+
+Bicep provides multiple cleanup options similar to Terraform's destroy mechanism:
+
+```bash
+# Option 1: Complete destroy (like terraform destroy)
+# Deletes ARO cluster, PostgreSQL, Redis, and all other resources
+make aro-destroy
+
+# Option 2: Fast cleanup - delete entire resource group
+# Fastest way to remove everything
+make aro-resource-group-delete
+
+# Option 3: Delete only ARO cluster (keeps PostgreSQL/Redis)
+make aro-delete-cluster
+
+# Option 4: Clean up individual services
+make postgres-delete
+make redis-delete
+```
+
+**Comparison with Terraform:**
+
+| Action | Terraform | Bicep Equivalent |
+|--------|-----------|------------------|
+| Destroy all resources | `terraform destroy` | `make aro-destroy` |
+| Fast cleanup | Delete state + resources manually | `make aro-resource-group-delete` |
+| View resources | `terraform state list` | `az resource list --resource-group <RG>` |
+| Resource tracking | State file | Azure Resource Manager deployment |
+
+> **💡 Tip**: `make aro-resource-group-delete` is the fastest cleanup method as Azure handles dependency ordering automatically.
 
 ## Pipeline Structure
 
