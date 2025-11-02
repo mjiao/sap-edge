@@ -8,7 +8,7 @@
 # Required Variables
 ###########################################
 
-cluster_name = "my-rosa-cluster"
+cluster_name = "my-rosa-test"  # Max 15 characters!
 aws_region   = "us-east-1"
 vpc_name     = "my-rosa-vpc"
 rosa_version = "4.14.9"
