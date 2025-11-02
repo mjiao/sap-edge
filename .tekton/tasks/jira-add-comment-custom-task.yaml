@@ -11,6 +11,8 @@ metadata:
 spec:
   description: >-
     This task adds a comment to a Jira issue using the official Jira REST API with curl.
+    It checks for duplicate success messages by examining the last comment and skips
+    posting if a similar success message already exists.
   params:
     - name: jiraSecretName
       type: string
@@ -43,9 +45,60 @@ spec:
         microdnf install -y jq > /dev/null
 
         AUTH_HEADER="Authorization: Bearer $JIRA_API_TOKEN"
+        
+        # Check for duplicate success messages
+        echo "🔍 Checking for duplicate success messages..."
+        
+        # Get the issue comments
+        COMMENTS_URL="$JIRA_HOST/rest/api/2/issue/$(params.jiraIssueKey)/comment"
+        COMMENTS_JSON=$(curl --silent \
+                             --header "$AUTH_HEADER" \
+                             --header "Content-Type: application/json" \
+                             --url "$COMMENTS_URL")
+        
+        # Extract the last comment body
+        LAST_COMMENT=$(echo "$COMMENTS_JSON" | jq -r '.comments[-1].body // ""')
+        
+        # Check if comment contains success markers
+        COMMENT_TEXT="$(params.comment)"
+        
+        # Define success markers to check
+        SUCCESS_MARKERS=(
+          "✅ Complete EIC Validation Pipeline Completed"
+          "✅ ROSA Edge LM Validation Pipeline Completed"
+          "Pipeline Status:"
+          "All endpoint tests completed"
+          "Edge LM validation completed"
+        )
+        
+        # Check if the last comment contains any success marker
+        IS_DUPLICATE=false
+        for MARKER in "${SUCCESS_MARKERS[@]}"; do
+          if echo "$LAST_COMMENT" | grep -q "$MARKER"; then
+            # Also check if the new comment contains the same marker
+            if echo "$COMMENT_TEXT" | grep -q "$MARKER"; then
+              echo "⚠️  Last comment already contains success marker: '$MARKER'"
+              IS_DUPLICATE=true
+              break
+            fi
+          fi
+        done
+        
+        if [ "$IS_DUPLICATE" = true ]; then
+          echo "⏭️  Skipping duplicate success message to Jira issue $(params.jiraIssueKey)"
+          echo "📋 Last comment summary:"
+          echo "$LAST_COMMENT" | head -5
+          echo "..."
+          echo ""
+          echo "✅ No duplicate comment added (success message already exists)"
+          exit 0
+        fi
+        
+        # Proceed with adding the comment
+        echo "📝 Adding new comment to Jira issue $(params.jiraIssueKey)..."
 
         # Create the JSON payload for the "Edit Issue" endpoint
-        JSON_PAYLOAD=$(jq -n --arg comment_text "$(params.comment)" \
+        JSON_PAYLOAD=$(jq -n --arg comment_text "$COMMENT_TEXT" \
           '{ "update": { "comment": [ { "add": { "body": $comment_text } } ] } }')
 
         # The URL points to the issue itself
@@ -54,11 +107,14 @@ spec:
         echo "Jira API Endpoint: $API_URL"
 
         # Make the API Call using PUT and the Bearer token auth
-        curl --request PUT \
+        if curl --request PUT \
              --header "$AUTH_HEADER" \
              --header "Content-Type: application/json" \
              --url "$API_URL" \
              --data "$JSON_PAYLOAD" \
-             --fail --show-error --silent
-
-        echo "✅ Successfully added comment to Jira issue $(params.jiraIssueKey) via Edit Issue API."
+             --fail --show-error --silent; then
+          echo "✅ Successfully added comment to Jira issue $(params.jiraIssueKey)"
+        else
+          echo "❌ Failed to add comment to Jira issue $(params.jiraIssueKey)"
+          exit 1
+        fi
