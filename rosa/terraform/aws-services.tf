@@ -127,8 +127,10 @@ resource "aws_db_instance" "postgres" {
   backup_retention_period = 7
   multi_az                = false
   #tfsec:ignore:aws-rds-specify-backup-retention Backup retention already set to 7 days
-  deletion_protection     = false  # Disabled for testing - easier cleanup
-  iam_database_authentication_enabled = false  # Not required for testing environment
+  #tfsec:ignore:aws-rds-enable-deletion-protection Deletion protection disabled for easier cleanup in testing environment
+  deletion_protection     = false
+  #tfsec:ignore:aws-rds-enable-iam-auth IAM authentication not required for testing environment
+  iam_database_authentication_enabled = false
 
   tags = merge(
     var.tags,
