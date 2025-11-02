@@ -77,6 +77,12 @@ variable "deploy_redis" {
   default     = false  # Disabled by default - enable with TF_VAR_deploy_redis=true
 }
 
+variable "deploy_quay" {
+  description = "Deploy S3 bucket for Quay registry storage"
+  type        = bool
+  default     = true  # Enabled by default for Quay deployment
+}
+
 # PostgreSQL Configuration
 variable "postgres_version" {
   description = "PostgreSQL engine version"
