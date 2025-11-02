@@ -109,7 +109,6 @@ resource "aws_elasticache_subnet_group" "redis" {
 # RDS PostgreSQL
 ###########################################
 
-#tfsec:ignore:aws-rds-enable-performance-insights Performance insights not required for testing environment
 #checkov:skip=CKV_AWS_226:Auto minor version upgrades disabled to control upgrade timing in testing
 #checkov:skip=CKV_AWS_129:RDS logs not required for ephemeral testing database
 #checkov:skip=CKV_AWS_293:Deletion protection disabled for easier cleanup in testing environment
@@ -117,6 +116,7 @@ resource "aws_elasticache_subnet_group" "redis" {
 #checkov:skip=CKV_AWS_161:IAM authentication not required for testing environment
 #checkov:skip=CKV_AWS_157:Multi-AZ disabled for cost savings in testing environment
 #checkov:skip=CKV_AWS_118:Enhanced monitoring not required for testing environment
+#tfsec:ignore:aws-rds-enable-performance-insights Performance insights not required for testing environment
 resource "aws_db_instance" "postgres" {
   count                   = var.deploy_postgres ? 1 : 0
   identifier              = "${var.cluster_name}-postgres"
