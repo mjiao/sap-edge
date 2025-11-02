@@ -7,14 +7,14 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: aro-endpoint-test-
+  generateName: aro-eic-full-test-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
 spec:
   pipelineRef:
-    name: aro-endpoint-test-pipeline
+    name: aro-eic-full-test-pipeline
   params:
     - name: repoUrl
       value: "{{ repo_url }}"
@@ -34,6 +34,8 @@ spec:
       value: "eic-auth-secret"
     - name: postgresAdminPasswordSecretName
       value: "azure-postgres-admin-password"
+    - name: quayAdminPasswordSecretName
+      value: "quay-admin-secret"
     - name: deployPostgres
       value: "true"
     - name: deployRedis

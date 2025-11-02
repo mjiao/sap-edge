@@ -7,7 +7,9 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: aro-endpoint-test-pipeline
+  name: aro-eic-full-test-pipeline
+  annotations:
+    description: "Complete SAP Edge Integration Cell validation pipeline: deploys ARO with Azure services (PostgreSQL, Redis), Quay registry, runs comprehensive endpoint tests, and tears down infrastructure"
 spec:
   params:
     - name: repoUrl
@@ -40,6 +42,10 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
       default: "azure-postgres-admin-password"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
     - name: deployPostgres
       type: string
       description: "Whether to deploy PostgreSQL (true/false)"
@@ -110,9 +116,23 @@ spec:
         - name: source
           workspace: source
 
+    - name: deploy-quay
+      runAfter: [validate-and-get-access]
+      taskRef: { name: aro-quay-deploy }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: quayAdminPasswordSecretName
+          value: $(params.quayAdminPasswordSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
     # Manual approval step - this will pause the pipeline
     - name: manual-approval
-      runAfter: [validate-and-get-access]
+      runAfter: [deploy-quay]
       taskRef:
         apiVersion: openshift-pipelines.org/v1alpha1
         kind: ApprovalTask
@@ -122,7 +142,7 @@ spec:
             - mjiao
             - rbhandar
         - name: description
-          value: "ARO cluster and Azure services (PostgreSQL/Redis) are deployed via Bicep. Please approve to run endpoint tests."
+          value: "ARO cluster, Azure services (PostgreSQL/Redis), and Quay registry are deployed. Please approve to run EIC endpoint tests."
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
@@ -224,20 +244,22 @@ spec:
           value: $(params.jiraIssueKey)
         - name: comment
           value: |
-            h2. ✅ ARO Deployment & Testing Pipeline Completed
+            h2. ✅ Complete EIC Validation Pipeline Completed
 
-            ARO cluster deployment and all automated endpoint tests have completed successfully.
+            ARO cluster with full EIC infrastructure and all automated endpoint tests completed successfully.
 
-            *ARO Cluster Configuration:*
+            *Infrastructure Configuration:*
             * *Cluster Name:* $(params.aroClusterName)
             * *Location:* $(params.aroLocation)
             * *ARO Version:* $(params.aroVersion)
-            * *PostgreSQL Deployment:* $(params.deployPostgres)
-            * *Redis Deployment:* $(params.deployRedis)
+            * *PostgreSQL:* $(params.deployPostgres) (VNet integrated)
+            * *Redis:* $(params.deployRedis) (Private endpoint)
+            * *Quay Registry:* ✅ Deployed
 
             *Pipeline Status:*
             * Repository cloned: ✅
-            * ARO deployment: ✅ Completed
+            * ARO deployment with Azure services: ✅ Completed
+            * Quay registry deployment: ✅ Completed
             * Validation and access setup: ✅ Completed
             * Endpoint tests: ✅ All Passed
 
@@ -253,13 +275,19 @@ spec:
             * test-slvredis ✅
             * test-ratelimit-slvredis ✅
 
-            *Infrastructure Status:*
-            * ARO cluster deployed and validated ✅
-            * Azure services (PostgreSQL/Redis) provisioned ✅
-            * Kubeconfig and service access configured ✅
-            * All connectivity tests passed ✅
+            *Infrastructure Components:*
+            * ARO OpenShift cluster ✅
+            * Azure PostgreSQL (VNet integrated) ✅
+            * Azure Redis (Private endpoint) ✅
+            * Quay container registry ✅
+            * All EIC endpoints validated ✅
 
-            Ready for manual teardown approval. The pipeline will proceed with infrastructure cleanup once approved.
+            *Security:*
+            * PostgreSQL: Private connectivity via delegated subnet
+            * Redis: Private endpoint with private DNS
+            * Quay: Azure storage backend with certificate trust
+
+            Ready for manual teardown approval. The complete EIC infrastructure will be destroyed once approved.
 
     # Manual approval step before teardown - this will pause the pipeline
     - name: manual-approval-teardown
