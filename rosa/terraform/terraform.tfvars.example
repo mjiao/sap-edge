@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-License-Identifier: Apache-2.0
+
+# Example terraform.tfvars file for ROSA HCP cluster deployment
+# Copy this file to terraform.tfvars and customize the values
+
+###########################################
+# Required Variables
+###########################################
+
+cluster_name = "my-rosa-cluster"
+aws_region   = "us-east-1"
+vpc_name     = "my-rosa-vpc"
+rosa_version = "4.14.9"
+
+###########################################
+# Optional: Network Configuration
+###########################################
+
+vpc_cidr        = "10.0.0.0/16"
+public_subnets  = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+private_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+###########################################
+# Optional: AWS Services
+###########################################
+
+# PostgreSQL Configuration
+deploy_postgres         = true
+postgres_version        = "15.5"
+postgres_instance_class = "db.t3.micro"
+postgres_admin_password = "CHANGE-ME-SecurePassword123!"
+
+# Redis Configuration
+deploy_redis          = true
+redis_engine_version  = "7.0"
+redis_node_type       = "cache.t3.micro"
+
+###########################################
+# Optional: Tags
+###########################################
+
+tags = {
+  Environment = "test"
+  Team        = "sap-edge"
+  Terraform   = "true"
+  Purpose     = "rosa-hcp-validation"
+}
+
