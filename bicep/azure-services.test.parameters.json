@@ -26,8 +26,11 @@
     "redisSku": {
       "value": "Basic"
     },
-    "redisSize": {
-      "value": "C0"
+    "redisFamily": {
+      "value": "C"
+    },
+    "redisCapacity": {
+      "value": 0
     },
     "testingTags": {
       "value": {

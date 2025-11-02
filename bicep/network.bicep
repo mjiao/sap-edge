@@ -17,7 +17,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' = {
   properties: {
     addressSpace: {
       addressPrefixes: [
-        '10.1.0.0/23'
+        '10.1.0.0/22'
       ]
     }
   }
@@ -35,4 +35,33 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' = {
       privateLinkServiceNetworkPolicies: 'Disabled'
     }
   }
+  resource postgresSubnet 'subnets@2024-01-01' = {
+    name: 'postgres-subnet'
+    properties: {
+      addressPrefix: '10.1.1.0/27'
+      delegations: [
+        {
+          name: 'postgres-delegation'
+          properties: {
+            serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers'
+          }
+        }
+      ]
+      serviceEndpoints: []
+    }
+  }
+  resource redisSubnet 'subnets@2024-01-01' = {
+    name: 'redis-subnet'
+    properties: {
+      addressPrefix: '10.1.2.0/27'
+      privateEndpointNetworkPolicies: 'Disabled'
+      privateLinkServiceNetworkPolicies: 'Disabled'
+    }
+  }
 }
+
+output vnetId string = vnet.id
+output masterSubnetId string = vnet::masterSubnet.id
+output workerSubnetId string = vnet::workerSubnet.id
+output postgresSubnetId string = vnet::postgresSubnet.id
+output redisSubnetId string = vnet::redisSubnet.id
