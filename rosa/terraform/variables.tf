@@ -18,9 +18,14 @@ variable "vpc_name" {
 }
 
 variable "cluster_name" {
-  description = "Name of the cluster"
+  description = "Name of the cluster (max 15 characters)"
   type        = string
-  default     = "rosa-hcp-cluster"
+  default     = "rosa-hcp-test"
+  
+  validation {
+    condition     = length(var.cluster_name) <= 15
+    error_message = "Cluster name must be 15 characters or less."
+  }
 }
 
 variable "rosa_version" {

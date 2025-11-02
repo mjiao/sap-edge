@@ -131,7 +131,7 @@ export TF_VAR_redis_node_type="cache.t3.micro"
 
 1. **Set required environment variables**:
    ```bash
-   export CLUSTER_NAME="my-rosa-cluster"
+   export CLUSTER_NAME="my-rosa-test"  # Max 15 characters!
    export AWS_REGION="us-east-1"
    export VPC_NAME="${CLUSTER_NAME}-vpc"
    export RHCS_TOKEN="your-rhcs-token"
@@ -147,7 +147,7 @@ export TF_VAR_redis_node_type="cache.t3.micro"
 
 3. **Create terraform.tfvars**:
    ```hcl
-   cluster_name  = "my-rosa-cluster"
+   cluster_name  = "my-rosa-test"  # Max 15 characters!
    aws_region    = "us-east-1"
    vpc_name      = "my-rosa-vpc"
    rosa_version  = "4.14.9"
