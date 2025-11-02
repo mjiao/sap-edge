@@ -113,31 +113,56 @@ spec:
         # Note: ARO cluster should already be deployed by the deploy-aro task
         echo "ℹ️  Note: Using existing ARO cluster for Quay deployment"
         
-        # Step 1: Ensure Azure storage for Quay (idempotent)
-        echo "🏗️ Ensuring Azure storage for Quay..."
-        make aro-quay-storage-create
+        # Step 1: Get Quay storage credentials from Bicep deployment
+        echo "🔑 Retrieving Quay storage credentials from Bicep deployment..."
         
-        # Extract storage info for environment variables
-        echo "📋 Getting storage account information..."
-        STORAGE_ACCOUNTS=$(az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay' && tags.cluster=='${ARO_CLUSTER_NAME}'].name" -o tsv)
-        if [ -z "$STORAGE_ACCOUNTS" ]; then
-          echo "❌ No Quay storage account found for cluster: ${ARO_CLUSTER_NAME}"
-          echo "🔍 Available Quay storage accounts:"
-          az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{name:name,cluster:tags.cluster}" -o table
+        DEPLOYMENT_NAME="azure-services-deployment"
+        
+        # Check if Bicep deployment exists
+        if ! az deployment group show \
+            --name "${DEPLOYMENT_NAME}" \
+            --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1; then
+          echo "❌ Bicep deployment '${DEPLOYMENT_NAME}' not found"
+          echo "💡 Storage should be created by Bicep during ARO deployment"
           exit 1
         fi
         
-        # Use the storage account for this cluster
-        AZURE_STORAGE_ACCOUNT_NAME=$(echo "$STORAGE_ACCOUNTS" | head -1)
-        AZURE_STORAGE_ACCOUNT_KEY=$(az storage account keys list --resource-group "${ARO_RESOURCE_GROUP}" --account-name "$AZURE_STORAGE_ACCOUNT_NAME" --query "[0].value" -o tsv)
+        # Get storage credentials from Bicep outputs
+        AZURE_STORAGE_ACCOUNT_NAME=$(az deployment group show \
+            --name "${DEPLOYMENT_NAME}" \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --query 'properties.outputs.quayStorageAccountName.value' \
+            -o tsv)
+        
+        if [ -z "${AZURE_STORAGE_ACCOUNT_NAME}" ] || [ "${AZURE_STORAGE_ACCOUNT_NAME}" == "null" ]; then
+          echo "❌ Quay storage not deployed. Check deployQuay parameter in Bicep."
+          exit 1
+        fi
+        
+        AZURE_STORAGE_ACCOUNT_KEY=$(az deployment group show \
+            --name "${DEPLOYMENT_NAME}" \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --query 'properties.outputs.quayStorageAccountKey.value' \
+            -o tsv)
+        
+        AZURE_STORAGE_CONTAINER=$(az deployment group show \
+            --name "${DEPLOYMENT_NAME}" \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --query 'properties.outputs.quayContainerName.value' \
+            -o tsv)
+        
+        if [ -z "${AZURE_STORAGE_CONTAINER}" ]; then
+          AZURE_STORAGE_CONTAINER="quay-registry"
+        fi
+        
         export AZURE_STORAGE_ACCOUNT_NAME
         export AZURE_STORAGE_ACCOUNT_KEY
-        export AZURE_STORAGE_CONTAINER="quay-registry"
+        export AZURE_STORAGE_CONTAINER
         
-        echo "✅ Storage configuration:"
-        echo "  Account: $AZURE_STORAGE_ACCOUNT_NAME"
-        echo "  Container: $AZURE_STORAGE_CONTAINER"
-        echo "  Cluster: ${ARO_CLUSTER_NAME}"
+        echo "✅ Storage credentials retrieved from Bicep:"
+        echo "  Account: ${AZURE_STORAGE_ACCOUNT_NAME}"
+        echo "  Container: ${AZURE_STORAGE_CONTAINER}"
+        echo "  Source: Bicep deployment outputs"
         
         # Step 2: Deploy Quay with complete automation
         echo "🚀 Deploying Quay registry with complete automation..."

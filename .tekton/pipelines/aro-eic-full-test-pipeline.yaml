@@ -9,7 +9,7 @@ kind: Pipeline
 metadata:
   name: aro-eic-full-test-pipeline
   annotations:
-    description: "Complete SAP Edge Integration Cell validation pipeline: deploys ARO with Azure services (PostgreSQL, Redis), Quay registry, runs comprehensive endpoint tests, and tears down infrastructure"
+    description: "Complete SAP Edge Integration Cell validation pipeline: deploys ARO with Azure services (PostgreSQL, Redis, Quay Storage via Bicep), Quay registry operator, runs comprehensive endpoint tests, and tears down infrastructure"
 spec:
   params:
     - name: repoUrl
@@ -53,6 +53,10 @@ spec:
     - name: deployRedis
       type: string
       description: "Whether to deploy Redis (true/false)"
+      default: "true"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy Quay storage (true/false)"
       default: "true"
     - name: publicDNS
       type: string
@@ -98,6 +102,8 @@ spec:
           value: $(params.deployPostgres)
         - name: deployRedis
           value: $(params.deployRedis)
+        - name: deployQuay
+          value: $(params.deployQuay)
       workspaces:
         - name: source
           workspace: source
@@ -252,8 +258,9 @@ spec:
             * *Cluster Name:* $(params.aroClusterName)
             * *Location:* $(params.aroLocation)
             * *ARO Version:* $(params.aroVersion)
-            * *PostgreSQL:* $(params.deployPostgres) (VNet integrated)
-            * *Redis:* $(params.deployRedis) (Private endpoint)
+            * *PostgreSQL:* $(params.deployPostgres) (VNet integrated, Bicep-managed)
+            * *Redis:* $(params.deployRedis) (Private endpoint, Bicep-managed)
+            * *Quay Storage:* $(params.deployQuay) (Azure Storage, Bicep-managed)
             * *Quay Registry:* ✅ Deployed
 
             *Pipeline Status:*
@@ -283,9 +290,10 @@ spec:
             * All EIC endpoints validated ✅
 
             *Security:*
-            * PostgreSQL: Private connectivity via delegated subnet
-            * Redis: Private endpoint with private DNS
-            * Quay: Azure storage backend with certificate trust
+            * PostgreSQL: Private connectivity via delegated subnet (Bicep-managed)
+            * Redis: Private endpoint with private DNS (Bicep-managed)
+            * Quay Storage: Azure Storage Account with private access (Bicep-managed)
+            * Quay: Certificate trust configured for OpenShift integration
 
             Ready for manual teardown approval. The complete EIC infrastructure will be destroyed once approved.
 

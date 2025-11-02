@@ -40,6 +40,8 @@ spec:
       value: "true"
     - name: deployRedis
       value: "true"
+    - name: deployQuay
+      value: "true"
     - name: publicDNS
       value: "false"
     - name: jiraSecretName
