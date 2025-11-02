@@ -1,10 +1,11 @@
+---
 # Checkov configuration for ROSA Terraform
 # Skip security checks that are acceptable for a testing/pipeline environment
 
 skip-check:
   # Security Groups - Allow egress to 0.0.0.0/0
   - CKV_AWS_382  # Outbound internet access required for testing environment
-  
+
   # RDS PostgreSQL - Testing environment configurations
   - CKV_AWS_226  # Auto minor version upgrades disabled to control upgrade timing in testing
   - CKV_AWS_129  # RDS logs not required for ephemeral testing database
@@ -13,7 +14,6 @@ skip-check:
   - CKV_AWS_161  # IAM authentication not required for testing environment
   - CKV_AWS_157  # Multi-AZ disabled for cost savings in testing environment
   - CKV_AWS_118  # Enhanced monitoring not required for testing environment
-  
+
   # ElastiCache Redis - Testing environment configurations
   - CKV_AWS_134  # ElastiCache backup not required for ephemeral testing cache
-
