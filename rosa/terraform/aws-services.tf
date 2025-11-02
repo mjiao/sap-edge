@@ -7,6 +7,7 @@
 # Security Groups
 ###########################################
 
+#checkov:skip=CKV_AWS_382:Outbound internet access required for testing environment
 resource "aws_security_group" "postgres" {
   count       = var.deploy_postgres ? 1 : 0
   name        = "${var.cluster_name}-postgres-sg"
@@ -39,6 +40,7 @@ resource "aws_security_group" "postgres" {
   )
 }
 
+#checkov:skip=CKV_AWS_382:Outbound internet access required for testing environment
 resource "aws_security_group" "redis" {
   count       = var.deploy_redis ? 1 : 0
   name        = "${var.cluster_name}-redis-sg"
@@ -107,6 +109,13 @@ resource "aws_elasticache_subnet_group" "redis" {
 # RDS PostgreSQL
 ###########################################
 
+#checkov:skip=CKV_AWS_226:Auto minor version upgrades disabled to control upgrade timing in testing
+#checkov:skip=CKV_AWS_129:RDS logs not required for ephemeral testing database
+#checkov:skip=CKV_AWS_293:Deletion protection disabled for easier cleanup in testing environment
+#checkov:skip=CKV_AWS_353:Performance insights not required for testing environment
+#checkov:skip=CKV_AWS_161:IAM authentication not required for testing environment
+#checkov:skip=CKV_AWS_157:Multi-AZ disabled for cost savings in testing environment
+#checkov:skip=CKV_AWS_118:Enhanced monitoring not required for testing environment
 #tfsec:ignore:aws-rds-enable-performance-insights Performance insights not required for testing environment
 resource "aws_db_instance" "postgres" {
   count                   = var.deploy_postgres ? 1 : 0
@@ -145,6 +154,7 @@ resource "aws_db_instance" "postgres" {
 # ElastiCache Redis
 ###########################################
 
+#checkov:skip=CKV_AWS_134:ElastiCache backup not required for ephemeral testing cache
 #tfsec:ignore:aws-elasticache-enable-backup-retention Backup retention not required for testing cache
 resource "aws_elasticache_cluster" "redis" {
   count                = var.deploy_redis ? 1 : 0
