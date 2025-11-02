@@ -407,6 +407,44 @@ make redis-delete
 
 > **💡 Tip**: `make aro-resource-group-delete` is the fastest cleanup method as Azure handles dependency ordering automatically.
 
+#### Deploying Quay Container Registry
+
+Quay storage is automatically provisioned by Bicep along with other Azure services. To deploy Quay on your ARO cluster:
+
+```bash
+# Step 1: Retrieve storage credentials from Bicep deployment
+make aro-quay-storage-create
+
+# This will output environment variables like:
+# export AZURE_STORAGE_ACCOUNT_NAME=quay...
+# export AZURE_STORAGE_ACCOUNT_KEY=...
+# export AZURE_STORAGE_CONTAINER=quay-registry
+
+# Step 2: Set the environment variables (copy from output above)
+export AZURE_STORAGE_ACCOUNT_NAME=<from-bicep-output>
+export AZURE_STORAGE_ACCOUNT_KEY=$(az deployment group show \
+  --name azure-services-deployment \
+  --resource-group $ARO_RESOURCE_GROUP \
+  --query 'properties.outputs.quayStorageAccountKey.value' -o tsv)
+export AZURE_STORAGE_CONTAINER=quay-registry
+
+# Step 3: Set Quay admin credentials
+export QUAY_ADMIN_PASSWORD="YourSecurePassword"
+export QUAY_ADMIN_EMAIL="admin@example.com"
+
+# Step 4: Deploy Quay using Ansible
+make aro-quay-deploy
+```
+
+The Ansible playbook will:
+1. Deploy the Quay operator
+2. Configure Azure Blob Storage backend
+3. Deploy the Quay registry instance
+4. Create admin user
+5. Configure certificate trust
+
+> **💡 Note**: Quay storage is managed by Bicep and will be automatically deleted when you run `make aro-destroy`.
+
 ## Pipeline Structure
 
 The ARO pipeline consists of several Tekton tasks and a complete pipeline definition. **Azure services (PostgreSQL and Redis) are now deployed via Bicep templates** as part of the ARO deployment, providing better infrastructure-as-code practices.

@@ -541,8 +541,11 @@ aro-cost-estimate:  ## Get cost estimate for test deployment
 
 # Azure Storage for Quay Registry
 .PHONY: aro-quay-storage-create
-aro-quay-storage-create:  ## Create Azure storage account for Quay registry
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+aro-quay-storage-create:  ## Get Azure storage credentials for Quay (storage created by Bicep)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@echo "💡 Note: Storage is created by Bicep deployment (make aro-deploy-test)"
+	@echo "   This command retrieves the credentials from Bicep outputs"
+	@echo ""
 	@hack/aro/quay-storage-create.sh
 
 .PHONY: aro-quay-storage-info
@@ -553,8 +556,11 @@ aro-quay-storage-info:  ## Get Azure storage account information for Quay
 	@az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{Name:name,Location:location,Cluster:tags.cluster}" -o table
 
 .PHONY: aro-quay-storage-delete
-aro-quay-storage-delete:  ## Delete Azure storage account for Quay (requires AZURE_STORAGE_ACCOUNT_NAME)
+aro-quay-storage-delete:  ## Delete Azure storage account for Quay (manual deletion, use aro-destroy for full cleanup)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME)
+	@echo "💡 Note: Quay storage is managed by Bicep and will be deleted by 'make aro-destroy'"
+	@echo "   Only use this for manual cleanup of storage without deleting other resources"
+	@echo ""
 	@echo "🗑️ Deleting Azure storage account for Quay..."
 	@echo "⚠️  This will permanently delete all registry data!"
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm; \
@@ -835,10 +841,11 @@ quay-info-generic:  ## Get Quay registry connection information (generic)
 
 # ROSA (Red Hat OpenShift Service on AWS) Quay Registry targets
 .PHONY: rosa-quay-s3-create
-rosa-quay-s3-create:  ## Create S3 bucket for ROSA Quay registry
-	$(call required-environment-variables,CLUSTER_NAME AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
-	@echo "🪣 Creating S3 bucket for ROSA Quay registry..."
-	./hack/rosa/quay-s3-create.sh
+rosa-quay-s3-create:  ## Get S3 credentials for Quay (bucket created by Terraform)
+	@echo "💡 Note: S3 bucket is created by Terraform deployment (cd rosa/terraform && terraform apply)"
+	@echo "   This command retrieves the credentials from Terraform outputs"
+	@echo ""
+	@./hack/rosa/quay-s3-create.sh
 
 .PHONY: rosa-quay-deploy
 rosa-quay-deploy:  ## Deploy Quay registry operator and instance on ROSA with S3 storage (uses Ansible)

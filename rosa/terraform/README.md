@@ -185,10 +185,43 @@ export TF_VAR_redis_node_type="cache.t3.micro"
    rosa create admin -c $(terraform output -raw rosa_cluster_id)
    ```
 
-6. **Destroy infrastructure**:
+6. **Deploy Quay Container Registry** (Optional):
+
+   Quay S3 storage is automatically created by Terraform. To deploy Quay on your ROSA cluster:
+   
+   ```bash
+   # From rosa/terraform directory
+   
+   # Step 1: Get S3 credentials from Terraform outputs
+   export S3_BUCKET_NAME=$(terraform output -raw quay_s3_bucket_name)
+   export S3_REGION=$(terraform output -raw quay_s3_bucket_region)
+   export S3_HOST="s3.${S3_REGION}.amazonaws.com"
+   export AWS_ACCESS_KEY_ID=$(terraform output -raw quay_s3_access_key_id)
+   export AWS_SECRET_ACCESS_KEY=$(terraform output -raw quay_s3_secret_access_key)
+   
+   # Step 2: Set Quay admin credentials
+   export QUAY_ADMIN_PASSWORD="YourSecurePassword"
+   export QUAY_ADMIN_EMAIL="admin@example.com"
+   export CLUSTER_NAME=$(terraform output -raw rosa_cluster_name)
+   
+   # Step 3: Deploy Quay using Ansible (from project root)
+   cd ../..
+   make rosa-quay-deploy
+   ```
+   
+   The Ansible playbook will:
+   - Deploy the Quay operator
+   - Configure S3 storage backend
+   - Deploy the Quay registry instance
+   - Create admin user
+   - Configure certificate trust
+
+7. **Destroy infrastructure**:
    ```bash
    terraform destroy
    ```
+   
+   > **💡 Note**: This will destroy all resources including the ROSA cluster, VPC, and S3 bucket with all registry data.
 
 ## License
 
