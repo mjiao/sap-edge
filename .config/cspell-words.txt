@@ -112,6 +112,7 @@ edgelm
 Edgelm
 pipefail
 privatelink
+jsonencode
 Makefiles
 makefiles
 openshiftapps
