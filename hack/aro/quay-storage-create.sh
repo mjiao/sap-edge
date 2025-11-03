@@ -73,7 +73,7 @@ get_storage_credentials() {
     fi
     
     # Get storage account key (retrieved to validate it exists, but not exported for security)
-    # shellcheck disable=SC2034
+    # shellcheck disable=SC2034,SC2155
     local storage_key=$(az deployment group show \
         --name "${deployment_name}" \
         --resource-group "${ARO_RESOURCE_GROUP}" \
