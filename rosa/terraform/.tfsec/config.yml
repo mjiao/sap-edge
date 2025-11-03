@@ -10,3 +10,5 @@ exclude:
   - aws-elasticache-enable-backup-retention  # Backup retention not required for ephemeral testing cache
   - aws-rds-enable-performance-insights      # Performance insights not required for testing environment
   - aws-ec2-require-vpc-flow-logs-for-all-vpcs  # VPC flow logs not required for testing environment
+  - aws-s3-encryption-customer-key           # AWS-managed encryption (AES256) acceptable for testing S3 buckets
+  - aws-iam-no-policy-wildcards              # Wildcards acceptable in IAM policies for testing environment
