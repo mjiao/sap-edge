@@ -17,3 +17,10 @@ skip-check:
 
   # ElastiCache Redis - Testing environment configurations
   - CKV_AWS_134  # ElastiCache backup not required for ephemeral testing cache
+
+  # IAM - Quay S3 access requires programmatic credentials
+  - CKV_AWS_273  # IAM user required for Quay programmatic S3 access (not SSO)
+  - CKV_AWS_40   # IAM policy attached to user for Quay S3 access keys
+
+  # Terraform Modules - Version pinning acceptable for testing
+  - CKV_TF_1     # Terraform module version pins acceptable (commit hash not required for testing)
