@@ -95,8 +95,17 @@ spec:
         
         echo "🔐 Logging into Azure..."
         make azure-login
-        
-        echo "🔍 Checking Azure services status..." 
+
+        # Export required environment variables for all makefile operations
+        export ARO_CLUSTER_NAME="$ARO_CLUSTER_NAME"
+        export ARO_RESOURCE_GROUP="$ARO_RESOURCE_GROUP"
+        export ARO_LOCATION="$ARO_LOCATION"
+        export ARO_VERSION="$ARO_VERSION"
+        export DEPLOY_POSTGRES="$DEPLOY_POSTGRES"
+        export DEPLOY_REDIS="$DEPLOY_REDIS"
+        export DEPLOY_QUAY="$DEPLOY_QUAY"
+
+        echo "🔍 Checking Azure services status..."
         # Set fixed PostgreSQL server name
         POSTGRES_SERVER_NAME="postgres-${ARO_CLUSTER_NAME}"
         
@@ -108,7 +117,7 @@ spec:
         echo "🔍 Checking existing cluster status..."
         echo "Using cluster name: $ARO_CLUSTER_NAME"
         echo "Using resource group: $ARO_RESOURCE_GROUP"
-        
+
         CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
         if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
           echo "✅ Cluster EXISTS"
