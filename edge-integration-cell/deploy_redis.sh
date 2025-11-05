@@ -164,15 +164,24 @@ if [[ -z "$OPENSHIFT_VERSION" ]]; then
     fi
 fi
 
-# Check if already deployed
+# Check if already deployed (idempotency check)
+IDEMPOTENT_SKIP=false
 if oc get namespace "$NAMESPACE" &> /dev/null; then
-    log WARNING "Namespace '$NAMESPACE' already exists."
+    log INFO "Namespace '$NAMESPACE' already exists (idempotent - will check existing resources)."
     if oc get redisenterprisecluster -n "$NAMESPACE" &> /dev/null 2>&1; then
         EXISTING_CLUSTERS=$(oc get redisenterprisecluster -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
         if [[ -n "$EXISTING_CLUSTERS" ]]; then
-            log ERROR "RedisEnterpriseCluster(s) already exist: $EXISTING_CLUSTERS"
-            log ERROR "Please run cleanup first: bash $SCRIPT_DIR/cleanup_redis.sh"
-            exit 1
+            log INFO "RedisEnterpriseCluster(s) already exist: $EXISTING_CLUSTERS"
+            
+            # Check if database also exists
+            if oc get redisenterprisedatabase -n "$NAMESPACE" &> /dev/null 2>&1; then
+                EXISTING_DBS=$(oc get redisenterprisedatabase -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+                if [[ -n "$EXISTING_DBS" ]]; then
+                    log INFO "RedisEnterpriseDatabase(s) already exist: $EXISTING_DBS"
+                    log SUCCESS "Redis deployment already complete (idempotent - no changes needed)."
+                    IDEMPOTENT_SKIP=true
+                fi
+            fi
         fi
     fi
 fi
@@ -206,6 +215,24 @@ if [[ "$DRY_RUN" == "true" ]]; then
     log INFO "                    DRY-RUN MODE ENABLED"
     log INFO "           No resources will be actually deployed"
     log INFO "════════════════════════════════════════════════════════════════"
+fi
+
+# Check if we can skip deployment (idempotent)
+if [[ "$IDEMPOTENT_SKIP" == "true" && "$DRY_RUN" != "true" ]]; then
+    log INFO "════════════════════════════════════════════════════════════════"
+    log INFO "All Redis resources already exist and are deployed."
+    log INFO "Retrieving existing access details..."
+    echo ""
+    if [[ -f "$SCRIPT_DIR/external-redis/get_redis_access.sh" ]]; then
+        bash "$SCRIPT_DIR/external-redis/get_redis_access.sh"
+    else
+        log WARNING "Access script not found. You can retrieve access details manually."
+    fi
+    echo ""
+    log SUCCESS "✅ Redis deployment verification completed (idempotent)."
+    log INFO "To re-deploy from scratch, run cleanup first:"
+    log INFO "  bash $SCRIPT_DIR/cleanup_redis.sh"
+    exit 0
 fi
 
 # Function to execute command
