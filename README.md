@@ -17,6 +17,7 @@ This repository provides comprehensive tooling for deploying and testing SAP Edg
 - [External Services Setup](#external-services-setup)
   - [PostgreSQL](#postgresql)
   - [Redis](#redis)
+  - [Comprehensive Cleanup Automation](#-comprehensive-cleanup-automation)
   - [GitOps with Argo CD](#gitops-with-argo-cd)
 - [ARO Pipeline](#aro-pipeline)
   - [Pipeline Structure](#pipeline-structure)
@@ -143,7 +144,27 @@ Please use the provided information to set up the EIC external DB accordingly.
 
 ### Cleanup PostgreSQL
 
-To clean up the PostgresCluster:
+#### Option 1: Automated Cleanup (Recommended)
+
+Use the provided cleanup script for comprehensive automated cleanup:
+
+```bash
+# Interactive cleanup with confirmation
+bash sap-edge/edge-integration-cell/cleanup_postgres.sh
+
+# Force cleanup without prompts (for CI/CD)
+bash sap-edge/edge-integration-cell/cleanup_postgres.sh --force
+
+# Dry-run to preview what would be deleted
+bash sap-edge/edge-integration-cell/cleanup_postgres.sh --dry-run
+
+# Custom namespace cleanup
+bash sap-edge/edge-integration-cell/cleanup_postgres.sh --namespace my-postgres-namespace
+```
+
+#### Option 2: Manual Cleanup
+
+To manually clean up the PostgresCluster:
 
 ```bash
 oc delete postgrescluster eic -n sap-eic-external-postgres
@@ -234,7 +255,30 @@ bash sap-edge/edge-integration-cell/get_all_access.sh
 
 ## Cleanup Redis
 
-To clean up the Redis instance:
+#### Option 1: Automated Cleanup (Recommended)
+
+Use the provided cleanup script for comprehensive automated cleanup:
+
+```bash
+# Interactive cleanup with confirmation (auto-detects OpenShift version)
+bash sap-edge/edge-integration-cell/cleanup_redis.sh
+
+# Force cleanup without prompts (for CI/CD)
+bash sap-edge/edge-integration-cell/cleanup_redis.sh --force
+
+# Dry-run to preview what would be deleted
+bash sap-edge/edge-integration-cell/cleanup_redis.sh --dry-run
+
+# Specify OpenShift version for SCC cleanup
+bash sap-edge/edge-integration-cell/cleanup_redis.sh --ocp-version 4.16
+
+# Custom namespace cleanup
+bash sap-edge/edge-integration-cell/cleanup_redis.sh --namespace my-redis-namespace
+```
+
+#### Option 2: Manual Cleanup
+
+To manually clean up the Redis instance:
 
 ```bash
 oc delete redisenterprisedatabase redb -n sap-eic-external-redis
@@ -248,6 +292,46 @@ oc delete scc redis-enterprise-scc-v2
 oc delete scc redis-enterprise-scc
 oc delete namespace sap-eic-external-redis
 ```
+
+## 🧹 Comprehensive Cleanup Automation
+
+For convenience, a unified cleanup script is provided to clean up **both PostgreSQL and Redis** services in a single operation:
+
+```bash
+# Interactive cleanup of both services with confirmation
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh
+
+# Force cleanup without prompts (for CI/CD)
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh --force
+
+# Dry-run to preview all resources that would be deleted
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh --dry-run
+
+# Cleanup only PostgreSQL
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh --postgres-only
+
+# Cleanup only Redis
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh --redis-only
+
+# Cleanup with OpenShift version specified for SCC cleanup
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh --ocp-version 4.16
+
+# Cleanup with custom namespaces
+bash sap-edge/edge-integration-cell/cleanup_all_external_services.sh \
+  --postgres-namespace my-postgres \
+  --redis-namespace my-redis
+```
+
+### Cleanup Script Features
+
+- ✅ **Interactive Mode**: Prompts for confirmation before deletion
+- ✅ **Force Mode**: Non-interactive for CI/CD pipelines (`--force`)
+- ✅ **Dry-Run**: Preview resources without deleting (`--dry-run`)
+- ✅ **Selective Cleanup**: Choose PostgreSQL only, Redis only, or both
+- ✅ **Smart Detection**: Auto-detects OpenShift version for SCC cleanup
+- ✅ **Error Handling**: Comprehensive error reporting and graceful failure handling
+- ✅ **Logging**: Timestamped, color-coded output for easy tracking
+- ✅ **Namespace Support**: Custom namespace cleanup
 
 ## 🚀 GitOps with Argo CD
 
