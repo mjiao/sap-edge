@@ -130,6 +130,8 @@ spec:
         # Enable scheduling on master nodes
         echo ""
         echo "🔧 Enabling scheduling on master nodes..."
+        export ARO_CLUSTER_NAME
+        export ARO_RESOURCE_GROUP
         make aro-enable-master-scheduling
         
         echo ""
