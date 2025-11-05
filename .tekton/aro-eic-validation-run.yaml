@@ -13,7 +13,7 @@ metadata:
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
 spec:
   pipelineRef:
-    name: aro-eic-validation-pipeline
+    name: aro-eic-full-test-pipeline
   timeouts:
     pipeline: "240h"      # Total pipeline timeout (10 days for long validation)
     tasks: "180m"         # Individual task timeout (3 hours)
@@ -43,16 +43,14 @@ spec:
       value: "true"
     - name: publicDNS
       value: "false"
-    - name: eicVersion
-      value: "8.36.8"
-    - name: validationTests
-      value: "full"
+    - name: deployQuay
+      value: "true"
+    - name: quayAdminPasswordSecretName
+      value: "quay-admin-secret"
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
       value: "SAPOCP-1708"
-    - name: extraInfo
-      value: "ARO EIC validation with version 8.36.8 on OpenShift 4.20"
   workspaces:
     - name: source
       volumeClaimTemplate:
