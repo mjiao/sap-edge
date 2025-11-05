@@ -109,9 +109,8 @@ spec:
         # Set fixed PostgreSQL server name
         POSTGRES_SERVER_NAME="postgres-${ARO_CLUSTER_NAME}"
         
-        # Initialize deployment flags
+        # Initialize deployment flag
         CLUSTER_EXISTS=false
-        SERVICES_NEED_DEPLOYMENT=false
         
         # Check if cluster already exists
         echo "🔍 Checking existing cluster status..."
@@ -133,59 +132,9 @@ spec:
             CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
           elif [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
             echo "✅ Cluster already exists and is ready!"
-            # Check if services need deployment only when cluster exists and is ready
-            echo "🔍 Checking Azure services status..."
-            
-            if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
-              echo "📊 Checking PostgreSQL server status..."
-              POSTGRES_EXISTS=$(make postgres-exists | tail -1)
-              if [[ -n "$POSTGRES_EXISTS" ]]; then
-                echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
-              else
-                echo "📦 PostgreSQL server needs to be created"
-                SERVICES_NEED_DEPLOYMENT=true
-              fi
-            fi
-
-            if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
-              echo "📊 Checking Redis cache status..."
-              REDIS_EXISTS=$(make redis-exists | tail -1)
-              if [[ -n "$REDIS_EXISTS" ]]; then
-                echo "✅ Redis cache already exists: $REDIS_EXISTS"
-              else
-                echo "📦 Redis cache needs to be created"
-                SERVICES_NEED_DEPLOYMENT=true
-              fi
-            fi
-
-            if [[ "${DEPLOY_QUAY:-true}" == "true" ]]; then
-              echo "📊 Checking Quay storage status..."
-              # Check for Quay storage from Bicep deployment outputs
-              DEPLOYMENT_NAME="azure-services-deployment"
-              if az deployment group show --name "${DEPLOYMENT_NAME}" --resource-group "${ARO_RESOURCE_GROUP}" >/dev/null 2>&1; then
-                QUAY_STORAGE=$(az deployment group show \
-                  --name "${DEPLOYMENT_NAME}" \
-                  --resource-group "${ARO_RESOURCE_GROUP}" \
-                  --query 'properties.outputs.quayStorageAccountName.value' \
-                  -o tsv 2>/dev/null || echo "")
-                if [[ -n "$QUAY_STORAGE" ]] && [[ "$QUAY_STORAGE" != "null" ]]; then
-                  echo "✅ Quay storage already exists: $QUAY_STORAGE"
-                else
-                  echo "📦 Quay storage needs to be created"
-                  SERVICES_NEED_DEPLOYMENT=true
-                fi
-              else
-                echo "📦 Quay storage needs to be created (no Bicep deployment found)"
-                SERVICES_NEED_DEPLOYMENT=true
-              fi
-            fi
-            
-            if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
-              echo "✅ All services are ready, exiting successfully!"
-              exit 0
-            fi
-            # If services need deployment, continue to deployment section
-            break
+            echo "ℹ️  Assuming all Azure services (PostgreSQL, Redis, Quay storage) were deployed with the cluster"
+            echo "✅ Skipping deployment - cluster and services already exist!"
+            exit 0
           elif [[ "$CLUSTER_STATUS" == "Creating" || "$CLUSTER_STATUS" == "Updating" ]]; then
             echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
             if make aro-wait-for-ready; then
@@ -206,16 +155,9 @@ spec:
         make aro-resource-group-create
         
         # Deployment decision logic based on cluster existence
-        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS, SERVICES_NEED_DEPLOYMENT=$SERVICES_NEED_DEPLOYMENT"
+        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS"
         
-        if [[ "$CLUSTER_EXISTS" == "true" ]]; then
-          if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
-            echo "🚀 Deploying Azure services only (cluster exists)..."
-            make aro-services-deploy-with-retry
-          else
-            echo "✅ Cluster exists and all services are ready - nothing to deploy!"
-          fi
-        else
+        if [[ "$CLUSTER_EXISTS" == "false" ]]; then
           echo "🚀 Deploying full ARO cluster with EIC services (PostgreSQL and Redis)..."
           
           # Final safety check - double-check cluster doesn't exist before deploying
@@ -226,6 +168,8 @@ spec:
 
           echo "🔄 Creating domain records for ARO..."
           make domain-records
+        else
+          echo "✅ Cluster exists - nothing to deploy!"
         fi
 
         echo "✅ ARO deployment with EIC services completed successfully!" 
