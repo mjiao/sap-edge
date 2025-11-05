@@ -131,15 +131,15 @@ spec:
         echo "✅ Found Bicep deployment: ${DEPLOYMENT_NAME}"
         
         # Get Quay storage account directly from Azure (not from Bicep outputs)
-        # Storage accounts for Quay are tagged with purpose=quay
+        # Storage accounts for Quay are tagged with service=quay
         echo "🔍 Finding Quay storage account in resource group..."
         AZURE_STORAGE_ACCOUNT_NAME=$(az storage account list \
             --resource-group "${ARO_RESOURCE_GROUP}" \
-            --query "[?tags.purpose=='quay'].name | [0]" \
+            --query "[?tags.service=='quay'].name | [0]" \
             -o tsv)
         
         if [ -z "${AZURE_STORAGE_ACCOUNT_NAME}" ] || [ "${AZURE_STORAGE_ACCOUNT_NAME}" == "null" ]; then
-          echo "❌ No storage account with tag 'purpose=quay' found in resource group '${ARO_RESOURCE_GROUP}'"
+          echo "❌ No storage account with tag 'service=quay' found in resource group '${ARO_RESOURCE_GROUP}'"
           echo "💡 Storage should be created by Bicep during ARO deployment with deployQuay=true"
           exit 1
         fi
@@ -163,7 +163,7 @@ spec:
         echo "✅ Storage credentials retrieved:"
         echo "  Account: ${AZURE_STORAGE_ACCOUNT_NAME}"
         echo "  Container: ${AZURE_STORAGE_CONTAINER}"
-        echo "  Source: Azure resource query (tag: purpose=quay)"
+        echo "  Source: Azure resource query (tag: service=quay)"
         
         # Step 2: Deploy Quay with complete automation
         echo "🚀 Deploying Quay registry with complete automation..."
