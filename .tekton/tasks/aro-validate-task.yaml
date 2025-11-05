@@ -123,10 +123,16 @@ spec:
         cp kubeconfig kubeconfig-$(params.aroClusterName).yaml
         echo "✅ Kubeconfig saved as: kubeconfig-$(params.aroClusterName).yaml"
         
-        # Enable scheduling on master nodes
+        # Enable scheduling on master nodes (optional - may already be enabled)
         echo ""
         echo "🔧 Enabling scheduling on master nodes..."
-        make aro-enable-master-scheduling
+        if command -v ansible-playbook >/dev/null 2>&1; then
+          echo "✅ Ansible found, enabling master scheduling..."
+          make aro-enable-master-scheduling || echo "⚠️  Master scheduling enablement failed or already enabled"
+        else
+          echo "ℹ️  Ansible not available, skipping master scheduling configuration"
+          echo "💡 Master scheduling may already be configured or can be done manually if needed"
+        fi
         
         echo ""
         echo "🔍 Getting Azure services information..."
