@@ -302,10 +302,36 @@ fi
 
 # Step 5: Wait for operator to be ready
 if [[ "$SKIP_WAIT" != "true" && "$DRY_RUN" != "true" ]]; then
-    log INFO "Step 5/9: Waiting for Redis operator to be ready..."
+    log INFO "Step 5/9: Waiting for Redis operator to be ready (timeout: 5 minutes)..."
     if [[ -f "$SCRIPT_DIR/external-redis/wait_for_redis_operator_ready.sh" ]]; then
-        bash "$SCRIPT_DIR/external-redis/wait_for_redis_operator_ready.sh"
-        log SUCCESS "Redis operator is ready."
+        # Run wait script with timeout
+        WAIT_TIMEOUT=300  # 5 minutes
+        if timeout "$WAIT_TIMEOUT" bash "$SCRIPT_DIR/external-redis/wait_for_redis_operator_ready.sh" 2>/dev/null; then
+            log SUCCESS "Redis operator is ready."
+        else
+            EXIT_CODE=$?
+            if [[ $EXIT_CODE -eq 124 ]]; then
+                log ERROR "Timeout waiting for Redis operator after ${WAIT_TIMEOUT}s."
+                log ERROR ""
+                log ERROR "The operator installation is taking longer than expected."
+                log ERROR "This could indicate:"
+                log ERROR "  1. Network issues downloading operator images"
+                log ERROR "  2. Cluster resource constraints"
+                log ERROR "  3. OLM (Operator Lifecycle Manager) issues"
+                log ERROR ""
+                log ERROR "Please check:"
+                log ERROR "  1. Subscription status: oc get subscription -n $NAMESPACE"
+                log ERROR "  2. Install plans: oc get installplan -n $NAMESPACE"
+                log ERROR "  3. Operator pods: oc get pods -n $NAMESPACE"
+                log ERROR ""
+                log ERROR "To continue deployment later with existing resources:"
+                log ERROR "  bash $0 --skip-wait"
+                exit 1
+            else
+                log ERROR "Wait script failed with exit code: $EXIT_CODE"
+                exit 1
+            fi
+        fi
     else
         log WARNING "Wait script not found. Sleeping 60s..."
         sleep 60
@@ -330,10 +356,31 @@ execute "oc apply -f $REDIS_CLUSTER_FILE"
 
 # Step 7: Wait for RedisEnterpriseCluster to be ready
 if [[ "$SKIP_WAIT" != "true" && "$DRY_RUN" != "true" ]]; then
-    log INFO "Step 7/9: Waiting for RedisEnterpriseCluster to be ready..."
+    log INFO "Step 7/9: Waiting for RedisEnterpriseCluster to be ready (timeout: 8 minutes)..."
     if [[ -f "$SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh" ]]; then
-        bash "$SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh"
-        log SUCCESS "RedisEnterpriseCluster is ready."
+        # Run wait script with timeout
+        CLUSTER_WAIT_TIMEOUT=480  # 8 minutes
+        if timeout "$CLUSTER_WAIT_TIMEOUT" bash "$SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh" 2>/dev/null; then
+            log SUCCESS "RedisEnterpriseCluster is ready."
+        else
+            EXIT_CODE=$?
+            if [[ $EXIT_CODE -eq 124 ]]; then
+                log ERROR "Timeout waiting for RedisEnterpriseCluster after ${CLUSTER_WAIT_TIMEOUT}s."
+                log ERROR ""
+                log ERROR "The cluster is taking longer than expected to become ready."
+                log ERROR "Please check:"
+                log ERROR "  1. Cluster status: oc get redisenterprisecluster -n $NAMESPACE"
+                log ERROR "  2. Cluster pods: oc get pods -n $NAMESPACE"
+                log ERROR "  3. Events: oc get events -n $NAMESPACE --sort-by='.lastTimestamp'"
+                log ERROR ""
+                log ERROR "You can continue checking manually with:"
+                log ERROR "  bash $SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh"
+                exit 1
+            else
+                log ERROR "Wait script failed with exit code: $EXIT_CODE"
+                exit 1
+            fi
+        fi
     else
         log WARNING "Wait script not found. Sleeping 120s..."
         sleep 120
