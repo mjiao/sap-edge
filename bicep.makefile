@@ -77,7 +77,7 @@ aro-cluster-status:  ## Get ARO cluster provisioning state
 
 .PHONY: aro-cluster-exists
 aro-cluster-exists:  ## Check if ARO cluster exists
-	@hack/aro/cluster-check.sh --status-only
+	@hack/aro/cluster-check.sh --status-only || true
 
 .PHONY: aro-cluster-check
 aro-cluster-check:  ## Check ARO cluster status with detailed information
