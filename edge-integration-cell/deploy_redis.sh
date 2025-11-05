@@ -1,0 +1,394 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Default values
+NAMESPACE="sap-eic-external-redis"
+REDIS_CLUSTER_TYPE="standard"  # standard or ha
+DRY_RUN=false
+FORCE=false
+VERBOSE=false
+SKIP_WAIT=false
+OPENSHIFT_VERSION=""
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Logging function
+log() {
+    local level="$1"
+    shift
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    case "$level" in
+        INFO)
+            echo -e "${BLUE}[INFO]${NC} [${timestamp}] $*"
+            ;;
+        SUCCESS)
+            echo -e "${GREEN}[SUCCESS]${NC} [${timestamp}] $*"
+            ;;
+        WARNING)
+            echo -e "${YELLOW}[WARNING]${NC} [${timestamp}] $*"
+            ;;
+        ERROR)
+            echo -e "${RED}[ERROR]${NC} [${timestamp}] $*"
+            ;;
+        HEADER)
+            echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${CYAN}║${NC} $*"
+            echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
+            ;;
+        *)
+            echo "[${timestamp}] $*"
+            ;;
+    esac
+}
+
+# Usage function
+usage() {
+    cat <<EOF
+Usage: $0 [OPTIONS]
+
+Deploy Redis external service using Redis Enterprise Operator.
+
+OPTIONS:
+    -n, --namespace NAMESPACE    Namespace for deployment (default: sap-eic-external-redis)
+    --type TYPE                  Cluster type: standard or ha (default: standard)
+    -f, --force                  Skip confirmation prompts (for automation)
+    -d, --dry-run               Show what would be deployed without actually deploying
+    --skip-wait                  Skip waiting for operator/cluster readiness
+    --ocp-version VERSION        Specify OpenShift version for SCC (auto-detected if not provided)
+    --verbose                    Enable verbose output
+    -h, --help                  Display this help message
+
+EXAMPLES:
+    # Interactive deployment with default settings
+    $0
+
+    # Deploy HA cluster to custom namespace
+    $0 --namespace my-redis --type ha
+
+    # Force deployment without prompts (CI/CD)
+    $0 --force
+
+    # Dry-run to preview deployment
+    $0 --dry-run
+
+    # Specify OpenShift version for SCC
+    $0 --ocp-version 4.16
+
+EOF
+    exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--namespace)
+            NAMESPACE="$2"
+            shift 2
+            ;;
+        --type)
+            REDIS_CLUSTER_TYPE="$2"
+            shift 2
+            ;;
+        -f|--force)
+            FORCE=true
+            shift
+            ;;
+        -d|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --skip-wait)
+            SKIP_WAIT=true
+            shift
+            ;;
+        --ocp-version)
+            OPENSHIFT_VERSION="$2"
+            shift 2
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            log ERROR "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+# Verbose mode
+if [[ "$VERBOSE" == "true" ]]; then
+    set -x
+fi
+
+# Validate cluster type
+if [[ ! "$REDIS_CLUSTER_TYPE" =~ ^(standard|ha)$ ]]; then
+    log ERROR "Invalid cluster type: $REDIS_CLUSTER_TYPE. Must be 'standard' or 'ha'."
+    exit 1
+fi
+
+# Check if oc is available
+if ! command -v oc &> /dev/null; then
+    log ERROR "oc command not found. Please install OpenShift CLI."
+    exit 1
+fi
+
+# Detect OpenShift version if not provided
+if [[ -z "$OPENSHIFT_VERSION" ]]; then
+    log INFO "Detecting OpenShift version..."
+    OCP_VERSION=$(oc version -o json 2>/dev/null | jq -r '.openshiftVersion // empty' || echo "")
+    if [[ -n "$OCP_VERSION" ]]; then
+        log INFO "Detected OpenShift version: $OCP_VERSION"
+        OPENSHIFT_VERSION="$OCP_VERSION"
+    else
+        log WARNING "Could not detect OpenShift version. Will skip SCC creation."
+        log WARNING "Use --ocp-version flag to specify version manually."
+    fi
+fi
+
+# Check if already deployed
+if oc get namespace "$NAMESPACE" &> /dev/null; then
+    log WARNING "Namespace '$NAMESPACE' already exists."
+    if oc get redisenterprisecluster -n "$NAMESPACE" &> /dev/null 2>&1; then
+        EXISTING_CLUSTERS=$(oc get redisenterprisecluster -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+        if [[ -n "$EXISTING_CLUSTERS" ]]; then
+            log ERROR "RedisEnterpriseCluster(s) already exist: $EXISTING_CLUSTERS"
+            log ERROR "Please run cleanup first: bash $SCRIPT_DIR/cleanup_redis.sh"
+            exit 1
+        fi
+    fi
+fi
+
+# Display banner
+log HEADER "Redis External Service Deployment"
+
+# Summary
+log INFO "Deployment Configuration:"
+log INFO "  - Namespace: $NAMESPACE"
+log INFO "  - Cluster Type: $REDIS_CLUSTER_TYPE"
+log INFO "  - OpenShift Version: ${OPENSHIFT_VERSION:-not detected}"
+log INFO "  - Dry-run: $([ "$DRY_RUN" == "true" ] && echo "YES" || echo "NO")"
+log INFO "  - Skip wait: $([ "$SKIP_WAIT" == "true" ] && echo "YES" || echo "NO")"
+
+# Confirmation prompt
+if [[ "$FORCE" != "true" && "$DRY_RUN" != "true" ]]; then
+    echo ""
+    log WARNING "This will deploy Redis operator and cluster to: $NAMESPACE"
+    echo ""
+    read -rp "Do you want to continue? (yes/no): " confirmation
+    if [[ "$confirmation" != "yes" ]]; then
+        log INFO "Deployment cancelled by user."
+        exit 0
+    fi
+fi
+
+# Dry-run header
+if [[ "$DRY_RUN" == "true" ]]; then
+    log INFO "════════════════════════════════════════════════════════════════"
+    log INFO "                    DRY-RUN MODE ENABLED"
+    log INFO "           No resources will be actually deployed"
+    log INFO "════════════════════════════════════════════════════════════════"
+fi
+
+# Function to execute command
+execute() {
+    local cmd="$*"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log INFO "[DRY-RUN] Would execute: $cmd"
+    else
+        log INFO "Executing: $cmd"
+        eval "$cmd"
+    fi
+}
+
+# Deployment start time
+START_TIME=$(date +%s)
+
+log INFO "Starting Redis deployment..."
+
+# Step 1: Create namespace
+log INFO "Step 1/9: Creating namespace: $NAMESPACE"
+if [[ "$DRY_RUN" != "true" ]]; then
+    if ! oc get namespace "$NAMESPACE" &> /dev/null; then
+        execute "oc create namespace $NAMESPACE"
+        log SUCCESS "Namespace created."
+    else
+        log INFO "Namespace already exists."
+    fi
+else
+    log INFO "[DRY-RUN] Would create namespace"
+fi
+
+# Step 2: Apply OperatorGroup
+log INFO "Step 2/9: Applying OperatorGroup configuration..."
+execute "oc apply -f $SCRIPT_DIR/redis-operator/operatorgroup.yaml"
+
+# Step 3: Apply Subscription
+log INFO "Step 3/9: Applying Subscription configuration..."
+execute "oc apply -f $SCRIPT_DIR/redis-operator/subscription.yaml"
+
+# Step 4: Apply Security Context Constraint (SCC)
+log INFO "Step 4/9: Applying Security Context Constraint (SCC)..."
+if [[ -n "$OPENSHIFT_VERSION" ]]; then
+    # Determine SCC file based on OpenShift version
+    if [[ "$OPENSHIFT_VERSION" =~ ^4\.([0-9]+) ]]; then
+        MINOR_VERSION="${BASH_REMATCH[1]}"
+        if [[ "$MINOR_VERSION" -ge 16 ]]; then
+            SCC_FILE="$SCRIPT_DIR/redis-operator/security_context_constraint_v2.yaml"
+            log INFO "Using SCC v2 for OpenShift 4.16+"
+        else
+            SCC_FILE="$SCRIPT_DIR/redis-operator/security_context_constraint.yaml"
+            log INFO "Using SCC v1 for OpenShift < 4.16"
+        fi
+        
+        if [[ -f "$SCC_FILE" ]]; then
+            execute "oc apply -f $SCC_FILE"
+        else
+            log ERROR "SCC file not found: $SCC_FILE"
+            exit 1
+        fi
+    else
+        log WARNING "Could not parse OpenShift version. Skipping SCC creation."
+    fi
+else
+    log WARNING "OpenShift version not detected. Skipping SCC creation."
+    log INFO "You may need to apply SCC manually later."
+fi
+
+# Step 5: Wait for operator to be ready
+if [[ "$SKIP_WAIT" != "true" && "$DRY_RUN" != "true" ]]; then
+    log INFO "Step 5/9: Waiting for Redis operator to be ready..."
+    if [[ -f "$SCRIPT_DIR/external-redis/wait_for_redis_operator_ready.sh" ]]; then
+        bash "$SCRIPT_DIR/external-redis/wait_for_redis_operator_ready.sh"
+        log SUCCESS "Redis operator is ready."
+    else
+        log WARNING "Wait script not found. Sleeping 60s..."
+        sleep 60
+    fi
+else
+    log INFO "Step 5/9: Skipping operator readiness wait."
+fi
+
+# Step 6: Create RedisEnterpriseCluster
+log INFO "Step 6/9: Creating RedisEnterpriseCluster ($REDIS_CLUSTER_TYPE)..."
+if [[ "$REDIS_CLUSTER_TYPE" == "ha" ]]; then
+    REDIS_CLUSTER_FILE="$SCRIPT_DIR/external-redis/redis_enterprise_cluster_ha.yaml"
+else
+    REDIS_CLUSTER_FILE="$SCRIPT_DIR/external-redis/redis_enterprise_cluster.yaml"
+fi
+
+if [[ ! -f "$REDIS_CLUSTER_FILE" ]]; then
+    log ERROR "RedisEnterpriseCluster file not found: $REDIS_CLUSTER_FILE"
+    exit 1
+fi
+execute "oc apply -f $REDIS_CLUSTER_FILE"
+
+# Step 7: Wait for RedisEnterpriseCluster to be ready
+if [[ "$SKIP_WAIT" != "true" && "$DRY_RUN" != "true" ]]; then
+    log INFO "Step 7/9: Waiting for RedisEnterpriseCluster to be ready..."
+    if [[ -f "$SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh" ]]; then
+        bash "$SCRIPT_DIR/external-redis/wait_for_rec_running_state.sh"
+        log SUCCESS "RedisEnterpriseCluster is ready."
+    else
+        log WARNING "Wait script not found. Sleeping 120s..."
+        sleep 120
+    fi
+else
+    log INFO "Step 7/9: Skipping RedisEnterpriseCluster readiness wait."
+fi
+
+# Step 8: Create RedisEnterpriseDatabase
+log INFO "Step 8/9: Creating RedisEnterpriseDatabase..."
+REDIS_DB_FILE="$SCRIPT_DIR/external-redis/redis_enterprise_database.yaml"
+if [[ ! -f "$REDIS_DB_FILE" ]]; then
+    log ERROR "RedisEnterpriseDatabase file not found: $REDIS_DB_FILE"
+    exit 1
+fi
+
+if [[ "$DRY_RUN" != "true" ]]; then
+    # Retry logic for admission webhook readiness
+    MAX_RETRIES=5
+    RETRY_COUNT=0
+    while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+        if oc apply -f "$REDIS_DB_FILE" 2>&1; then
+            log SUCCESS "RedisEnterpriseDatabase created."
+            break
+        else
+            ((RETRY_COUNT++))
+            if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+                log WARNING "Failed to create RedisEnterpriseDatabase (attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in 10s..."
+                sleep 10
+            else
+                log ERROR "Failed to create RedisEnterpriseDatabase after $MAX_RETRIES attempts."
+                log ERROR "The admission webhook may not be ready yet. Please try again later or run:"
+                log ERROR "  oc apply -f $REDIS_DB_FILE"
+                exit 1
+            fi
+        fi
+    done
+else
+    log INFO "[DRY-RUN] Would create RedisEnterpriseDatabase (with retry logic)"
+fi
+
+# Step 9: Wait for RedisEnterpriseDatabase to be ready and get access details
+if [[ "$SKIP_WAIT" != "true" && "$DRY_RUN" != "true" ]]; then
+    log INFO "Step 9/9: Waiting for RedisEnterpriseDatabase to be active..."
+    if [[ -f "$SCRIPT_DIR/external-redis/wait_for_redb_active_status.sh" ]]; then
+        bash "$SCRIPT_DIR/external-redis/wait_for_redb_active_status.sh"
+        log SUCCESS "RedisEnterpriseDatabase is active."
+    else
+        log WARNING "Wait script not found. Sleeping 60s..."
+        sleep 60
+    fi
+    
+    # Get access details
+    log INFO "Retrieving Redis access details..."
+    echo ""
+    if [[ -f "$SCRIPT_DIR/external-redis/get_redis_access.sh" ]]; then
+        bash "$SCRIPT_DIR/external-redis/get_redis_access.sh"
+    else
+        log WARNING "Access script not found. You can retrieve access details manually later."
+    fi
+else
+    log INFO "Step 9/9: Skipping database readiness wait."
+fi
+
+# Deployment end time
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+# Final summary
+echo ""
+log HEADER "Deployment Summary"
+log INFO "Total time: ${DURATION} seconds"
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    log INFO "Dry-run completed. No resources were actually deployed."
+else
+    log SUCCESS "✅ Redis deployment completed successfully!"
+    log INFO "Namespace: $NAMESPACE"
+    log INFO "Cluster Type: $REDIS_CLUSTER_TYPE"
+    echo ""
+    log INFO "Next steps:"
+    log INFO "  1. Use the access details above to configure SAP EIC"
+    log INFO "  2. To cleanup: bash $SCRIPT_DIR/cleanup_redis.sh"
+fi
+

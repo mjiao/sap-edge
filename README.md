@@ -15,9 +15,10 @@ This repository provides comprehensive tooling for deploying and testing SAP Edg
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [External Services Setup](#external-services-setup)
+  - [🚀 Quick Deployment (Automated)](#-quick-deployment-automated)
   - [PostgreSQL](#postgresql)
   - [Redis](#redis)
-  - [Comprehensive Cleanup Automation](#-comprehensive-cleanup-automation)
+  - [🧹 Comprehensive Cleanup Automation](#-comprehensive-cleanup-automation)
   - [GitOps with Argo CD](#gitops-with-argo-cd)
 - [ARO Pipeline](#aro-pipeline)
   - [Pipeline Structure](#pipeline-structure)
@@ -54,10 +55,13 @@ Please be aware that this repository is intended **for testing purposes only**. 
 git clone https://github.com/redhat-sap/sap-edge.git
 cd sap-edge
 
-# Deploy via GitOps (recommended)
+# Option 1: Automated deployment (easiest, recommended)
+bash edge-integration-cell/deploy_all_external_services.sh
+
+# Option 2: Deploy via GitOps
 oc apply -f edge-integration-cell/sap-eic-external-services-app.yaml
 
-# Or deploy manually - see detailed sections below
+# Option 3: Manual deployment - see detailed sections below
 ```
 
 ### For ARO Pipeline
@@ -94,7 +98,71 @@ Additionally, set the ODF `ocs-storagecluster-ceph-rbd` storage class as default
 
 # External Services Setup
 
+## 🚀 Quick Deployment (Automated)
+
+The project now provides **automated deployment scripts** that simplify the manual 8+ step process into a single command!
+
+### Deploy Both PostgreSQL and Redis
+```bash
+# Interactive deployment (with confirmation prompts)
+bash sap-edge/edge-integration-cell/deploy_all_external_services.sh
+
+# Force mode for CI/CD (no prompts)
+bash sap-edge/edge-integration-cell/deploy_all_external_services.sh --force
+
+# Dry-run to preview deployment
+bash sap-edge/edge-integration-cell/deploy_all_external_services.sh --dry-run
+
+# Deploy with custom versions
+bash sap-edge/edge-integration-cell/deploy_all_external_services.sh \
+  --postgres-version v16 \
+  --redis-type ha
+```
+
+### Deploy Only PostgreSQL
+```bash
+# Interactive deployment (default: v17)
+bash sap-edge/edge-integration-cell/deploy_postgres.sh
+
+# Deploy specific version
+bash sap-edge/edge-integration-cell/deploy_postgres.sh --version v16
+
+# Custom namespace
+bash sap-edge/edge-integration-cell/deploy_postgres.sh --namespace my-postgres
+```
+
+### Deploy Only Redis
+```bash
+# Interactive deployment (default: standard cluster)
+bash sap-edge/edge-integration-cell/deploy_redis.sh
+
+# Deploy HA cluster
+bash sap-edge/edge-integration-cell/deploy_redis.sh --type ha
+
+# Custom namespace
+bash sap-edge/edge-integration-cell/deploy_redis.sh --namespace my-redis
+```
+
+**Deployment Script Features:**
+- ✅ Single command deployment (replaces 8+ manual steps)
+- ✅ Automatic operator installation
+- ✅ Automatic cluster provisioning
+- ✅ Automatic readiness checks
+- ✅ Automatic credential retrieval
+- ✅ Interactive and force modes
+- ✅ Dry-run capability
+- ✅ Custom namespace support
+- ✅ Comprehensive logging
+
+---
+
 ## PostgreSQL
+
+### Automated Deployment (Recommended)
+
+Use the automated deployment script (see [Quick Deployment](#-quick-deployment-automated) above).
+
+### Manual Deployment
 
 The following steps will install the Crunchy Postgres Operator and use its features to manage the lifecycle of the external PostgreSQL DB service.
 
@@ -176,9 +244,28 @@ oc delete namespace sap-eic-external-postgres
 
 # Redis Setup for SAP EIC on OCP
 
-This guide provides instructions for setting up and validating the Redis service for SAP EIC on OpenShift Container Platform (OCP). The steps include installing the Redis Enterprise Operator, creating a RedisEnterpriseCluster and RedisEnterpriseDatabase, and cleaning up after validation.
+This guide provides instructions for setting up and validating the Redis service for SAP EIC on OpenShift Container Platform (OCP).
 
-## Prerequisites
+## Automated Deployment (Recommended)
+
+Use the automated deployment script (see [Quick Deployment](#-quick-deployment-automated) above).
+
+```bash
+# Interactive deployment (default: standard cluster)
+bash sap-edge/edge-integration-cell/deploy_redis.sh
+
+# Deploy HA cluster
+bash sap-edge/edge-integration-cell/deploy_redis.sh --type ha --force
+
+# Dry-run to preview
+bash sap-edge/edge-integration-cell/deploy_redis.sh --dry-run
+```
+
+## Manual Deployment
+
+The following steps will install the Redis Enterprise Operator, create a RedisEnterpriseCluster and RedisEnterpriseDatabase, and provide access details.
+
+### Prerequisites
 
 - Access to an OpenShift Container Platform cluster using an account with `cluster-admin` permissions.
 - Installed `oc`, `jq`, `git`, and `tkn` command line tools on your local system.
@@ -294,6 +381,8 @@ oc delete namespace sap-eic-external-redis
 ```
 
 ## 🧹 Comprehensive Cleanup Automation
+
+> **💡 Tip:** Just as you can deploy services with one command using [`deploy_all_external_services.sh`](#-quick-deployment-automated), you can also clean them up with one command!
 
 For convenience, a unified cleanup script is provided to clean up **both PostgreSQL and Redis** services in a single operation:
 
