@@ -142,15 +142,24 @@ if ! command -v oc &> /dev/null; then
     exit 1
 fi
 
-# Check if already deployed
+# Check if already deployed (idempotency check)
+IDEMPOTENT_SKIP=false
 if oc get namespace "$NAMESPACE" &> /dev/null; then
-    log WARNING "Namespace '$NAMESPACE' already exists."
+    log INFO "Namespace '$NAMESPACE' already exists (idempotent - will check existing resources)."
     if oc get postgrescluster -n "$NAMESPACE" &> /dev/null 2>&1; then
         EXISTING_CLUSTERS=$(oc get postgrescluster -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
         if [[ -n "$EXISTING_CLUSTERS" ]]; then
-            log ERROR "PostgresCluster(s) already exist: $EXISTING_CLUSTERS"
-            log ERROR "Please run cleanup first: bash $SCRIPT_DIR/cleanup_postgres.sh"
-            exit 1
+            log INFO "PostgresCluster(s) already exist: $EXISTING_CLUSTERS"
+            
+            # Check if cluster is ready
+            CLUSTER_STATUS=$(oc get postgrescluster -n "$NAMESPACE" -o jsonpath='{.items[0].status.patroni.ready}' 2>/dev/null || echo "false")
+            if [[ "$CLUSTER_STATUS" == "true" ]]; then
+                log INFO "PostgresCluster is ready and operational."
+                log SUCCESS "PostgreSQL deployment already complete (idempotent - no changes needed)."
+                IDEMPOTENT_SKIP=true
+            else
+                log WARNING "PostgresCluster exists but may not be ready yet. Will check status..."
+            fi
         fi
     fi
 fi
@@ -183,6 +192,24 @@ if [[ "$DRY_RUN" == "true" ]]; then
     log INFO "                    DRY-RUN MODE ENABLED"
     log INFO "           No resources will be actually deployed"
     log INFO "════════════════════════════════════════════════════════════════"
+fi
+
+# Check if we can skip deployment (idempotent)
+if [[ "$IDEMPOTENT_SKIP" == "true" && "$DRY_RUN" != "true" ]]; then
+    log INFO "════════════════════════════════════════════════════════════════"
+    log INFO "All PostgreSQL resources already exist and are deployed."
+    log INFO "Retrieving existing access details..."
+    echo ""
+    if [[ -f "$SCRIPT_DIR/external-postgres/get_external_postgres_access.sh" ]]; then
+        bash "$SCRIPT_DIR/external-postgres/get_external_postgres_access.sh" -n "$NAMESPACE"
+    else
+        log WARNING "Access script not found. You can retrieve access details manually."
+    fi
+    echo ""
+    log SUCCESS "✅ PostgreSQL deployment verification completed (idempotent)."
+    log INFO "To re-deploy from scratch, run cleanup first:"
+    log INFO "  bash $SCRIPT_DIR/cleanup_postgres.sh"
+    exit 0
 fi
 
 # Function to execute command
