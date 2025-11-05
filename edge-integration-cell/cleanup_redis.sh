@@ -302,32 +302,75 @@ fi
 
 # Step 3: Delete Redis Enterprise Operator subscription
 log INFO "Step 3/7: Checking for Redis Enterprise Operator subscription..."
-if oc get subscription redis-enterprise-operator-cert -n "$NAMESPACE" &> /dev/null; then
-    execute "oc delete subscription redis-enterprise-operator-cert -n $NAMESPACE"
-    log SUCCESS "Deleted Redis Enterprise Operator subscription."
+SUBSCRIPTION_FOUND=false
+if oc get subscription -n "$NAMESPACE" &> /dev/null; then
+    SUBSCRIPTIONS=$(oc get subscription -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E 'redis' | awk '{print $1}' || echo "")
+    if [[ -n "$SUBSCRIPTIONS" ]]; then
+        log INFO "Found Redis operator subscription(s): $SUBSCRIPTIONS"
+        for sub in $SUBSCRIPTIONS; do
+            execute "oc delete subscription $sub -n $NAMESPACE"
+            SUBSCRIPTION_FOUND=true
+        done
+        log SUCCESS "Deleted Redis operator subscription(s)."
+    else
+        log WARNING "No Redis operator subscription found. Operator may have been installed manually."
+        log INFO "Will attempt direct CSV deletion as fallback."
+    fi
 else
-    log INFO "No Redis Enterprise Operator subscription found."
+    log INFO "No subscriptions found in namespace."
 fi
 
-# Step 4: Delete Redis Enterprise Operator CSV
-log INFO "Step 4/7: Checking for Redis Enterprise Operator CSV..."
-CSV_LIST=$(oc get csv -n "$NAMESPACE" --no-headers 2>/dev/null | grep 'redis-enterprise-operator' | awk '{print $1}' || echo "")
-if [[ -n "$CSV_LIST" ]]; then
-    log INFO "Found CSV resources: $CSV_LIST"
-    for csv in $CSV_LIST; do
-        execute "oc delete csv $csv -n $NAMESPACE"
-    done
-    log SUCCESS "Deleted Redis Enterprise Operator CSV."
+# Step 4: Wait for OLM to remove CSV automatically (or delete manually if no subscription)
+log INFO "Step 4/7: Waiting for operator CSV cleanup..."
+if [[ "$SUBSCRIPTION_FOUND" == "true" ]]; then
+    # OLM will remove CSV automatically after subscription deletion
+    log INFO "Waiting for OLM to remove CSV gracefully (timeout: 300s)..."
+    if [[ "$DRY_RUN" != "true" ]]; then
+        wait_for_resource_deletion "csv" "$NAMESPACE" 300 || {
+            log WARNING "CSV removal timed out. Attempting manual cleanup..."
+            CSV_LIST=$(oc get csv -n "$NAMESPACE" --no-headers 2>/dev/null | grep 'redis-enterprise-operator' | awk '{print $1}' || echo "")
+            if [[ -n "$CSV_LIST" ]]; then
+                for csv in $CSV_LIST; do
+                    log INFO "Force deleting CSV: $csv"
+                    execute "oc delete csv $csv -n $NAMESPACE --wait=false"
+                done
+            fi
+        }
+    fi
 else
-    log INFO "No Redis Enterprise Operator CSV found."
+    # No subscription found, manually delete CSV
+    log INFO "No subscription found. Manually deleting CSV resources..."
+    CSV_LIST=$(oc get csv -n "$NAMESPACE" --no-headers 2>/dev/null | grep 'redis-enterprise-operator' | awk '{print $1}' || echo "")
+    if [[ -n "$CSV_LIST" ]]; then
+        log INFO "Found CSV resources: $CSV_LIST"
+        for csv in $CSV_LIST; do
+            execute "oc delete csv $csv -n $NAMESPACE"
+        done
+        
+        # Wait for manual CSV deletion
+        if [[ "$DRY_RUN" != "true" ]]; then
+            wait_for_resource_deletion "csv" "$NAMESPACE" 180 || log WARNING "CSV deletion timed out, but continuing..."
+        fi
+    else
+        log INFO "No CSV resources found."
+    fi
 fi
 
-# Step 5: Wait for CSV deletion to complete
-log INFO "Step 5/7: Waiting for CSV deletion to complete..."
+# Step 5: Clean up operator deployment if still present
+log INFO "Step 5/7: Checking for operator deployment..."
 if [[ "$DRY_RUN" != "true" ]]; then
-    wait_for_resource_deletion "csv" "$NAMESPACE" 300 || log WARNING "CSV deletion wait timed out, but continuing..."
+    OPERATOR_DEPLOYMENTS=$(oc get deployment -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E 'redis' | awk '{print $1}' || echo "")
+    if [[ -n "$OPERATOR_DEPLOYMENTS" ]]; then
+        log WARNING "Found lingering operator deployment(s): $OPERATOR_DEPLOYMENTS"
+        for deploy in $OPERATOR_DEPLOYMENTS; do
+            log INFO "Deleting deployment: $deploy"
+            execute "oc delete deployment $deploy -n $NAMESPACE --wait=false"
+        done
+    else
+        log INFO "No operator deployments found."
+    fi
 else
-    log INFO "Skipping CSV deletion wait (dry-run mode)."
+    log INFO "Skipping deployment check (dry-run mode)."
 fi
 
 # Step 6: Delete Redis Enterprise SCC
