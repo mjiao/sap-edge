@@ -116,7 +116,8 @@ spec:
         # Step 1: Get Quay storage credentials from Bicep deployment
         echo "🔑 Retrieving Quay storage credentials from Bicep deployment..."
         
-        DEPLOYMENT_NAME="azure-services-deployment"
+        # Use the ARO deployment name (storage is created in main ARO deployment)
+        DEPLOYMENT_NAME="aro-deploy-${ARO_CLUSTER_NAME}"
         
         # Check if Bicep deployment exists
         if ! az deployment group show \
@@ -126,6 +127,8 @@ spec:
           echo "💡 Storage should be created by Bicep during ARO deployment"
           exit 1
         fi
+        
+        echo "✅ Found Bicep deployment: ${DEPLOYMENT_NAME}"
         
         # Get storage credentials from Bicep outputs
         AZURE_STORAGE_ACCOUNT_NAME=$(az deployment group show \
