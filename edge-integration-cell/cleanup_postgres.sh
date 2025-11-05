@@ -6,9 +6,6 @@
 
 set -euo pipefail
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Default values
 NAMESPACE="sap-eic-external-postgres"
 DRY_RUN=false
@@ -156,6 +153,85 @@ execute() {
     fi
 }
 
+# Function to wait for resource deletion
+wait_for_resource_deletion() {
+    local resource_type="$1"
+    local namespace="$2"
+    local timeout="${3:-600}"  # Default 10 minutes
+    local check_interval=5
+    local elapsed=0
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log INFO "[DRY-RUN] Would wait for $resource_type deletion in namespace $namespace"
+        return 0
+    fi
+    
+    log INFO "Waiting for $resource_type deletion (timeout: ${timeout}s)..."
+    
+    while [[ $elapsed -lt $timeout ]]; do
+        local count
+        count=$(oc get "$resource_type" -n "$namespace" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        
+        if [[ "$count" == "0" ]]; then
+            log SUCCESS "$resource_type resources deleted successfully"
+            return 0
+        fi
+        
+        log INFO "Still waiting... ($elapsed/${timeout}s elapsed, $count resource(s) remaining)"
+        sleep $check_interval
+        ((elapsed += check_interval))
+    done
+    
+    log ERROR "Timeout waiting for $resource_type deletion after ${timeout}s"
+    return 1
+}
+
+# Function to wait for namespace deletion with finalizer handling
+wait_for_namespace_deletion() {
+    local namespace="$1"
+    local timeout="${2:-600}"  # Default 10 minutes
+    local check_interval=5
+    local elapsed=0
+    
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log INFO "[DRY-RUN] Would wait for namespace $namespace deletion"
+        return 0
+    fi
+    
+    log INFO "Waiting for namespace deletion (timeout: ${timeout}s)..."
+    
+    while [[ $elapsed -lt $timeout ]]; do
+        if ! oc get namespace "$namespace" &>/dev/null; then
+            log SUCCESS "Namespace $namespace deleted successfully"
+            return 0
+        fi
+        
+        # Check if namespace is stuck in Terminating state
+        local status
+        status=$(oc get namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        
+        if [[ "$status" == "Terminating" ]] && [[ $elapsed -gt 60 ]]; then
+            log WARNING "Namespace stuck in Terminating state. Checking for finalizers..."
+            local finalizers
+            finalizers=$(oc get namespace "$namespace" -o jsonpath='{.spec.finalizers}' 2>/dev/null || echo "")
+            
+            if [[ -n "$finalizers" && "$finalizers" != "[]" ]]; then
+                log WARNING "Finalizers present: $finalizers"
+                log INFO "Attempting to remove finalizers..."
+                oc patch namespace "$namespace" -p '{"spec":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            fi
+        fi
+        
+        log INFO "Still waiting for namespace deletion... ($elapsed/${timeout}s elapsed)"
+        sleep $check_interval
+        ((elapsed += check_interval))
+    done
+    
+    log ERROR "Timeout waiting for namespace deletion after ${timeout}s"
+    log WARNING "You may need to manually investigate: oc get namespace $namespace -o yaml"
+    return 1
+}
+
 log INFO "Starting PostgreSQL cleanup for namespace: $NAMESPACE"
 
 # Step 1: Delete PostgresCluster CRs
@@ -168,10 +244,9 @@ if oc get postgrescluster -n "$NAMESPACE" &> /dev/null; then
             execute "oc delete postgrescluster $cluster -n $NAMESPACE"
         done
         
-        # Wait for deletion if not dry-run
-        if [[ "$DRY_RUN" != "true" ]] && [[ -f "$SCRIPT_DIR/external-postgres/wait_for_deletion_of_postgrescluster.sh" ]]; then
-            log INFO "Waiting for PostgresCluster deletion to complete..."
-            bash "$SCRIPT_DIR/external-postgres/wait_for_deletion_of_postgrescluster.sh"
+        # Wait for deletion to complete
+        if [[ "$DRY_RUN" != "true" ]]; then
+            wait_for_resource_deletion "postgrescluster" "$NAMESPACE" 600
         fi
     else
         log INFO "No PostgresCluster resources found."
@@ -202,17 +277,22 @@ else
     log INFO "No Crunchy Postgres Operator CSV found."
 fi
 
-# Step 4: Wait for CSV deletion if helper script exists
-if [[ "$DRY_RUN" != "true" ]] && [[ -f "$SCRIPT_DIR/external-postgres/wait_for_deletion_of_postgres_csv.sh" ]]; then
-    log INFO "Step 4/5: Waiting for CSV deletion to complete..."
-    bash "$SCRIPT_DIR/external-postgres/wait_for_deletion_of_postgres_csv.sh" || log WARNING "CSV deletion wait script failed or timed out."
+# Step 4: Wait for CSV deletion to complete
+log INFO "Step 4/5: Waiting for CSV deletion to complete..."
+if [[ "$DRY_RUN" != "true" ]]; then
+    wait_for_resource_deletion "csv" "$NAMESPACE" 300 || log WARNING "CSV deletion wait timed out, but continuing..."
 else
-    log INFO "Step 4/5: Skipping CSV deletion wait (dry-run or script not found)."
+    log INFO "Skipping CSV deletion wait (dry-run mode)."
 fi
 
 # Step 5: Delete namespace
 log INFO "Step 5/5: Deleting namespace: $NAMESPACE..."
 execute "oc delete namespace $NAMESPACE"
+
+# Wait for namespace deletion to complete
+if [[ "$DRY_RUN" != "true" ]]; then
+    wait_for_namespace_deletion "$NAMESPACE" 600
+fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
     log INFO "=== DRY-RUN COMPLETE: No resources were actually deleted ==="
