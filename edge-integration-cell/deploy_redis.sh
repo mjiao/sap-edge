@@ -324,22 +324,59 @@ if [[ ! -f "$REDIS_DB_FILE" ]]; then
 fi
 
 if [[ "$DRY_RUN" != "true" ]]; then
+    # Wait for REC API endpoint to be ready (admission webhook needs this)
+    log INFO "Waiting for Redis Enterprise Cluster API to be fully ready..."
+    API_READY_WAIT=60
+    API_CHECK_INTERVAL=5
+    API_ELAPSED=0
+    
+    while [[ $API_ELAPSED -lt $API_READY_WAIT ]]; do
+        # Check if the REC service is responding
+        REC_SERVICE=$(oc get svc rec -n "$NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+        if [[ -n "$REC_SERVICE" ]]; then
+            # Check if we can reach the API port
+            if oc exec -n "$NAMESPACE" rec-0 -- curl -ks https://localhost:9443/v1/cluster > /dev/null 2>&1; then
+                log SUCCESS "Redis Enterprise Cluster API is ready."
+                break
+            fi
+        fi
+        log INFO "Waiting for API endpoint... ($API_ELAPSED/${API_READY_WAIT}s elapsed)"
+        sleep "$API_CHECK_INTERVAL"
+        ((API_ELAPSED += API_CHECK_INTERVAL))
+    done
+    
+    if [[ $API_ELAPSED -ge $API_READY_WAIT ]]; then
+        log WARNING "API endpoint check timed out. Will proceed with retry logic."
+    fi
+    
     # Retry logic for admission webhook readiness
-    MAX_RETRIES=5
+    MAX_RETRIES=10
     RETRY_COUNT=0
+    RETRY_DELAY=20
+    
     while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+        ((RETRY_COUNT++))
+        log INFO "Attempt $RETRY_COUNT/$MAX_RETRIES: Creating RedisEnterpriseDatabase..."
+        
         if oc apply -f "$REDIS_DB_FILE" 2>&1; then
-            log SUCCESS "RedisEnterpriseDatabase created."
+            log SUCCESS "RedisEnterpriseDatabase created successfully."
             break
         else
-            ((RETRY_COUNT++))
             if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
-                log WARNING "Failed to create RedisEnterpriseDatabase (attempt $RETRY_COUNT/$MAX_RETRIES). Retrying in 10s..."
-                sleep 10
+                log WARNING "Failed to create RedisEnterpriseDatabase (admission webhook not ready)."
+                log WARNING "Retrying in ${RETRY_DELAY}s... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+                sleep "$RETRY_DELAY"
             else
                 log ERROR "Failed to create RedisEnterpriseDatabase after $MAX_RETRIES attempts."
-                log ERROR "The admission webhook may not be ready yet. Please try again later or run:"
+                log ERROR ""
+                log ERROR "The Redis Enterprise Cluster API endpoint (port 9443) is not ready yet."
+                log ERROR "This is normal - the cluster needs more time to fully initialize."
+                log ERROR ""
+                log ERROR "Please wait 1-2 minutes and run the following command manually:"
                 log ERROR "  oc apply -f $REDIS_DB_FILE"
+                log ERROR ""
+                log ERROR "Or re-run the deployment script with --skip-wait:"
+                log ERROR "  bash $0 --skip-wait"
                 exit 1
             fi
         fi
