@@ -46,8 +46,12 @@ spec:
         rpm --import https://packages.microsoft.com/keys/microsoft.asc
         dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
         dnf clean all
-        # Install required tools
-        dnf install -y azure-cli tar jq make libicu
+        # Install required tools including Ansible
+        dnf install -y azure-cli tar jq make libicu python3-pip
+        
+        # Install Ansible for cluster configuration
+        echo "📦 Installing Ansible..."
+        pip3 install ansible kubernetes
 
         # Install OpenShift CLI
         echo "📦 Installing OpenShift CLI..."
@@ -123,16 +127,10 @@ spec:
         cp kubeconfig kubeconfig-$(params.aroClusterName).yaml
         echo "✅ Kubeconfig saved as: kubeconfig-$(params.aroClusterName).yaml"
         
-        # Enable scheduling on master nodes (optional - may already be enabled)
+        # Enable scheduling on master nodes
         echo ""
         echo "🔧 Enabling scheduling on master nodes..."
-        if command -v ansible-playbook >/dev/null 2>&1; then
-          echo "✅ Ansible found, enabling master scheduling..."
-          make aro-enable-master-scheduling || echo "⚠️  Master scheduling enablement failed or already enabled"
-        else
-          echo "ℹ️  Ansible not available, skipping master scheduling configuration"
-          echo "💡 Master scheduling may already be configured or can be done manually if needed"
-        fi
+        make aro-enable-master-scheduling
         
         echo ""
         echo "🔍 Getting Azure services information..."
