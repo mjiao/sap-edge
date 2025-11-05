@@ -250,7 +250,7 @@ After running the above script, you will get the access details of Redis like th
 
 Alternatively, you can run the following script to retrieve access details for both Redis and Postgres:
 ```bash
-bash sap-edge/edge-integration-cell/get_all_access.sh
+bash sap-edge/edge-integration-cell/get_all_accesses.sh
 ```
 
 ## Cleanup Redis
