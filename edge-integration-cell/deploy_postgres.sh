@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Default values
 NAMESPACE="sap-eic-external-postgres"
-POSTGRES_VERSION="v17"
+POSTGRES_VERSION="v15"  # Default PostgreSQL version
 DRY_RUN=false
 FORCE=false
 VERBOSE=false
@@ -64,7 +64,7 @@ Deploy PostgreSQL external service using Crunchy Data Operator.
 
 OPTIONS:
     -n, --namespace NAMESPACE    Namespace for deployment (default: sap-eic-external-postgres)
-    -v, --version VERSION        PostgreSQL version: v15, v16, v17 (default: v17)
+    -v, --version VERSION        PostgreSQL version: v15, v16, v17 (default: v15)
     -f, --force                  Skip confirmation prompts (for automation)
     -d, --dry-run               Show what would be deployed without actually deploying
     --skip-wait                  Skip waiting for operator/cluster readiness
