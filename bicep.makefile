@@ -103,7 +103,11 @@ aro-credentials:  ## Get ARO credentials
 .PHONY: aro-kubeconfig
 aro-kubeconfig:  ## Get ARO kubeconfig file
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
+	@if [ ! -f kubeconfig ]; then \
+		az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --file kubeconfig; \
+	else \
+		echo "ℹ️  Kubeconfig file already exists, skipping download"; \
+	fi
 
 .PHONY: postgres-exists
 postgres-exists:  ## Check if PostgreSQL server exists
