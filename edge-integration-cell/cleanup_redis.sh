@@ -343,13 +343,41 @@ else
     CSV_LIST=$(oc get csv -n "$NAMESPACE" --no-headers 2>/dev/null | grep 'redis-enterprise-operator' | awk '{print $1}' || echo "")
     if [[ -n "$CSV_LIST" ]]; then
         log INFO "Found CSV resources: $CSV_LIST"
+        
+        # Delete CSV with --wait=false to avoid blocking
         for csv in $CSV_LIST; do
-            execute "oc delete csv $csv -n $NAMESPACE"
+            execute "oc delete csv $csv -n $NAMESPACE --wait=false"
         done
         
-        # Wait for manual CSV deletion
+        # Wait for specific CSV deletion (not all CSVs in namespace)
         if [[ "$DRY_RUN" != "true" ]]; then
-            wait_for_resource_deletion "csv" "$NAMESPACE" 180 || log WARNING "CSV deletion timed out, but continuing..."
+            log INFO "Waiting for specific CSV(s) to be removed..."
+            CSV_TIMEOUT=180
+            CSV_CHECK_INTERVAL=5
+            CSV_ELAPSED=0
+            
+            while [[ $CSV_ELAPSED -lt $CSV_TIMEOUT ]]; do
+                CSV_REMAINING=""
+                for csv in $CSV_LIST; do
+                    if oc get csv "$csv" -n "$NAMESPACE" &>/dev/null; then
+                        CSV_REMAINING="$CSV_REMAINING $csv"
+                    fi
+                done
+                
+                if [[ -z "$CSV_REMAINING" ]]; then
+                    log SUCCESS "All CSV resources deleted successfully"
+                    break
+                fi
+                
+                CSV_COUNT=$(echo "$CSV_REMAINING" | wc -w | tr -d ' ')
+                log INFO "Still waiting... ($CSV_ELAPSED/${CSV_TIMEOUT}s elapsed, $CSV_COUNT CSV(s) remaining:$CSV_REMAINING)"
+                sleep $CSV_CHECK_INTERVAL
+                ((CSV_ELAPSED += CSV_CHECK_INTERVAL))
+            done
+            
+            if [[ $CSV_ELAPSED -ge $CSV_TIMEOUT ]]; then
+                log WARNING "CSV deletion timed out after ${CSV_TIMEOUT}s, but continuing..."
+            fi
         fi
     else
         log INFO "No CSV resources found."
