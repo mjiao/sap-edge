@@ -101,34 +101,43 @@ spec:
         echo "  Deploy Quay S3: ${DEPLOY_QUAY}"
         echo ""
         
+        # Clean up workspace to maximize available disk space
+        echo "🧹 Cleaning up workspace to save disk space..."
+        rm -rf aws awscliv2.zip terraform_*.zip rosa-linux.tar.gz 2>/dev/null || true
+        df -h /workspace/source
+
         # Install required tools
         echo "📦 Installing required packages..."
         dnf install -y make wget unzip jq git
-        
+
         # Install Terraform
         echo "📦 Installing Terraform..."
         TERRAFORM_VERSION="1.6.6"
-        rm -rf terraform terraform_${TERRAFORM_VERSION}_linux_amd64.zip  # Remove if exists from previous run
         wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         mv terraform /usr/local/bin/
+        rm -f "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"  # Clean up immediately
         terraform version
-        
+
         # Install ROSA CLI
         echo "📦 Installing ROSA CLI..."
-        rm -rf rosa rosa-linux.tar.gz  # Remove if exists from previous run
         wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
         tar xzf rosa-linux.tar.gz
         mv rosa /usr/local/bin/
+        rm -f rosa-linux.tar.gz  # Clean up immediately
         rosa version
-        
+
         # Install AWS CLI
         echo "📦 Installing AWS CLI..."
-        rm -rf aws awscliv2.zip  # Remove if exists from previous run
         curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip -q awscliv2.zip
         ./aws/install
+        rm -rf aws awscliv2.zip  # Clean up immediately
         aws --version
+
+        # Check available disk space after installations
+        echo "💾 Available disk space after tool installation:"
+        df -h /workspace/source
         
         # Verify AWS credentials
         echo "🔐 Verifying AWS credentials..."
