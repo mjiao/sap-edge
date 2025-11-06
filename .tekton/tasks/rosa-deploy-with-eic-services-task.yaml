@@ -112,27 +112,42 @@ spec:
 
         # Install Terraform
         echo "📦 Installing Terraform..."
-        TERRAFORM_VERSION="1.6.6"
-        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
-        unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
-        mv terraform /usr/local/bin/
-        rm -f "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"  # Clean up immediately
+        if ! command -v terraform &> /dev/null; then
+          TERRAFORM_VERSION="1.6.6"
+          wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          mv terraform /usr/local/bin/
+          rm -f "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"  # Clean up immediately
+        else
+          echo "✅ Terraform already installed"
+        fi
         terraform version
 
         # Install ROSA CLI
         echo "📦 Installing ROSA CLI..."
-        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
-        tar xzf rosa-linux.tar.gz
-        mv rosa /usr/local/bin/
-        rm -f rosa-linux.tar.gz  # Clean up immediately
+        if ! command -v rosa &> /dev/null; then
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+          # Extract to a temporary directory to avoid conflicts
+          mkdir -p /tmp/rosa-install
+          tar xzf rosa-linux.tar.gz -C /tmp/rosa-install
+          # Move the binary with overwrite
+          mv /tmp/rosa-install/rosa /usr/local/bin/rosa
+          rm -rf /tmp/rosa-install rosa-linux.tar.gz  # Clean up immediately
+        else
+          echo "✅ ROSA CLI already installed"
+        fi
         rosa version
 
         # Install AWS CLI
         echo "📦 Installing AWS CLI..."
-        curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip -q awscliv2.zip
-        ./aws/install
-        rm -rf aws awscliv2.zip  # Clean up immediately
+        if ! command -v aws &> /dev/null; then
+          curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf aws awscliv2.zip  # Clean up immediately
+        else
+          echo "✅ AWS CLI already installed"
+        fi
         aws --version
 
         # Check available disk space after installations
