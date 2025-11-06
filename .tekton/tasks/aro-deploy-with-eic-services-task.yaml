@@ -78,8 +78,17 @@ spec:
         set -euo pipefail
         
         # Environment variables are now directly available from secrets (no conversion needed)
-        # PostgreSQL admin password is already available as environment variable from envFrom
+        # PostgreSQL admin password must be available as POSTGRES_ADMIN_PASSWORD from the secret
         echo "🔐 PostgreSQL admin password available from secret mount..."
+        
+        # Validate POSTGRES_ADMIN_PASSWORD is set and export it
+        if [[ -z "${POSTGRES_ADMIN_PASSWORD:-}" ]]; then
+          echo "❌ ERROR: POSTGRES_ADMIN_PASSWORD environment variable is not set!"
+          echo "   The secret '$(params.postgresAdminPasswordSecretName)' must contain a key named 'POSTGRES_ADMIN_PASSWORD'"
+          exit 1
+        fi
+        export POSTGRES_ADMIN_PASSWORD
+        echo "✅ PostgreSQL admin password is set (length: ${#POSTGRES_ADMIN_PASSWORD} characters)"
         
         echo "📦 Installing required packages..."
         # Install make, libicu, and jq first (needed for makefile operations)

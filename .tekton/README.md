@@ -96,7 +96,7 @@ oc create secret generic redhat-pull-secret \
 
 # PostgreSQL admin password (only needed for endpoint testing pipeline)
 oc create secret generic azure-postgres-admin-password \
-  --from-literal=password="your-secure-password"
+  --from-literal=POSTGRES_ADMIN_PASSWORD="your-secure-password"
 
 # Quay admin credentials (for Quay deployment pipeline)
 oc create secret generic quay-admin-secret \
