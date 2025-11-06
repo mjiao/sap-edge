@@ -21,6 +21,9 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
       default: "azure-postgres-admin-password"
+  results:
+    - name: cluster-summary
+      description: "Brief cluster and services summary (under 4KB)"
   workspaces:
     - name: source
   steps:
@@ -400,3 +403,33 @@ spec:
         echo "📥 To save certificates locally:"
         echo "   1. Copy the certificate content from logs (between BEGIN/END lines)"
         echo "   2. Save to a .crt or .pem file on your machine"
+        
+        # Write a brief summary to results (under 4KB for testing)
+        echo "📤 Writing result summary..."
+        {
+          echo "ARO CLUSTER VALIDATION SUMMARY"
+          echo "=============================="
+          echo "Cluster: $ARO_CLUSTER_NAME"
+          echo "Resource Group: $ARO_RESOURCE_GROUP"
+          echo "Status: ✅ VALIDATED"
+          echo ""
+          echo "Cluster URL: $CLUSTER_URL"
+          echo "Kubeconfig: kubeconfig-$(params.aroClusterName).yaml"
+          echo ""
+          if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
+            echo "PostgreSQL: ✅ DEPLOYED ($POSTGRES_NETWORK_TYPE)"
+            echo "  FQDN: $POSTGRES_SERVER_FQDN"
+          else
+            echo "PostgreSQL: ❌ NOT DEPLOYED"
+          fi
+          echo ""
+          if [[ -n "$REDIS_CACHE_NAME" ]]; then
+            echo "Redis: ✅ DEPLOYED ($REDIS_NETWORK_TYPE)"
+            echo "  Host: $REDIS_HOST_NAME"
+          else
+            echo "Redis: ❌ NOT DEPLOYED"
+          fi
+          echo ""
+          echo "View full details in the Logs tab!"
+        } > $(results.cluster-summary.path)
+        echo "✅ Summary written to results (viewable in OpenShift UI)"

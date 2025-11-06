@@ -68,6 +68,10 @@ spec:
     - name: jiraIssueKey
       type: string
       description: "Jira issue key to update with test results"
+  results:
+    - name: cluster-summary
+      description: "Brief cluster and services validation summary"
+      value: $(tasks.validate-and-get-access.results.cluster-summary)
   workspaces:
     - name: source
   tasks:
