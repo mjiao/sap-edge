@@ -6,14 +6,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 terraform {
-  # Optional: Uncomment and configure for remote state storage
-  # backend "s3" {
-  #   bucket         = "your-terraform-state-bucket"
-  #   key            = "rosa/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-state-lock"
-  # }
+  # S3 backend for remote state storage
+  # Configuration values are provided via backend.config at runtime
+  backend "s3" {
+    # Values will be overridden by -backend-config=backend.config
+  }
   
   required_version = ">= 1.4.6"
 

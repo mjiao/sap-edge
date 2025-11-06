@@ -93,7 +93,7 @@ variable "deploy_quay" {
 variable "postgres_version" {
   description = "PostgreSQL engine version"
   type        = string
-  default     = "15.5"
+  default     = "15.14"  # Latest stable PostgreSQL 15.x available in eu-north-1
 }
 
 variable "postgres_instance_class" {
@@ -119,6 +119,16 @@ variable "postgres_admin_password" {
   type        = string
   sensitive   = true
   default     = ""  # Set via TF_VAR_postgres_admin_password or terraform.tfvars
+  
+  validation {
+    condition     = var.postgres_admin_password == "" || can(regex("^[^/@\" ]+$", var.postgres_admin_password))
+    error_message = "PostgreSQL password cannot contain these characters: / @ \" (space). Use letters, numbers, and these special characters: ! # $ % & ( ) * + , - . : ; < = > ? [ \\ ] ^ _ ` { | } ~"
+  }
+  
+  validation {
+    condition     = var.postgres_admin_password == "" || length(var.postgres_admin_password) >= 8
+    error_message = "PostgreSQL password must be at least 8 characters long."
+  }
 }
 
 variable "postgres_publicly_accessible" {

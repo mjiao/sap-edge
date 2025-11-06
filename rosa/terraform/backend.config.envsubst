@@ -1,5 +1,0 @@
-bucket = "${TERRAFORM_BACKEND_S3_BUCKET}"
-key    = "${TERRAFORM_BACKEND_S3_KEY}"
-region = "${TERRAFORM_BACKEND_S3_AWS_REGION}"
-dynamodb_table = "${TERRAFORM_BACKEND_S3_DYNAMODB_TABLE}"
-encrypt= true

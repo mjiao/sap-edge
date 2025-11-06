@@ -22,7 +22,7 @@ spec:
     - name: awsRegion
       type: string
       description: "AWS region"
-      default: "us-east-1"
+      default: "eu-north-1"
     - name: rosaVersion
       type: string
       description: "ROSA version"
@@ -62,6 +62,18 @@ spec:
       type: string
       description: "Use public DNS"
       default: "false"
+    - name: terraformStateS3Bucket
+      type: string
+      description: "S3 bucket name for Terraform state storage"
+      default: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      type: string
+      description: "S3 key for Terraform state file (auto-generated as rosa/${CLUSTER_NAME}/terraform.tfstate)"
+      default: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      type: string
+      description: "DynamoDB table for Terraform state locking"
+      default: "eic-test-rosa-terraform-state-lock"
     - name: jiraSecretName
       type: string
       description: "Name of the Kubernetes Secret containing Jira credentials"
@@ -106,6 +118,12 @@ spec:
           value: $(params.deployRedis)
         - name: deployQuay
           value: $(params.deployQuay)
+        - name: terraformStateS3Bucket
+          value: $(params.terraformStateS3Bucket)
+        - name: terraformStateS3Key
+          value: $(params.terraformStateS3Key)
+        - name: terraformStateDynamoDBTable
+          value: $(params.terraformStateDynamoDBTable)
       workspaces:
         - name: source
           workspace: source
@@ -116,10 +134,20 @@ spec:
       params:
         - name: clusterName
           value: $(params.clusterName)
+        - name: awsRegion
+          value: $(params.awsRegion)
         - name: awsSecretName
           value: $(params.awsSecretName)
         - name: redhatTokenSecretName
           value: $(params.redhatTokenSecretName)
+        - name: postgresAdminPasswordSecretName
+          value: $(params.postgresAdminPasswordSecretName)
+        - name: terraformStateS3Bucket
+          value: $(params.terraformStateS3Bucket)
+        - name: terraformStateS3Key
+          value: $(params.terraformStateS3Key)
+        - name: terraformStateDynamoDBTable
+          value: $(params.terraformStateDynamoDBTable)
       workspaces:
         - name: source
           workspace: source
@@ -140,6 +168,8 @@ spec:
           value: $(params.awsSecretName)
         - name: quayAdminPasswordSecretName
           value: $(params.quayAdminPasswordSecretName)
+        - name: redhatTokenSecretName
+          value: $(params.redhatTokenSecretName)
       workspaces:
         - name: source
           workspace: source

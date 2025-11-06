@@ -24,7 +24,7 @@ spec:
     - name: revision
       value: "{{ revision }}"
     - name: awsRegion
-      value: "us-east-1"
+      value: "eu-north-1"
     - name: clusterName
       value: "sap-eic-rosa"
     - name: rosaVersion
