@@ -141,24 +141,8 @@ spec:
         echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
         rosa login --token="${REDHAT_OCM_TOKEN}"
         
-        # Debug: Check current directory and contents
-        echo "📂 Current directory: $(pwd)"
-        echo "📂 Workspace contents:"
-        ls -la
-        echo "📂 Git status:"
-        git status || echo "Not a git repo"
-        echo "📂 Git remote:"
-        git remote -v || echo "No remotes"
-        echo "📂 Current branch:"
-        git branch -a || echo "No branches"
-        echo "📂 Git log:"
-        git log --oneline -5 || echo "No commits"
-        echo "📂 Looking for rosa/terraform..."
-        ls -la rosa/ || echo "❌ rosa directory not found!"
-        echo "📂 What does git ls-files say about rosa/?"
-        git ls-files | grep "^rosa/" | head -10 || echo "Git doesn't know about rosa/ files"
-        
         # Navigate to Terraform directory
+        echo "📂 Navigating to Terraform directory..."
         cd rosa/terraform
         
         # Create terraform.tfvars
