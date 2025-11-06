@@ -108,16 +108,16 @@ spec:
         # Install Terraform
         echo "📦 Installing Terraform..."
         TERRAFORM_VERSION="1.6.6"
-        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         rm -rf terraform terraform_${TERRAFORM_VERSION}_linux_amd64.zip  # Remove if exists from previous run
+        wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         mv terraform /usr/local/bin/
         terraform version
         
         # Install ROSA CLI
         echo "📦 Installing ROSA CLI..."
-        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
         rm -rf rosa rosa-linux.tar.gz  # Remove if exists from previous run
+        wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
         tar xzf rosa-linux.tar.gz
         mv rosa /usr/local/bin/
         rosa version
@@ -140,6 +140,23 @@ spec:
         # Login to Red Hat OCM
         echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
         rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Debug: Check current directory and contents
+        echo "📂 Current directory: $(pwd)"
+        echo "📂 Workspace contents:"
+        ls -la
+        echo "📂 Git status:"
+        git status || echo "Not a git repo"
+        echo "📂 Git remote:"
+        git remote -v || echo "No remotes"
+        echo "📂 Current branch:"
+        git branch -a || echo "No branches"
+        echo "📂 Git log:"
+        git log --oneline -5 || echo "No commits"
+        echo "📂 Looking for rosa/terraform..."
+        ls -la rosa/ || echo "❌ rosa directory not found!"
+        echo "📂 What does git ls-files say about rosa/?"
+        git ls-files | grep "^rosa/" | head -10 || echo "Git doesn't know about rosa/ files"
         
         # Navigate to Terraform directory
         cd rosa/terraform
