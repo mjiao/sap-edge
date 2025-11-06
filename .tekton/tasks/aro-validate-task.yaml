@@ -172,8 +172,27 @@ spec:
         REDIS_ACCESS_KEY=""
         REDIS_CONNECTION_STRING=""
         
-        # Get Redis connection information
-        make redis-get-info
+        # Get Redis connection information using make target
+        REDIS_INFO=$(make --no-print-directory redis-get-info 2>&1)
+        echo "$REDIS_INFO"
+        
+        # Parse the output to extract values
+        if [[ "$REDIS_INFO" != *"No Redis cache found"* ]]; then
+          REDIS_CACHE_NAME=$(echo "$REDIS_INFO" | grep "Redis Cache Name:" | cut -d: -f2- | xargs)
+          REDIS_HOST_NAME=$(echo "$REDIS_INFO" | grep "Redis Host:" | cut -d: -f2- | xargs)
+          REDIS_PORT=$(echo "$REDIS_INFO" | grep "Redis Port:" | cut -d: -f2- | xargs)
+          REDIS_SSL_PORT=$(echo "$REDIS_INFO" | grep "Redis SSL Port:" | cut -d: -f2- | xargs)
+          REDIS_ACCESS_KEY=$(echo "$REDIS_INFO" | grep "Redis Access Key:" | cut -d: -f2- | xargs)
+          
+          # Generate Redis connection string
+          if [[ -n "$REDIS_ACCESS_KEY" && -n "$REDIS_HOST_NAME" && -n "$REDIS_SSL_PORT" ]]; then
+            REDIS_CONNECTION_STRING="rediss://:${REDIS_ACCESS_KEY}@${REDIS_HOST_NAME}:${REDIS_SSL_PORT}/0"
+          fi
+          
+          echo "✅ Found Redis cache: $REDIS_CACHE_NAME"
+        else
+          echo "⚠️ No Redis cache found"
+        fi
         
         echo ""
         echo "📋 ==================================="
