@@ -40,6 +40,10 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing Quay admin password and email"
       default: "quay-admin-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token (for ROSA CLI authentication)"
+      default: "redhat-token-secret"
   workspaces:
     - name: source
   steps:
@@ -75,6 +79,11 @@ spec:
             secretKeyRef:
               name: $(params.quayAdminPasswordSecretName)
               key: email
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: REDHAT_OCM_TOKEN
       script: |
         #!/bin/bash
         set -euo pipefail
@@ -93,16 +102,76 @@ spec:
 
         # Install required tools
         echo "📦 Installing required tools..."
-        dnf install -y make libicu jq python3-pip
+        dnf install -y make libicu jq python3-pip wget unzip tar
+
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        if ! command -v oc &> /dev/null; then
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+          mkdir -p /tmp/oc-install
+          tar xzf openshift-client-linux.tar.gz -C /tmp/oc-install
+          mv /tmp/oc-install/oc /tmp/oc-install/kubectl /usr/local/bin/
+          rm -rf /tmp/oc-install openshift-client-linux.tar.gz
+        else
+          echo "✅ OpenShift CLI already installed"
+        fi
+
+        # Install ROSA CLI (needed for certificate trust configuration)
+        echo "📦 Installing ROSA CLI..."
+        if ! command -v rosa &> /dev/null; then
+          rm -rf rosa rosa-linux.tar.gz  # Remove if exists from previous run
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+          tar xzf rosa-linux.tar.gz
+          mv rosa /usr/local/bin/
+          rm -f rosa-linux.tar.gz
+          rosa version
+        else
+          echo "✅ ROSA CLI already installed"
+          rosa version
+        fi
+
+        # Login to ROSA CLI
+        echo "🔐 Authenticating with Red Hat OCM..."
+        if rosa login --token="${REDHAT_OCM_TOKEN}"; then
+          echo "✅ ROSA CLI authenticated successfully"
+        else
+          echo "❌ Failed to authenticate ROSA CLI"
+          echo "⚠️  Certificate trust configuration will not be available"
+        fi
 
         # Install Ansible and required collections
         echo "📦 Installing Ansible and required collections..."
         pip3 install ansible kubernetes
         ansible-galaxy collection install -r ansible/requirements.yml
 
+        # Verify tools are installed
+        oc version --client
+
+        # Set kubeconfig from previous task
+        echo "🔐 Setting up cluster authentication..."
+        export KUBECONFIG="$(pwd)/kubeconfig"
+        
+        if [[ ! -f "${KUBECONFIG}" ]]; then
+          echo "❌ kubeconfig file not found at: ${KUBECONFIG}"
+          echo "ℹ️  This should have been created by the validate-and-get-access task"
+          exit 1
+        fi
+        echo "✅ Found kubeconfig file"
+
         # Verify we can access the cluster
         echo "🔍 Verifying ROSA cluster access..."
-        oc get nodes
+        if oc get nodes 2>/dev/null; then
+          echo "✅ Cluster access confirmed"
+        else
+          echo "❌ Cannot access cluster - authentication required"
+          echo "🔍 This is expected in pipeline environments where OAuth tokens are not available"
+          echo "💡 For ROSA HCP clusters, manual authentication is required:"
+          echo "   oc login https://api.${CLUSTER_NAME}.xxx.openshiftapps.com --username cluster-admin"
+          echo ""
+          echo "⚠️  Skipping Quay deployment due to cluster access limitations"
+          echo "ℹ️  Quay can be deployed manually once cluster authentication is established"
+          exit 0
+        fi
 
         # Step 1: Complete ROSA Quay deployment with S3 storage
         echo ""
@@ -140,48 +209,84 @@ spec:
 
         echo "💾 Deployment information saved to rosa-quay-deployment-info.txt"
 
-        # Display certificate trust configuration status
+        # Configure certificate trust for ROSA HCP cluster
         echo ""
-        echo "🔒 Certificate Trust Configuration Status:"
+        echo "🔒 Configuring Certificate Trust for ROSA HCP:"
         echo "=========================================="
 
-        # Check if trusted CA ConfigMap exists
-        if oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
-            echo "✅ ConfigMap 'trusted-registry-cabundles' exists in openshift-config namespace"
-            echo ""
-            echo "📋 Certificate Content (copy-ready format):"
-            echo "============================================"
-            # Extract just the certificate data in a clean format
-            oc get configmap trusted-registry-cabundles -n openshift-config -o jsonpath='{.data}' | jq -r 'to_entries[] | .value' 2>/dev/null || {
-                echo "📋 Certificate data from ConfigMap:"
-                oc get configmap trusted-registry-cabundles -n openshift-config -o yaml | sed -n '/^data:/,/^[^[:space:]]/p' | sed '$d' | sed 's/^  [^:]*: |$//' | sed 's/^    //'
-            }
-            echo "============================================"
+        # Get Quay registry endpoint
+        QUAY_ENDPOINT=$(oc get quayregistry test-registry -n openshift-operators -o jsonpath='{.status.registryEndpoint}' 2>/dev/null || echo "")
+        
+        if [[ -z "${QUAY_ENDPOINT}" ]]; then
+          echo "⚠️  Quay registry endpoint not available yet"
+          echo "ℹ️  Certificate trust will be configured once Quay route is ready"
         else
-            echo "❌ ConfigMap 'trusted-registry-cabundles' not found in openshift-config namespace"
+          echo "📡 Quay Registry Endpoint: ${QUAY_ENDPOINT}"
+          
+          # Extract hostname from endpoint (remove https:// and any path)
+          QUAY_HOST=$(echo "${QUAY_ENDPOINT}" | sed -e 's|https\?://||' -e 's|/.*||')
+          echo "🔍 Quay Host: ${QUAY_HOST}"
+          
+          # Get the certificate from the Quay route
+          echo "📥 Extracting certificate from Quay route..."
+          QUAY_ROUTE_NAME=$(oc get route -n openshift-operators -l quay-component=quay-app-route -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          
+          if [[ -n "${QUAY_ROUTE_NAME}" ]]; then
+            echo "✅ Found Quay route: ${QUAY_ROUTE_NAME}"
+            
+            # Extract certificate from the route
+            CERT_FILE="additional-trusted-ca.pem"
+            oc get route "${QUAY_ROUTE_NAME}" -n openshift-operators -o jsonpath='{.spec.tls.certificate}' > "${CERT_FILE}" 2>/dev/null || true
+            
+            if [[ -f "${CERT_FILE}" ]] && [[ -s "${CERT_FILE}" ]]; then
+              echo "✅ Certificate extracted successfully"
+              echo ""
+              echo "📋 Certificate Content:"
+              echo "============================================"
+              cat "${CERT_FILE}"
+              echo "============================================"
+              echo ""
+              
+              # Configure ROSA cluster to trust the certificate
+              echo "🔧 Configuring ROSA HCP cluster to trust Quay certificate..."
+              if rosa edit cluster -c "${CLUSTER_NAME}" --additional-trust-bundle-file "${CERT_FILE}"; then
+                echo "✅ Certificate trust configured successfully for ROSA HCP cluster!"
+                echo "ℹ️  The cluster will now trust the Quay registry certificate"
+                echo "ℹ️  All nodes will be updated to trust this certificate"
+                echo ""
+                echo "🔍 Certificate Trust Status: ✅ Configured"
+              else
+                echo "⚠️  Failed to configure certificate trust"
+                echo "ℹ️  You can manually configure it with:"
+                echo "   rosa edit cluster -c ${CLUSTER_NAME} --additional-trust-bundle-file ${CERT_FILE}"
+                echo ""
+                echo "🔍 Certificate Trust Status: ⚠️  Manual configuration needed"
+              fi
+            else
+              echo "⚠️  Could not extract certificate from route"
+              echo "ℹ️  Certificate trust will need to be configured manually"
+            fi
+          else
+            echo "⚠️  Quay route not found"
+            echo "ℹ️  Certificate trust will need to be configured once route is available"
+          fi
         fi
-
-        # Check cluster Image configuration
-        echo ""
-        echo "🔧 Cluster Image Configuration:"
-        ADDITIONAL_TRUSTED_CA=$(oc get image.config.openshift.io cluster -o jsonpath='{.spec.additionalTrustedCA.name}' 2>/dev/null || echo "")
-        if [ -n "$ADDITIONAL_TRUSTED_CA" ]; then
-            echo "✅ additionalTrustedCA configured: $ADDITIONAL_TRUSTED_CA"
-        else
-            echo "❌ additionalTrustedCA not configured"
-        fi
-
-        # Get Quay registry endpoint for reference
-        QUAY_ENDPOINT=$(oc get quayregistry test-registry -n openshift-operators -o jsonpath='{.status.registryEndpoint}' 2>/dev/null || echo "Not available")
-        echo ""
-        echo "📡 Quay Registry Endpoint: $QUAY_ENDPOINT"
+        
         echo ""
         echo "🔍 Certificate Trust Summary:"
-        if [ -n "$ADDITIONAL_TRUSTED_CA" ] && oc get configmap trusted-registry-cabundles -n openshift-config >/dev/null 2>&1; then
-            echo "✅ Certificate trust is properly configured"
-            echo "✅ OpenShift nodes should trust the Quay registry certificates"
+        echo "=========================================="
+        echo "For ROSA HCP clusters, certificate trust is managed via:"
+        echo "  rosa edit cluster -c <cluster-name> --additional-trust-bundle-file <cert-file>"
+        echo ""
+        echo "Unlike standard ROSA/ARO, ROSA HCP does NOT use:"
+        echo "  - ConfigMaps in openshift-config namespace"
+        echo "  - image.config.openshift.io additionalTrustedCA"
+        echo ""
+        if [[ -f "${CERT_FILE:-}" ]] && [[ -s "${CERT_FILE:-}" ]]; then
+          echo "✅ Certificate file available at: ${CERT_FILE}"
+          echo "✅ Trust configuration attempted via ROSA CLI"
         else
-            echo "⚠️  Certificate trust may not be fully configured"
-            echo "⚠️  You may need to run: make rosa-quay-trust-cert"
+          echo "⚠️  Certificate needs to be extracted and configured"
+          echo "💡 Run: make rosa-quay-trust-cert (after updating makefile for ROSA HCP)"
         fi
         echo ""

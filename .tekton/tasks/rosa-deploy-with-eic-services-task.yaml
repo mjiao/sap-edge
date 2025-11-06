@@ -17,7 +17,7 @@ spec:
     - name: awsRegion
       type: string
       description: "AWS region"
-      default: "us-east-1"
+      default: "eu-north-1"
     - name: rosaVersion
       type: string
       description: "ROSA version"
@@ -46,6 +46,18 @@ spec:
       type: string
       description: "Whether to deploy S3 bucket for Quay (true/false)"
       default: "true"
+    - name: terraformStateS3Bucket
+      type: string
+      description: "S3 bucket name for Terraform state storage"
+      default: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      type: string
+      description: "S3 key for Terraform state file (auto-generated as rosa/${CLUSTER_NAME}/terraform.tfstate)"
+      default: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      type: string
+      description: "DynamoDB table for Terraform state locking"
+      default: "eic-test-rosa-terraform-state-lock"
   workspaces:
     - name: source
   steps:
@@ -71,6 +83,12 @@ spec:
           value: "$(params.deployRedis)"
         - name: DEPLOY_QUAY
           value: "$(params.deployQuay)"
+        - name: TERRAFORM_STATE_S3_BUCKET
+          value: "$(params.terraformStateS3Bucket)"
+        - name: TERRAFORM_STATE_S3_KEY
+          value: "$(params.terraformStateS3Key)"
+        - name: TERRAFORM_STATE_DYNAMODB_TABLE
+          value: "$(params.terraformStateDynamoDBTable)"
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
@@ -217,8 +235,81 @@ spec:
           echo "❌ rosa/terraform directory not found"
           exit 1
         fi
+        
+        # Setup Terraform S3 backend for state persistence
+        echo "🗄️  Setting up Terraform S3 backend for persistent state..."
+        echo "  S3 Bucket: ${TERRAFORM_STATE_S3_BUCKET}"
+        echo "  S3 Key: ${TERRAFORM_STATE_S3_KEY}"
+        echo "  DynamoDB Table: ${TERRAFORM_STATE_DYNAMODB_TABLE}"
+        
+        # Create S3 bucket for Terraform state if it doesn't exist
+        if ! aws s3 ls "s3://${TERRAFORM_STATE_S3_BUCKET}" 2>/dev/null; then
+          echo "📦 Creating S3 bucket: ${TERRAFORM_STATE_S3_BUCKET}"
+          aws s3api create-bucket \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --region "${AWS_REGION}" \
+            $(if [ "${AWS_REGION}" != "us-east-1" ]; then echo "--create-bucket-configuration LocationConstraint=${AWS_REGION}"; fi)
+          
+          # Enable versioning for state file safety
+          echo "🔄 Enabling versioning on S3 bucket..."
+          aws s3api put-bucket-versioning \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --versioning-configuration Status=Enabled
+          
+          # Enable server-side encryption
+          echo "🔒 Enabling encryption on S3 bucket..."
+          aws s3api put-bucket-encryption \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --server-side-encryption-configuration '{
+              "Rules": [{
+                "ApplyServerSideEncryptionByDefault": {
+                  "SSEAlgorithm": "AES256"
+                }
+              }]
+            }'
+          
+          echo "✅ S3 bucket created and configured"
+        else
+          echo "✅ S3 bucket already exists"
+        fi
+        
+        # Create DynamoDB table for state locking if it doesn't exist
+        if ! aws dynamodb describe-table --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" --region "${AWS_REGION}" 2>/dev/null; then
+          echo "🔒 Creating DynamoDB table for state locking: ${TERRAFORM_STATE_DYNAMODB_TABLE}"
+          aws dynamodb create-table \
+            --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+            --attribute-definitions AttributeName=LockID,AttributeType=S \
+            --key-schema AttributeName=LockID,KeyType=HASH \
+            --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+            --region "${AWS_REGION}" \
+            --tags Key=Purpose,Value=TerraformStateLock Key=ManagedBy,Value=Tekton
+          
+          echo "⏳ Waiting for DynamoDB table to become active..."
+          aws dynamodb wait table-exists --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" --region "${AWS_REGION}"
+          echo "✅ DynamoDB table created"
+        else
+          echo "✅ DynamoDB table already exists"
+        fi
+        
         cd rosa/terraform
         
+        # Prepare backend configuration variables
+        echo "📝 Preparing Terraform backend configuration..."
+        BACKEND_S3_KEY="rosa/${CLUSTER_NAME}/terraform.tfstate"  # Cluster-specific key
+        echo "  S3 State Location: s3://${TERRAFORM_STATE_S3_BUCKET}/${BACKEND_S3_KEY}"
+        
+        # Convert string boolean parameters to lowercase for Terraform
+        # Terraform expects: true/false (lowercase, no quotes)
+        DEPLOY_POSTGRES_TF=$(echo "${DEPLOY_POSTGRES}" | tr '[:upper:]' '[:lower:]')
+        DEPLOY_REDIS_TF=$(echo "${DEPLOY_REDIS}" | tr '[:upper:]' '[:lower:]')
+        DEPLOY_QUAY_TF=$(echo "${DEPLOY_QUAY}" | tr '[:upper:]' '[:lower:]')
+        
+        echo "📝 Boolean parameter conversion:"
+        echo "  deploy_postgres: ${DEPLOY_POSTGRES} → ${DEPLOY_POSTGRES_TF}"
+        echo "  deploy_redis: ${DEPLOY_REDIS} → ${DEPLOY_REDIS_TF}"
+        echo "  deploy_quay: ${DEPLOY_QUAY} → ${DEPLOY_QUAY_TF}"
+        echo ""
+
         # Create terraform.tfvars
         echo "📝 Creating terraform.tfvars..."
         cat > terraform.tfvars << EOF
@@ -235,13 +326,13 @@ spec:
         cluster_name     = "${CLUSTER_NAME}"
         rosa_version     = "${ROSA_VERSION}"
         redhat_ocm_token = "${REDHAT_OCM_TOKEN}"
-        
+
         # AWS Services Configuration
-        deploy_postgres         = ${DEPLOY_POSTGRES}
-        deploy_redis            = ${DEPLOY_REDIS}
-        deploy_quay             = ${DEPLOY_QUAY}
+        deploy_postgres         = ${DEPLOY_POSTGRES_TF}
+        deploy_redis            = ${DEPLOY_REDIS_TF}
+        deploy_quay             = ${DEPLOY_QUAY_TF}
         postgres_admin_password = "${POSTGRES_ADMIN_PASSWORD}"
-        
+
         # Tags
         tags = {
           Environment = "pipeline"
@@ -251,6 +342,7 @@ spec:
         EOF
         
         echo "✅ terraform.tfvars created"
+        echo "📋 Contents:"
         cat terraform.tfvars
         echo ""
         
@@ -263,9 +355,14 @@ spec:
           if [[ "${CLUSTER_STATE}" == "ready" ]]; then
             echo "✅ Cluster is ready, skipping deployment"
             
-            # Still need to initialize Terraform for outputs
-            echo "🔧 Initializing Terraform for state management..."
-            terraform init
+            # Still need to initialize Terraform with backend for state access
+            echo "🔧 Initializing Terraform with S3 backend for state access..."
+            terraform init \
+              -backend-config="bucket=${TERRAFORM_STATE_S3_BUCKET}" \
+              -backend-config="key=rosa/${CLUSTER_NAME}/terraform.tfstate" \
+              -backend-config="region=${AWS_REGION}" \
+              -backend-config="dynamodb_table=${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+              -backend-config="encrypt=true"
             
             exit 0
           elif [[ "${CLUSTER_STATE}" == "error" || "${CLUSTER_STATE}" == "failed" ]]; then
@@ -281,9 +378,14 @@ spec:
           echo "📋 No existing ROSA cluster found - will deploy"
         fi
         
-        # Initialize Terraform
-        echo "🔧 Initializing Terraform..."
-        terraform init
+        # Initialize Terraform with S3 backend using environment variables
+        echo "🔧 Initializing Terraform with S3 backend..."
+        terraform init \
+          -backend-config="bucket=${TERRAFORM_STATE_S3_BUCKET}" \
+          -backend-config="key=${BACKEND_S3_KEY}" \
+          -backend-config="region=${AWS_REGION}" \
+          -backend-config="dynamodb_table=${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+          -backend-config="encrypt=true"
         
         # Plan
         echo "📋 Planning Terraform deployment..."

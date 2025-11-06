@@ -101,6 +101,8 @@ spec:
           value: $(params.awsSecretName)
         - name: quayAdminPasswordSecretName
           value: $(params.quayAdminPasswordSecretName)
+        - name: redhatTokenSecretName
+          value: $(params.redhatTokenSecretName)
       workspaces:
         - name: source
           workspace: source
