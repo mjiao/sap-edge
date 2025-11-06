@@ -20,9 +20,9 @@ spec:
     finally: "30m"        # Finally tasks timeout
   params:
     - name: repoUrl
-      value: "https://github.com/mjiao/sap-edge.git"
+      value: "{{ repo_url }}"
     - name: revision
-      value: "aro-rosa-creation-test"
+      value: "{{ revision }}"
     - name: awsRegion
       value: "us-east-1"
     - name: clusterName
