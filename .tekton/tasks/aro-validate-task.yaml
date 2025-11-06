@@ -70,7 +70,7 @@ spec:
         # Wait for cluster to be ready
         echo "⏳ Waiting for ARO cluster to be ready..."
         while true; do
-          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
+          CLUSTER_STATUS=$(make --no-print-directory aro-cluster-status | tail -1)
           echo "Cluster status: '$CLUSTER_STATUS'"
           echo "Status length: ${#CLUSTER_STATUS}"
           
@@ -87,9 +87,9 @@ spec:
         done
         
         # Get cluster URL and credentials
-        CLUSTER_URL=$(make aro-cluster-url | tail -1)
+        CLUSTER_URL=$(make --no-print-directory aro-cluster-url | tail -1)
         echo "🔍 Debug: Getting credentials..."
-        CREDENTIALS_RAW=$(make aro-credentials)
+        CREDENTIALS_RAW=$(make --no-print-directory aro-credentials)
         echo "🔍 Debug: Raw credentials output:"
         echo "$CREDENTIALS_RAW"
         echo "🔍 Debug: End raw credentials"
@@ -148,7 +148,7 @@ spec:
         POSTGRES_DATABASE_NAME="eic"
         POSTGRES_CONNECTION_STRING=""
         
-        POSTGRES_EXISTS=$(make postgres-exists | tail -1)
+        POSTGRES_EXISTS=$(make --no-print-directory postgres-exists | tail -1)
         if [[ -n "$POSTGRES_EXISTS" ]]; then
           POSTGRES_SERVER_NAME="$EXPECTED_POSTGRES_NAME"
           # Use public FQDN for PostgreSQL server

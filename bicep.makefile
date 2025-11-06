@@ -323,7 +323,7 @@ aro-get-kubeconfig:  ## Get ARO kubeconfig with insecure TLS settings
 .PHONY: redis-get-info
 redis-get-info:  ## Get Redis cache connection information
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@REDIS_LIST=$$(make redis-exists | tail -1); \
+	@REDIS_LIST=$$(make --no-print-directory redis-exists | tail -1); \
 	if [[ -n "$$REDIS_LIST" ]]; then \
 		REDIS_CACHE_NAME=$$(echo "$$REDIS_LIST" | head -1); \
 		echo "Redis Cache Name: $$REDIS_CACHE_NAME"; \
