@@ -141,6 +141,16 @@ spec:
         echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
         rosa login --token="${REDHAT_OCM_TOKEN}"
         
+        # Fix git ownership issue that can prevent proper repository access
+        echo "🔧 Fixing git ownership..."
+        git config --global --add safe.directory /workspace/source
+
+        # Ensure we have the complete repository state
+        echo "🔧 Ensuring complete repository state..."
+        git status
+        echo "🔍 Current HEAD commit:"
+        git log --oneline -1
+
         # Navigate to Terraform directory
         echo "📂 Navigating to Terraform directory..."
         echo "🔍 Current directory: $(pwd)"
@@ -151,13 +161,32 @@ spec:
           echo "❌ rosa directory not found"
           echo "🔍 Searching for rosa directory recursively:"
           find . -name "rosa" -type d 2>/dev/null || echo "No rosa directory found anywhere"
-          echo "🔍 Checking git status:"
-          git status
-          echo "🔍 Checking current branch and recent commits:"
-          git log --oneline -3
           echo "🔍 Verifying if rosa directory exists in git:"
           git ls-tree -r HEAD | grep rosa/ | head -10 || echo "No rosa files found in git tree"
-          exit 1
+
+          # Try to restore the rosa directory
+          echo "🔧 Attempting to restore rosa directory..."
+          if git ls-tree -r HEAD | grep -q rosa/; then
+            echo "✅ rosa files exist in git tree, attempting restore..."
+            git checkout HEAD -- rosa/ || echo "Failed to checkout rosa directory"
+            if [[ -d "rosa" ]]; then
+              echo "✅ Successfully restored rosa directory!"
+            else
+              echo "❌ Failed to restore rosa directory"
+              # Last resort: try to reset the working directory
+              echo "🔧 Attempting full working directory reset..."
+              git reset --hard HEAD
+              if [[ -d "rosa" ]]; then
+                echo "✅ Successfully restored rosa directory via reset!"
+              else
+                echo "❌ All restoration attempts failed"
+                exit 1
+              fi
+            fi
+          else
+            echo "❌ rosa files do not exist in git tree"
+            exit 1
+          fi
         fi
         ls -la rosa/
         if [[ ! -d "rosa/terraform" ]]; then
