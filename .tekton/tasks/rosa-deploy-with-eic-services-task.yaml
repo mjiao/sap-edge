@@ -143,6 +143,11 @@ spec:
         
         # Navigate to Terraform directory
         echo "📂 Navigating to Terraform directory..."
+        echo "🔍 Current directory: $(pwd)"
+        echo "🔍 Workspace contents:"
+        ls -la
+        echo "🔍 Checking for rosa directory:"
+        ls -la rosa/ || echo "❌ rosa directory not found"
         cd rosa/terraform
         
         # Create terraform.tfvars
