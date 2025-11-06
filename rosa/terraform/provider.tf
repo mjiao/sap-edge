@@ -38,5 +38,6 @@ provider "aws" {
 }
 
 provider "rhcs" {
-  url = "https://api.openshift.com"
+  url   = "https://api.openshift.com"
+  token = var.redhat_ocm_token
 }
