@@ -59,4 +59,4 @@ spec:
           storageClassName: ocs-storagecluster-cephfs
           resources:
             requests:
-              storage: 500Mi
+              storage: 2Gi
