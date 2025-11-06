@@ -82,8 +82,41 @@ spec:
         - name: output
           workspace: source
 
-    - name: deploy-rosa
+    # Debug step to verify workspace contents after git-clone
+    - name: verify-workspace
       runAfter: [fetch-repository]
+      workspaces:
+        - name: source
+          workspace: source
+      taskSpec:
+        workspaces:
+          - name: source
+        steps:
+          - name: list-contents
+            image: registry.redhat.io/ubi9/ubi:latest
+            workingDir: $(workspaces.source.path)
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              echo "🔍 Verifying workspace contents after git-clone..."
+              echo "📂 Current directory: $(pwd)"
+              echo ""
+              echo "📂 Top-level contents:"
+              ls -la
+              echo ""
+              echo "📂 Checking for rosa/ directory:"
+              if [ -d "rosa" ]; then
+                echo "✅ rosa/ directory EXISTS"
+                ls -la rosa/
+              else
+                echo "❌ rosa/ directory NOT FOUND"
+              fi
+              echo ""
+              echo "📂 All directories:"
+              find . -maxdepth 2 -type d | head -20
+
+    - name: deploy-rosa
+      runAfter: [verify-workspace]
       taskRef: { name: rosa-deploy-with-eic-services }
       params:
         - name: clusterName
