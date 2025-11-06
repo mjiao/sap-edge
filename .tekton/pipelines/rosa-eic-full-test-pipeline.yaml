@@ -38,10 +38,10 @@ spec:
     - name: eicAuthSecretName
       type: string
       description: "EIC authentication secret name"
-    - name: postgresAdminPassword
+    - name: postgresAdminPasswordSecretName
       type: string
-      description: "PostgreSQL admin password"
-      default: "ChangeMe123!"
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "rosa-postgres-admin-password"
     - name: quayAdminPasswordSecretName
       type: string
       description: "Name of the Kubernetes Secret containing Quay admin password and email"
@@ -96,8 +96,8 @@ spec:
           value: $(params.awsSecretName)
         - name: redhatTokenSecretName
           value: $(params.redhatTokenSecretName)
-        - name: postgresAdminPassword
-          value: $(params.postgresAdminPassword)
+        - name: postgresAdminPasswordSecretName
+          value: $(params.postgresAdminPasswordSecretName)
         - name: deployPostgres
           value: $(params.deployPostgres)
         - name: deployRedis

@@ -30,10 +30,10 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing Red Hat OCM token"
       default: "redhat-token-secret"
-    - name: postgresAdminPassword
+    - name: postgresAdminPasswordSecretName
       type: string
-      description: "PostgreSQL admin password"
-      default: "ChangeMe123!"
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "rosa-postgres-admin-password"
     - name: deployPostgres
       type: string
       description: "Whether to deploy RDS PostgreSQL (true/false)"
@@ -61,7 +61,10 @@ spec:
         - name: ROSA_VERSION
           value: "$(params.rosaVersion)"
         - name: POSTGRES_ADMIN_PASSWORD
-          value: "$(params.postgresAdminPassword)"
+          valueFrom:
+            secretKeyRef:
+              name: $(params.postgresAdminPasswordSecretName)
+              key: POSTGRES_ADMIN_PASSWORD
         - name: DEPLOY_POSTGRES
           value: "$(params.deployPostgres)"
         - name: DEPLOY_REDIS
@@ -82,7 +85,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: $(params.redhatTokenSecretName)
-              key: token
+              key: REDHAT_OCM_TOKEN
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -106,6 +109,7 @@ spec:
         echo "📦 Installing Terraform..."
         TERRAFORM_VERSION="1.6.6"
         wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        rm -rf terraform terraform_${TERRAFORM_VERSION}_linux_amd64.zip  # Remove if exists from previous run
         unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
         mv terraform /usr/local/bin/
         terraform version
@@ -113,12 +117,14 @@ spec:
         # Install ROSA CLI
         echo "📦 Installing ROSA CLI..."
         wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+        rm -rf rosa rosa-linux.tar.gz  # Remove if exists from previous run
         tar xzf rosa-linux.tar.gz
         mv rosa /usr/local/bin/
         rosa version
         
         # Install AWS CLI
         echo "📦 Installing AWS CLI..."
+        rm -rf aws awscliv2.zip  # Remove if exists from previous run
         curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip -q awscliv2.zip
         ./aws/install
