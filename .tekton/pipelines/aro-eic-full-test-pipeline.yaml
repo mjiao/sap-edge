@@ -82,6 +82,8 @@ spec:
           value: $(params.repoUrl)
         - name: revision
           value: $(params.revision)
+        - name: depth
+          value: "0"  # Full clone to ensure all refs are available
       workspaces:
         - name: output
           workspace: source

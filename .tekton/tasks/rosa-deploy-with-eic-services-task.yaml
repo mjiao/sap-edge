@@ -147,7 +147,23 @@ spec:
         echo "🔍 Workspace contents:"
         ls -la
         echo "🔍 Checking for rosa directory:"
-        ls -la rosa/ || echo "❌ rosa directory not found"
+        if [[ ! -d "rosa" ]]; then
+          echo "❌ rosa directory not found"
+          echo "🔍 Searching for rosa directory recursively:"
+          find . -name "rosa" -type d 2>/dev/null || echo "No rosa directory found anywhere"
+          echo "🔍 Checking git status:"
+          git status
+          echo "🔍 Checking current branch and recent commits:"
+          git log --oneline -3
+          echo "🔍 Verifying if rosa directory exists in git:"
+          git ls-tree -r HEAD | grep rosa/ | head -10 || echo "No rosa files found in git tree"
+          exit 1
+        fi
+        ls -la rosa/
+        if [[ ! -d "rosa/terraform" ]]; then
+          echo "❌ rosa/terraform directory not found"
+          exit 1
+        fi
         cd rosa/terraform
         
         # Create terraform.tfvars
