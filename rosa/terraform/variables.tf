@@ -34,6 +34,12 @@ variable "rosa_version" {
   default     = "4.14.9"
 }
 
+variable "redhat_ocm_token" {
+  description = "Red Hat OpenShift Cluster Manager token"
+  type        = string
+  sensitive   = true
+}
+
 variable "tags" {
   default = {
     Terraform   = "true"
