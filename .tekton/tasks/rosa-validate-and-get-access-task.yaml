@@ -323,36 +323,30 @@ spec:
           # Extract cluster name from URL (remove https://)
           CLUSTER_NAME_FROM_URL="${API_SERVER_URL#https://}"
           
-          cat > "${OUTPUT_KUBECONFIG_FILE}" << 'KUBE_EOF'
-apiVersion: v1
-kind: Config
-clusters:
-- name: ${CLUSTER_NAME_FROM_URL}
-  cluster:
-    insecure-skip-tls-verify: true
-    server: ${API_SERVER_URL}
-
-users:
-- name: ${SERVICE_ACCOUNT_NAME}
-  user:
-    token: ${TOKEN}
-
-contexts:
-- name: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
-  context:
-    cluster: ${CLUSTER_NAME_FROM_URL}
-    namespace: ${NAMESPACE}
-    user: ${SERVICE_ACCOUNT_NAME}
-
-current-context: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
-KUBE_EOF
-          
-          # Substitute variables (since we used 'KUBE_EOF' to prevent expansion)
-          sed -i "s|\${CLUSTER_NAME_FROM_URL}|${CLUSTER_NAME_FROM_URL}|g" "${OUTPUT_KUBECONFIG_FILE}"
-          sed -i "s|\${API_SERVER_URL}|${API_SERVER_URL}|g" "${OUTPUT_KUBECONFIG_FILE}"
-          sed -i "s|\${SERVICE_ACCOUNT_NAME}|${SERVICE_ACCOUNT_NAME}|g" "${OUTPUT_KUBECONFIG_FILE}"
-          sed -i "s|\${NAMESPACE}|${NAMESPACE}|g" "${OUTPUT_KUBECONFIG_FILE}"
-          sed -i "s|\${TOKEN}|${TOKEN}|g" "${OUTPUT_KUBECONFIG_FILE}"
+          # Build kubeconfig using echo (avoids heredoc YAML issues)
+          {
+            echo "apiVersion: v1"
+            echo "kind: Config"
+            echo "clusters:"
+            echo "- name: ${CLUSTER_NAME_FROM_URL}"
+            echo "  cluster:"
+            echo "    insecure-skip-tls-verify: true"
+            echo "    server: ${API_SERVER_URL}"
+            echo ""
+            echo "users:"
+            echo "- name: ${SERVICE_ACCOUNT_NAME}"
+            echo "  user:"
+            echo "    token: ${TOKEN}"
+            echo ""
+            echo "contexts:"
+            echo "- name: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}"
+            echo "  context:"
+            echo "    cluster: ${CLUSTER_NAME_FROM_URL}"
+            echo "    namespace: ${NAMESPACE}"
+            echo "    user: ${SERVICE_ACCOUNT_NAME}"
+            echo ""
+            echo "current-context: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}"
+          } > "${OUTPUT_KUBECONFIG_FILE}"
           
           echo "   ✅ Kubeconfig file created: ${OUTPUT_KUBECONFIG_FILE}"
           
