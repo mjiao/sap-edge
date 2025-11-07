@@ -156,17 +156,30 @@ resource "aws_db_instance" "postgres" {
 
 #tfsec:ignore:aws-elasticache-enable-backup-retention Backup retention not required for testing cache
 #checkov:skip=CKV_AWS_134:ElastiCache backup not required for ephemeral testing cache
+# Generate a random auth token for Redis
+resource "random_password" "redis_auth_token" {
+  count   = var.deploy_redis ? 1 : 0
+  length  = 32
+  special = true
+  # ElastiCache auth tokens must not contain these characters
+  override_special = "!&#$^<>-"
+}
+
 resource "aws_elasticache_cluster" "redis" {
-  count                = var.deploy_redis ? 1 : 0
-  cluster_id           = "${var.cluster_name}-redis"
-  engine               = "redis"
-  engine_version       = var.redis_engine_version
-  node_type            = var.redis_node_type
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.redis[0].name
-  security_group_ids   = [aws_security_group.redis[0].id]
+  count                      = var.deploy_redis ? 1 : 0
+  cluster_id                 = "${var.cluster_name}-redis"
+  engine                     = "redis"
+  engine_version             = var.redis_engine_version
+  node_type                  = var.redis_node_type
+  num_cache_nodes            = 1
+  parameter_group_name       = "default.redis7"
+  port                       = 6379
+  subnet_group_name          = aws_elasticache_subnet_group.redis[0].name
+  security_group_ids         = [aws_security_group.redis[0].id]
+  
+  # Enable authentication
+  auth_token                 = random_password.redis_auth_token[0].result
+  transit_encryption_enabled = true
 
   tags = merge(
     var.tags,

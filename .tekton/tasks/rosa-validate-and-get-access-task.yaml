@@ -400,6 +400,16 @@ spec:
         echo "📋 Retrieving AWS services information from Terraform..."
         cd rosa/terraform
         
+        # Debug: Show terraform.tfvars to verify deployment flags
+        if [[ -f terraform.tfvars ]]; then
+          echo ""
+          echo "📋 Current Terraform Configuration (terraform.tfvars):"
+          echo "=========================================="
+          cat terraform.tfvars | grep -E "^(deploy_postgres|deploy_redis|deploy_quay)" || echo "No deployment flags found"
+          echo "=========================================="
+          echo ""
+        fi
+        
         # Prepare backend configuration
         BACKEND_S3_KEY="rosa/${CLUSTER_NAME}/terraform.tfstate"  # Cluster-specific key
         echo "  S3 State Location: s3://${TERRAFORM_STATE_S3_BUCKET}/${BACKEND_S3_KEY}"
@@ -468,7 +478,13 @@ spec:
         REDIS_ENDPOINT=$(terraform output -raw redis_endpoint 2>/dev/null || echo "")
         if [[ -n "${REDIS_ENDPOINT}" ]] && [[ "${REDIS_ENDPOINT}" != "" ]]; then
           REDIS_PORT=$(terraform output -raw redis_port 2>/dev/null || echo '6379')
-          REDIS_AUTH_TOKEN=$(terraform output -raw redis_auth_token 2>/dev/null || echo '[From AWS Secrets Manager]')
+          # Auth token is sensitive, need to use -json and parse
+          REDIS_AUTH_TOKEN=$(terraform output -json redis_auth_token 2>/dev/null | jq -r '.' || echo '')
+          
+          if [[ -z "${REDIS_AUTH_TOKEN}" ]]; then
+            echo "⚠️  Warning: Could not retrieve Redis auth token from Terraform"
+            REDIS_AUTH_TOKEN="[Not Available]"
+          fi
           
           echo ""
           echo "=========================================="
