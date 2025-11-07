@@ -893,25 +893,15 @@ rosa-quay-wait-http-ready:  ## Wait for Quay registry HTTP service to be ready o
 rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, registry, and trust configuration
 	$(call required-environment-variables,CLUSTER_NAME S3_BUCKET_NAME S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
 	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
-	@echo "🎯 Starting complete ROSA Quay deployment..."
-	@S3_HOST_DEFAULT=$${S3_HOST:-s3.$${S3_REGION}.amazonaws.com}; \
-	echo "Using S3 host: $$S3_HOST_DEFAULT"; \
-	echo "Using kubeconfig: $${KUBECONFIG:-/root/.kube/config}"; \
-	export KUBECONFIG="$${KUBECONFIG:-/root/.kube/config}"; \
-	export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"; \
-	export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"; \
-	ansible-playbook ansible/quay-deploy.yml \
-		-i ansible/inventory.yml \
-		-e platform=rosa \
-		-e cluster_name="${CLUSTER_NAME}" \
-		-e s3_bucket_name="${S3_BUCKET_NAME}" \
-		-e s3_region="${S3_REGION}" \
-		-e s3_host="$$S3_HOST_DEFAULT" \
-		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
-		-e quay_admin_email="${QUAY_ADMIN_EMAIL}" \
-		-e aws_access_key_id="${AWS_ACCESS_KEY_ID}" \
-		-e aws_secret_access_key="${AWS_SECRET_ACCESS_KEY}"
-	@echo "✅ ROSA Quay deployment completed"
+	@KUBECONFIG="${KUBECONFIG}" \
+	CLUSTER_NAME="${CLUSTER_NAME}" \
+	S3_BUCKET_NAME="${S3_BUCKET_NAME}" \
+	S3_REGION="${S3_REGION}" \
+	AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+	AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+	QUAY_ADMIN_PASSWORD="${QUAY_ADMIN_PASSWORD}" \
+	QUAY_ADMIN_EMAIL="${QUAY_ADMIN_EMAIL}" \
+	ansible/rosa-quay-deploy.sh
 
 .PHONY: rosa-quay-info
 rosa-quay-info:  ## Get ROSA Quay registry connection information
