@@ -203,7 +203,7 @@ spec:
           echo "📋 Successfully parsed credentials from JSON"
           echo "Admin Username: ${ADMIN_USERNAME}"
           if [[ -n "${ADMIN_PASSWORD}" ]]; then
-            echo "Admin Password: [HIDDEN - Length: ${#ADMIN_PASSWORD}]"
+            echo "Admin Password: ${ADMIN_PASSWORD}"
           fi
         else
           echo "⚠️  Could not get JSON credentials, using defaults"
@@ -216,7 +216,7 @@ spec:
         
         if [[ -n "${ADMIN_PASSWORD}" ]] && [[ "${ADMIN_PASSWORD}" != "null" ]] && [[ "${ADMIN_PASSWORD}" != "empty" ]]; then
           echo "🔐 Attempting login with admin credentials (with retry logic for ROSA HCP)..."
-          echo "Admin Password: [HIDDEN - Length: ${#ADMIN_PASSWORD}]"
+          echo "Admin Password: ${ADMIN_PASSWORD}"
           
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo ""

@@ -24,8 +24,8 @@
         bucket_name: "{{ s3_bucket_name | default('') }}"
         region: "{{ s3_region | default('us-east-1') }}"
         host: "{{ s3_host | default('s3.amazonaws.com') }}"
-        access_key: "{{ aws_access_key_id | default('') }}"
-        secret_key: "{{ aws_secret_access_key | default('') }}"
+        access_key: "{{ aws_access_key_id | default(lookup('env', 'AWS_ACCESS_KEY_ID')) | default('') }}"
+        secret_key: "{{ aws_secret_access_key | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) | default('') }}"
 
     # Quay configuration
     quay:
