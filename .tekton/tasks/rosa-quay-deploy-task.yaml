@@ -157,11 +157,18 @@ spec:
           exit 1
         fi
         echo "✅ Found kubeconfig file"
+        echo "📍 Kubeconfig path: ${KUBECONFIG}"
 
-        # Verify we can access the cluster
-        echo "🔍 Verifying ROSA cluster access..."
+        # Verify we can access the cluster with the service account
+        echo "🔍 Verifying ROSA cluster access with cluster-admin-sa..."
+        if ! oc whoami; then
+          echo "❌ Cannot authenticate with kubeconfig"
+          exit 1
+        fi
+        
         if oc get nodes 2>/dev/null; then
           echo "✅ Cluster access confirmed"
+          oc whoami
         else
           echo "❌ Cannot access cluster - authentication required"
           echo "🔍 This is expected in pipeline environments where OAuth tokens are not available"
@@ -173,11 +180,23 @@ spec:
           exit 0
         fi
 
+        # Verify the service account has the necessary permissions
+        echo "🔍 Verifying service account permissions..."
+        if oc auth can-i '*' '*' --all-namespaces; then
+          echo "✅ Service account has cluster-admin permissions"
+        else
+          echo "⚠️  Service account may have limited permissions"
+        fi
+
         # Step 1: Complete ROSA Quay deployment with S3 storage
         echo ""
         echo "Step 1/4: Deploying Quay registry with S3 storage..."
-        if ! make rosa-quay-deploy-complete; then
+        echo "📍 Using KUBECONFIG: ${KUBECONFIG}"
+        
+        # Ensure KUBECONFIG is available to make/ansible
+        if ! KUBECONFIG="${KUBECONFIG}" make rosa-quay-deploy-complete; then
             echo "❌ ROSA Quay deployment failed"
+            echo "📋 Check the ansible playbook logs above for details"
             exit 1
         fi
 
