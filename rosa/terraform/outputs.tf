@@ -97,9 +97,15 @@ output "redis_port" {
   value       = var.deploy_redis ? try(aws_elasticache_cluster.redis[0].cache_nodes[0].port, 0) : 0
 }
 
+output "redis_auth_token" {
+  description = "Redis authentication token"
+  value       = var.deploy_redis ? try(random_password.redis_auth_token[0].result, "") : ""
+  sensitive   = true
+}
+
 output "redis_connection_string" {
-  description = "Redis connection string"
-  value       = var.deploy_redis ? try("redis://${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}", "") : ""
+  description = "Redis connection string (auth token not included, use rediss:// for TLS)"
+  value       = var.deploy_redis ? try("rediss://:[AUTH_TOKEN]@${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}/0", "") : ""
 }
 
 ###########################################
