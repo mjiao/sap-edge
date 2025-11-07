@@ -908,7 +908,9 @@ rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, re
 		-e s3_region="${S3_REGION}" \
 		-e s3_host="$$S3_HOST_DEFAULT" \
 		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
-		-e quay_admin_email="${QUAY_ADMIN_EMAIL}"
+		-e quay_admin_email="${QUAY_ADMIN_EMAIL}" \
+		-e aws_access_key_id="${AWS_ACCESS_KEY_ID}" \
+		-e aws_secret_access_key="${AWS_SECRET_ACCESS_KEY}"
 	@echo "✅ ROSA Quay deployment completed"
 
 .PHONY: rosa-quay-info
