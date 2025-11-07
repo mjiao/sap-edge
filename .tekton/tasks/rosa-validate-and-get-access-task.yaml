@@ -472,6 +472,12 @@ spec:
         else
           echo ""
           echo "ℹ️  PostgreSQL (RDS) not deployed"
+          echo ""
+          echo "⚠️  Troubleshooting:"
+          echo "   1. Check terraform.tfvars above - is deploy_postgres = true?"
+          echo "   2. Check Terraform state: terraform state list | grep postgres"
+          echo "   3. If state shows postgres but output is empty, resource may have failed"
+          echo "   4. To force recreation: terraform destroy -target=aws_db_instance.postgres && terraform apply"
         fi
         
         # Redis Info
@@ -483,7 +489,12 @@ spec:
           
           if [[ -z "${REDIS_AUTH_TOKEN}" ]]; then
             echo "⚠️  Warning: Could not retrieve Redis auth token from Terraform"
-            REDIS_AUTH_TOKEN="[Not Available]"
+            echo "ℹ️  This Redis was created without authentication in a previous run"
+            echo "ℹ️  To add authentication:"
+            echo "     1. Destroy existing Redis: terraform destroy -target=aws_elasticache_cluster.redis"
+            echo "     2. Re-apply: terraform apply"
+            echo "     3. New Redis will have auth_token generated automatically"
+            REDIS_AUTH_TOKEN="[Not Available - Old Redis has no auth]"
           fi
           
           echo ""
