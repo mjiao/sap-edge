@@ -323,29 +323,29 @@ spec:
           # Extract cluster name from URL (remove https://)
           CLUSTER_NAME_FROM_URL="${API_SERVER_URL#https://}"
           
-          cat > "${OUTPUT_KUBECONFIG_FILE}" << KUBE_EOF
-apiVersion: v1
-kind: Config
-clusters:
-- name: ${CLUSTER_NAME_FROM_URL}
-  cluster:
-    insecure-skip-tls-verify: true
-    server: ${API_SERVER_URL}
-
-users:
-- name: ${SERVICE_ACCOUNT_NAME}
-  user:
-    token: ${TOKEN}
-
-contexts:
-- name: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
-  context:
-    cluster: ${CLUSTER_NAME_FROM_URL}
-    namespace: ${NAMESPACE}
-    user: ${SERVICE_ACCOUNT_NAME}
-
-current-context: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
-KUBE_EOF
+          cat > "${OUTPUT_KUBECONFIG_FILE}" <<- KUBE_EOF
+		apiVersion: v1
+		kind: Config
+		clusters:
+		- name: ${CLUSTER_NAME_FROM_URL}
+		  cluster:
+		    insecure-skip-tls-verify: true
+		    server: ${API_SERVER_URL}
+		
+		users:
+		- name: ${SERVICE_ACCOUNT_NAME}
+		  user:
+		    token: ${TOKEN}
+		
+		contexts:
+		- name: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
+		  context:
+		    cluster: ${CLUSTER_NAME_FROM_URL}
+		    namespace: ${NAMESPACE}
+		    user: ${SERVICE_ACCOUNT_NAME}
+		
+		current-context: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}
+		KUBE_EOF
           
           echo "   ✅ Kubeconfig file created: ${OUTPUT_KUBECONFIG_FILE}"
           
