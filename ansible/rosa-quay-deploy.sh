@@ -42,7 +42,7 @@ fi
 export AWS_ACCESS_KEY_ID
 export AWS_SECRET_ACCESS_KEY
 
-# Run ansible playbook
+# Run ansible playbook with explicit kubeconfig
 ansible-playbook "$(dirname "$0")/quay-deploy.yml" \
   -i "$(dirname "$0")/inventory.yml" \
   -e "platform=rosa" \
@@ -51,7 +51,8 @@ ansible-playbook "$(dirname "$0")/quay-deploy.yml" \
   -e "s3_region=${S3_REGION}" \
   -e "s3_host=${S3_HOST}" \
   -e "quay_admin_password=${QUAY_ADMIN_PASSWORD}" \
-  -e "quay_admin_email=${QUAY_ADMIN_EMAIL}"
+  -e "quay_admin_email=${QUAY_ADMIN_EMAIL}" \
+  -e "kubeconfig_path=${KUBECONFIG}"
 
 echo "✅ ROSA Quay deployment completed"
 

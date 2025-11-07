@@ -893,15 +893,7 @@ rosa-quay-wait-http-ready:  ## Wait for Quay registry HTTP service to be ready o
 rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, registry, and trust configuration
 	$(call required-environment-variables,CLUSTER_NAME S3_BUCKET_NAME S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
 	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
-	@KUBECONFIG="${KUBECONFIG}" \
-	CLUSTER_NAME="${CLUSTER_NAME}" \
-	S3_BUCKET_NAME="${S3_BUCKET_NAME}" \
-	S3_REGION="${S3_REGION}" \
-	AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-	AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
-	QUAY_ADMIN_PASSWORD="${QUAY_ADMIN_PASSWORD}" \
-	QUAY_ADMIN_EMAIL="${QUAY_ADMIN_EMAIL}" \
-	ansible/rosa-quay-deploy.sh
+	@ansible/rosa-quay-deploy.sh
 
 .PHONY: rosa-quay-info
 rosa-quay-info:  ## Get ROSA Quay registry connection information
