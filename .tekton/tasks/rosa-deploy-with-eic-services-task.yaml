@@ -312,34 +312,44 @@ spec:
 
         # Create terraform.tfvars
         echo "📝 Creating terraform.tfvars..."
-        cat > terraform.tfvars <<- TFVARS_EOF
-		# AWS Configuration
-		aws_region = "${AWS_REGION}"
-		
-		# VPC Configuration
-		vpc_name        = "${CLUSTER_NAME}-vpc"
-		vpc_cidr        = "10.0.0.0/16"
-		public_subnets  = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
-		private_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
-		
-		# ROSA Cluster Configuration
-		cluster_name     = "${CLUSTER_NAME}"
-		rosa_version     = "${ROSA_VERSION}"
-		redhat_ocm_token = "${REDHAT_OCM_TOKEN}"
-		
-		# AWS Services Configuration
-		deploy_postgres         = ${DEPLOY_POSTGRES_TF}
-		deploy_redis            = ${DEPLOY_REDIS_TF}
-		deploy_quay             = ${DEPLOY_QUAY_TF}
-		postgres_admin_password = "${POSTGRES_ADMIN_PASSWORD}"
-		
-		# Tags
-		tags = {
-		  Environment = "pipeline"
-		  ManagedBy   = "tekton"
-		  Cluster     = "${CLUSTER_NAME}"
-		}
-		TFVARS_EOF
+        cat > terraform.tfvars << 'TFVARS_EOF'
+# AWS Configuration
+aws_region = "${AWS_REGION}"
+
+# VPC Configuration
+vpc_name        = "${CLUSTER_NAME}-vpc"
+vpc_cidr        = "10.0.0.0/16"
+public_subnets  = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+private_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+# ROSA Cluster Configuration
+cluster_name     = "${CLUSTER_NAME}"
+rosa_version     = "${ROSA_VERSION}"
+redhat_ocm_token = "${REDHAT_OCM_TOKEN}"
+
+# AWS Services Configuration
+deploy_postgres         = ${DEPLOY_POSTGRES_TF}
+deploy_redis            = ${DEPLOY_REDIS_TF}
+deploy_quay             = ${DEPLOY_QUAY_TF}
+postgres_admin_password = "${POSTGRES_ADMIN_PASSWORD}"
+
+# Tags
+tags = {
+  Environment = "pipeline"
+  ManagedBy   = "tekton"
+  Cluster     = "${CLUSTER_NAME}"
+}
+TFVARS_EOF
+        
+        # Substitute variables (since we used 'TFVARS_EOF' to prevent expansion)
+        sed -i "s|\${AWS_REGION}|${AWS_REGION}|g" terraform.tfvars
+        sed -i "s|\${CLUSTER_NAME}|${CLUSTER_NAME}|g" terraform.tfvars
+        sed -i "s|\${ROSA_VERSION}|${ROSA_VERSION}|g" terraform.tfvars
+        sed -i "s|\${REDHAT_OCM_TOKEN}|${REDHAT_OCM_TOKEN}|g" terraform.tfvars
+        sed -i "s|\${DEPLOY_POSTGRES_TF}|${DEPLOY_POSTGRES_TF}|g" terraform.tfvars
+        sed -i "s|\${DEPLOY_REDIS_TF}|${DEPLOY_REDIS_TF}|g" terraform.tfvars
+        sed -i "s|\${DEPLOY_QUAY_TF}|${DEPLOY_QUAY_TF}|g" terraform.tfvars
+        sed -i "s|\${POSTGRES_ADMIN_PASSWORD}|${POSTGRES_ADMIN_PASSWORD}|g" terraform.tfvars
         
         echo "✅ terraform.tfvars created"
         echo "📋 Contents:"
