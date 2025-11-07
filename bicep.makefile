@@ -896,8 +896,10 @@ rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, re
 	@echo "🎯 Starting complete ROSA Quay deployment..."
 	@S3_HOST_DEFAULT=$${S3_HOST:-s3.$${S3_REGION}.amazonaws.com}; \
 	echo "Using S3 host: $$S3_HOST_DEFAULT"; \
-	AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
-	AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+	echo "Using kubeconfig: $${KUBECONFIG:-/root/.kube/config}"; \
+	export KUBECONFIG="$${KUBECONFIG:-/root/.kube/config}"; \
+	export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"; \
+	export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"; \
 	ansible-playbook ansible/quay-deploy.yml \
 		-i ansible/inventory.yml \
 		-e platform=rosa \
