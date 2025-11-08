@@ -27,7 +27,7 @@
             configBundleSecret: config-bundle-secret
             components:
               - kind: clair
-                managed: true
+                managed: false  # Disabled to save resources (vulnerability scanning)
               - kind: postgres
                 managed: true
               - kind: objectstorage
@@ -47,7 +47,7 @@
               - kind: quay
                 managed: true
               - kind: clairpostgres
-                managed: true
+                managed: false  # Disabled (not needed without clair)
         state: present
         kubeconfig: "{{ kubeconfig_path | default(omit) }}"
       when: existing_registry.resources | length == 0

@@ -11,7 +11,7 @@ spec:
   configBundleSecret: config-bundle-secret
   components:
     - kind: clair
-      managed: true
+      managed: false  # Disabled to save resources (vulnerability scanning)
     - kind: postgres
       managed: true
     - kind: objectstorage
@@ -31,4 +31,4 @@ spec:
     - kind: quay
       managed: true
     - kind: clairpostgres
-      managed: true
+      managed: false  # Disabled (not needed without clair)
