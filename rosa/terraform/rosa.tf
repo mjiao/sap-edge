@@ -14,6 +14,7 @@ module "rosa-hcp" {
   aws_subnet_ids         = concat(module.vpc[0].private_subnets, module.vpc[0].public_subnets)
   aws_availability_zones = slice(data.aws_availability_zones.available.names, 0, 3)
   replicas               = 3
+  compute_machine_type   = var.compute_machine_type
   
   # Create account-wide and operator IAM roles
   create_account_roles  = true
