@@ -450,7 +450,7 @@ spec:
           echo "  Port: ${POSTGRES_PORT}"
           echo "  Database: ${POSTGRES_DB}"
           echo "  Username: ${POSTGRES_USER}"
-          echo "  Password: [From Secret: POSTGRES_ADMIN_PASSWORD]"
+          echo "  Password: ${POSTGRES_ADMIN_PASSWORD}"
           echo "  SSL Mode: require"
           echo ""
           
@@ -484,37 +484,57 @@ spec:
         REDIS_ENDPOINT=$(terraform output -raw redis_endpoint 2>/dev/null || echo "")
         if [[ -n "${REDIS_ENDPOINT}" ]] && [[ "${REDIS_ENDPOINT}" != "" ]]; then
           REDIS_PORT=$(terraform output -raw redis_port 2>/dev/null || echo '6379')
-          # Auth token is sensitive, need to use -json and parse
-          REDIS_AUTH_TOKEN=$(terraform output -json redis_auth_token 2>/dev/null | jq -r '.' || echo '')
           
-          if [[ -z "${REDIS_AUTH_TOKEN}" ]]; then
-            echo "⚠️  Warning: Could not retrieve Redis auth token from Terraform"
-            echo "ℹ️  This Redis was created without authentication in a previous run"
-            echo "ℹ️  To add authentication:"
-            echo "     1. Destroy existing Redis: terraform destroy -target=aws_elasticache_cluster.redis"
-            echo "     2. Re-apply: terraform apply"
-            echo "     3. New Redis will have auth_token generated automatically"
-            REDIS_AUTH_TOKEN="[Not Available - Old Redis has no auth]"
-          fi
+          # Auth token is sensitive, need to use -json and parse
+          echo "📋 Retrieving Redis auth token from Terraform..."
+          REDIS_AUTH_TOKEN_RAW=$(terraform output -json redis_auth_token 2>/dev/null || echo '""')
+          REDIS_AUTH_TOKEN=$(echo "${REDIS_AUTH_TOKEN_RAW}" | jq -r '.' 2>/dev/null || echo '')
           
           echo ""
           echo "=========================================="
           echo "🔴 Redis (ElastiCache) Access Details"
           echo "=========================================="
           echo ""
-          echo "Connection Information:"
-          echo "  Host: ${REDIS_ENDPOINT}"
-          echo "  Port: ${REDIS_PORT}"
-          echo "  Auth Token: ${REDIS_AUTH_TOKEN}"
-          echo "  TLS: Enabled (required)"
-          echo ""
           
-          echo "Test Connection from Pod:"
-          echo "  oc run -it --rm redis-test --image=redis:7 --restart=Never -- \\"
-          echo "    redis-cli -h ${REDIS_ENDPOINT} -p ${REDIS_PORT} --tls -a '${REDIS_AUTH_TOKEN}' PING"
-          echo ""
-          echo "Connection String:"
-          echo "  rediss://:${REDIS_AUTH_TOKEN}@${REDIS_ENDPOINT}:${REDIS_PORT}/0"
+          if [[ -z "${REDIS_AUTH_TOKEN}" ]] || [[ "${REDIS_AUTH_TOKEN}" == "null" ]]; then
+            echo "⚠️  WARNING: Could not retrieve Redis auth token from Terraform"
+            echo ""
+            echo "This means Redis was created WITHOUT authentication."
+            echo "For security, Redis should have authentication enabled."
+            echo ""
+            echo "🔧 To fix this:"
+            echo "  1. Destroy existing Redis:"
+            echo "     terraform destroy -target=aws_elasticache_cluster.redis"
+            echo "  2. Re-apply:"
+            echo "     terraform apply"
+            echo "  3. New Redis will have auth_token automatically generated"
+            echo ""
+            echo "Connection Information (NO AUTH - INSECURE):"
+            echo "  Host: ${REDIS_ENDPOINT}"
+            echo "  Port: ${REDIS_PORT}"
+            echo "  Auth Token: [NONE - Redis created without authentication]"
+            echo "  TLS: Enabled (required)"
+            echo ""
+            echo "Test Connection from Pod (NO AUTH):"
+            echo "  oc run -it --rm redis-test --image=redis:7 --restart=Never -- \\"
+            echo "    redis-cli -h ${REDIS_ENDPOINT} -p ${REDIS_PORT} --tls PING"
+            echo ""
+            echo "Connection String (NO AUTH):"
+            echo "  rediss://${REDIS_ENDPOINT}:${REDIS_PORT}/0"
+          else
+            echo "Connection Information:"
+            echo "  Host: ${REDIS_ENDPOINT}"
+            echo "  Port: ${REDIS_PORT}"
+            echo "  Auth Token: ${REDIS_AUTH_TOKEN}"
+            echo "  TLS: Enabled (required)"
+            echo ""
+            echo "Test Connection from Pod:"
+            echo "  oc run -it --rm redis-test --image=redis:7 --restart=Never -- \\"
+            echo "    redis-cli -h ${REDIS_ENDPOINT} -p ${REDIS_PORT} --tls -a '${REDIS_AUTH_TOKEN}' PING"
+            echo ""
+            echo "Connection String:"
+            echo "  rediss://:${REDIS_AUTH_TOKEN}@${REDIS_ENDPOINT}:${REDIS_PORT}/0"
+          fi
           echo "=========================================="
         else
           echo ""
