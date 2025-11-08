@@ -34,6 +34,17 @@ variable "rosa_version" {
   default     = "4.14.9"
 }
 
+variable "compute_machine_type" {
+  type        = string
+  description = "AWS instance type for ROSA worker nodes (e.g., m5.xlarge, m5.2xlarge)"
+  default     = "m5.2xlarge"
+  
+  validation {
+    condition     = can(regex("^[a-z][0-9][a-z]?\\.[a-z0-9]+$", var.compute_machine_type))
+    error_message = "Compute machine type must be a valid AWS instance type (e.g., m5.2xlarge)."
+  }
+}
+
 variable "redhat_ocm_token" {
   description = "Red Hat OpenShift Cluster Manager token"
   type        = string

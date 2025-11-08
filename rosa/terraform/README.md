@@ -162,6 +162,9 @@ export TF_VAR_redis_node_type="cache.t3.micro"
    vpc_name      = "my-rosa-vpc"
    rosa_version  = "4.14.9"
    
+   # Worker node instance type (default: m5.2xlarge - 8 vCPU, 32 GB RAM)
+   compute_machine_type = "m5.2xlarge"
+   
    # Optional: AWS Services
    deploy_postgres = true
    deploy_redis    = true
