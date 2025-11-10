@@ -313,7 +313,7 @@ spec:
             annotations:
               kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}
           type: kubernetes.io/service-account-token
-          EOF
+EOF
             echo "   ✅ Secret created"
           else
             echo "   ℹ️  Secret '${TOKEN_SECRET_NAME}' already exists, reusing it"
