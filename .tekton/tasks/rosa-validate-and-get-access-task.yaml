@@ -298,10 +298,47 @@ spec:
           oc adm policy add-cluster-role-to-user cluster-admin -z "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
           echo "   ✅ Cluster-admin role granted"
           
-          # Step 3: Get cluster info and extract token from Service Account Secret
-          echo "3. Fetching cluster server URL and extracting token from Service Account Secret..."
+          # Step 3: Create permanent token Secret for the Service Account
+          echo "3. Creating permanent token Secret for Service Account..."
+          TOKEN_SECRET_NAME="${SERVICE_ACCOUNT_NAME}-token"
           
-          # Get API server URL
+          # Check if token secret already exists
+          if ! oc get secret "${TOKEN_SECRET_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+            echo "   Creating Secret '${TOKEN_SECRET_NAME}'..."
+            cat <<EOF | oc apply -n "${NAMESPACE}" -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: ${TOKEN_SECRET_NAME}
+            annotations:
+              kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}
+          type: kubernetes.io/service-account-token
+          EOF
+            echo "   ✅ Secret created"
+          else
+            echo "   ℹ️  Secret '${TOKEN_SECRET_NAME}' already exists, reusing it"
+          fi
+          
+          # Step 4: Wait for Kubernetes to populate the token in the Secret
+          echo "4. Waiting for Kubernetes to populate the token in the Secret..."
+          for i in {1..30}; do
+            TOKEN=$(oc get secret "${TOKEN_SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
+            if [[ -n "${TOKEN}" ]]; then
+              echo "   ✅ Token populated by Kubernetes (length: ${#TOKEN} characters)"
+              break
+            fi
+            echo "   Waiting for token to be populated (attempt ${i}/30)..."
+            sleep 2
+          done
+          
+          if [[ -z "${TOKEN}" ]]; then
+            echo "   ❌ Token was not populated in Secret after 60 seconds"
+            echo "   This may indicate an issue with the Service Account or cluster configuration"
+            exit 1
+          fi
+          
+          # Step 5: Get cluster API server URL
+          echo "5. Fetching cluster server URL..."
           API_SERVER_URL=$(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}')
           if [[ -z "${API_SERVER_URL}" ]]; then
             echo "   ❌ Could not retrieve API server URL"
@@ -309,41 +346,8 @@ spec:
           fi
           echo "   API Server: ${API_SERVER_URL}"
           
-          # Wait for Service Account token secret to be created
-          echo "   Waiting for Service Account token secret..."
-          for i in {1..30}; do
-            SECRET_NAME=$(oc get sa "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" -o jsonpath='{.secrets[0].name}' 2>/dev/null || echo "")
-            if [[ -n "${SECRET_NAME}" ]] && [[ "${SECRET_NAME}" != "null" ]]; then
-              echo "   ✅ Found secret: ${SECRET_NAME}"
-              break
-            fi
-            echo "   Waiting for secret to be created (attempt ${i}/30)..."
-            sleep 2
-          done
-          
-          if [[ -z "${SECRET_NAME}" ]] || [[ "${SECRET_NAME}" == "null" ]]; then
-            echo "   ⚠️  No secret found, generating token manually..."
-            TOKEN=$(oc create token "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" --duration=0s)
-          else
-            # Extract token from the Service Account's secret
-            echo "   Extracting token from secret..."
-            TOKEN=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
-            
-            # If no token in secret, try ca.crt (some clusters use different secret format)
-            if [[ -z "${TOKEN}" ]]; then
-              echo "   No token in secret, generating one..."
-              TOKEN=$(oc create token "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" --duration=0s)
-            fi
-          fi
-          
-          if [[ -z "${TOKEN}" ]]; then
-            echo "   ❌ Could not get or generate token for Service Account"
-            exit 1
-          fi
-          echo "   ✅ Token retrieved (length: ${#TOKEN} characters)"
-          
-          # Step 4: Create the kubeconfig file
-          echo "4. Building the kubeconfig file..."
+          # Step 6: Create the kubeconfig file
+          echo "6. Building the kubeconfig file..."
           
           # Extract cluster name from URL (remove https://)
           CLUSTER_NAME_FROM_URL="${API_SERVER_URL#https://}"
