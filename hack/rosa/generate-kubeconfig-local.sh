@@ -55,15 +55,16 @@ TOKEN_SECRET_NAME="${SERVICE_ACCOUNT_NAME}-token"
 # Check if token secret already exists
 if ! oc get secret "${TOKEN_SECRET_NAME}" -n "${NAMESPACE}" &> /dev/null; then
   echo "   Creating Secret '${TOKEN_SECRET_NAME}'..."
-  cat <<EOF | oc apply -n "${NAMESPACE}" -f -
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ${TOKEN_SECRET_NAME}
-  annotations:
-    kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}
-type: kubernetes.io/service-account-token
-EOF
+  # Create the Secret using echo (more reliable than heredoc)
+  {
+    echo "apiVersion: v1"
+    echo "kind: Secret"
+    echo "metadata:"
+    echo "  name: ${TOKEN_SECRET_NAME}"
+    echo "  annotations:"
+    echo "    kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}"
+    echo "type: kubernetes.io/service-account-token"
+  } | oc apply -n "${NAMESPACE}" -f -
   echo "   ✅ Secret created"
 else
   echo "   ℹ️  Secret '${TOKEN_SECRET_NAME}' already exists, reusing it"
