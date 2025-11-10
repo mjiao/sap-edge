@@ -52,6 +52,116 @@ terraform plan
 
 ---
 
+### `generate-kubeconfig-local.sh`
+
+Generate a long-lived kubeconfig file locally using a Service Account with permanent token.
+
+**Usage:**
+
+```bash
+# Step 1: Login to your ROSA cluster first
+rosa login --token=<your-red-hat-ocm-token>
+oc login https://api.sap-eic-rosa.xxx.openshiftapps.com --username cluster-admin --password <admin-password>
+
+# Step 2: Generate the kubeconfig
+./hack/rosa/generate-kubeconfig-local.sh
+```
+
+**What it does:**
+- Creates a Service Account (`cluster-admin-sa`) in `default` namespace
+- Grants `cluster-admin` role to the Service Account
+- Creates a permanent token Secret (type: `kubernetes.io/service-account-token`)
+- Extracts the token from the Secret
+- Builds a kubeconfig file with the permanent token
+- Saves kubeconfig to `./kubeconfig`
+
+**Why use this instead of `oc login`?**
+- ✅ **Permanent token** - Never expires (unlike `oc login` sessions)
+- ✅ **No interactive login** - Perfect for automation/scripts
+- ✅ **Stable kubeconfig** - Same token every time (idempotent)
+- ✅ **CI/CD friendly** - Can be used in pipelines and automation
+- ✅ **No OAuth dance** - Direct token-based authentication
+
+**Output:**
+
+```bash
+🔑 Generating long-lived kubeconfig for ROSA cluster...
+============================================
+
+✅ Already logged in as: cluster-admin
+
+1. Creating Service Account 'cluster-admin-sa' in namespace 'default'...
+   ✅ Service Account created
+
+2. Granting 'cluster-admin' role to the Service Account...
+   ✅ Cluster-admin role granted
+
+3. Creating permanent token Secret for Service Account...
+   ✅ Secret created
+
+4. Waiting for Kubernetes to populate the token in the Secret...
+   ✅ Token populated by Kubernetes (length: 1234 characters)
+
+5. Fetching cluster server URL...
+   API Server: https://api.sap-eic-rosa.xxx.openshiftapps.com:6443
+
+6. Building the kubeconfig file...
+   ✅ Kubeconfig file created: kubeconfig
+
+📄 Kubeconfig Summary:
+========================
+File: kubeconfig
+Cluster: api.sap-eic-rosa.xxx.openshiftapps.com:6443
+User: cluster-admin-sa
+Namespace: default
+Token Length: 1234 characters
+========================
+
+🔍 Verifying kubeconfig...
+system:serviceaccount:default:cluster-admin-sa
+✅ Kubeconfig is valid and working!
+
+You can now use this kubeconfig:
+  export KUBECONFIG=$(pwd)/kubeconfig
+  oc get nodes
+
+✅ Done!
+```
+
+**Using the generated kubeconfig:**
+
+```bash
+# Use the kubeconfig
+export KUBECONFIG=./kubeconfig
+oc whoami
+# Output: system:serviceaccount:default:cluster-admin-sa
+
+# Verify access
+oc get nodes
+oc get pods -A
+
+# The token is permanent - kubeconfig works forever! ✅
+```
+
+**Idempotent behavior:**
+- Running the script multiple times is safe
+- If Service Account already exists → reuses it
+- If Secret already exists → extracts same token
+- Same kubeconfig every time! ✅
+
+**Cleanup (if needed):**
+
+```bash
+# Delete the Service Account and Secret
+oc delete sa cluster-admin-sa -n default
+oc delete secret cluster-admin-sa-token -n default
+
+# Regenerate with fresh token
+./hack/rosa/generate-kubeconfig-local.sh
+```
+
+---
+
 ### `cleanup-rosa-resources.sh`
 
 Manually delete ROSA cluster and all related AWS resources.
