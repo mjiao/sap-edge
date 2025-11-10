@@ -298,8 +298,8 @@ spec:
           oc adm policy add-cluster-role-to-user cluster-admin -z "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
           echo "   ✅ Cluster-admin role granted"
           
-          # Step 3: Get cluster info and generate token
-          echo "3. Fetching cluster server URL and generating non-expiring token..."
+          # Step 3: Get cluster info and extract token from Service Account Secret
+          echo "3. Fetching cluster server URL and extracting token from Service Account Secret..."
           
           # Get API server URL
           API_SERVER_URL=$(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}')
@@ -309,13 +309,38 @@ spec:
           fi
           echo "   API Server: ${API_SERVER_URL}"
           
-          # Generate non-expiring token
-          TOKEN=$(oc create token "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" --duration=0s)
+          # Wait for Service Account token secret to be created
+          echo "   Waiting for Service Account token secret..."
+          for i in {1..30}; do
+            SECRET_NAME=$(oc get sa "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" -o jsonpath='{.secrets[0].name}' 2>/dev/null || echo "")
+            if [[ -n "${SECRET_NAME}" ]] && [[ "${SECRET_NAME}" != "null" ]]; then
+              echo "   ✅ Found secret: ${SECRET_NAME}"
+              break
+            fi
+            echo "   Waiting for secret to be created (attempt ${i}/30)..."
+            sleep 2
+          done
+          
+          if [[ -z "${SECRET_NAME}" ]] || [[ "${SECRET_NAME}" == "null" ]]; then
+            echo "   ⚠️  No secret found, generating token manually..."
+            TOKEN=$(oc create token "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" --duration=0s)
+          else
+            # Extract token from the Service Account's secret
+            echo "   Extracting token from secret..."
+            TOKEN=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
+            
+            # If no token in secret, try ca.crt (some clusters use different secret format)
+            if [[ -z "${TOKEN}" ]]; then
+              echo "   No token in secret, generating one..."
+              TOKEN=$(oc create token "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" --duration=0s)
+            fi
+          fi
+          
           if [[ -z "${TOKEN}" ]]; then
-            echo "   ❌ Could not generate token for Service Account"
+            echo "   ❌ Could not get or generate token for Service Account"
             exit 1
           fi
-          echo "   ✅ Non-expiring token generated (length: ${#TOKEN} characters)"
+          echo "   ✅ Token retrieved (length: ${#TOKEN} characters)"
           
           # Step 4: Create the kubeconfig file
           echo "4. Building the kubeconfig file..."
