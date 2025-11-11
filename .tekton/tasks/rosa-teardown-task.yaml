@@ -46,7 +46,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: $(params.redhatTokenSecretName)
-              key: token
+              key: REDHAT_OCM_TOKEN
       script: |
         #!/usr/bin/env bash
         set -euo pipefail

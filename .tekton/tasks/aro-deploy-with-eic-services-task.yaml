@@ -143,7 +143,7 @@ spec:
             echo "✅ Cluster already exists and is ready!"
             echo "ℹ️  Assuming all Azure services (PostgreSQL, Redis, Quay storage) were deployed with the cluster"
             echo "✅ Skipping deployment - cluster and services already exist!"
-            exit 0
+              exit 0
           elif [[ "$CLUSTER_STATUS" == "Creating" || "$CLUSTER_STATUS" == "Updating" ]]; then
             echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
             if make aro-wait-for-ready; then

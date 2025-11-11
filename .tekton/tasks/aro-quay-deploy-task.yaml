@@ -154,7 +154,7 @@ spec:
             -o tsv)
         
         # Set container name
-        AZURE_STORAGE_CONTAINER="quay-registry"
+          AZURE_STORAGE_CONTAINER="quay-registry"
         
         export AZURE_STORAGE_ACCOUNT_NAME
         export AZURE_STORAGE_ACCOUNT_KEY
