@@ -75,6 +75,17 @@ spec:
         echo "AWS Region: ${AWS_REGION}"
         echo ""
         
+        # Debug: Check workspace contents
+        echo "🔍 Current working directory: $(pwd)"
+        echo "📂 Workspace contents:"
+        ls -la
+        echo ""
+        if [[ -d "rosa" ]]; then
+          echo "📂 rosa/ directory contents:"
+          ls -la rosa/
+          echo ""
+        fi
+        
         # Install required tools
         echo "📦 Installing required packages..."
         dnf install -y wget unzip jq tar gzip
