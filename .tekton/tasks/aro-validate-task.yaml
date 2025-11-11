@@ -310,6 +310,29 @@ spec:
           echo ""
         fi
         
+        # Create ConfigMap with cluster information for endpoint tests
+        echo ""
+        echo "📋 Creating cluster-info ConfigMap for endpoint tests..."
+        
+        # Get cluster domain and ingress IP
+        CLUSTER_DOMAIN=$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')
+        INGRESS_IP=$(oc get service router-default -n openshift-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        APPS_HOST="sap-eic.apps.${CLUSTER_DOMAIN}"
+        
+        echo "  Cluster Domain: ${CLUSTER_DOMAIN}"
+        echo "  Apps Host: ${APPS_HOST}"
+        echo "  Ingress IP: ${INGRESS_IP}"
+        
+        oc create configmap "cluster-info-aro-${ARO_CLUSTER_NAME}" \
+          --from-literal=cluster-name="${ARO_CLUSTER_NAME}" \
+          --from-literal=cluster-url="${CLUSTER_URL}" \
+          --from-literal=resource-group="${ARO_RESOURCE_GROUP}" \
+          --from-literal=host="${APPS_HOST}" \
+          --from-literal=ingressIP="${INGRESS_IP}" \
+          --dry-run=client -o yaml | oc apply -f -
+        echo "✅ ConfigMap 'cluster-info-aro-${ARO_CLUSTER_NAME}' created successfully!"
+        echo ""
+        
         # Save comprehensive information to files
         {
           echo "ARO Cluster & Azure Services Information"
