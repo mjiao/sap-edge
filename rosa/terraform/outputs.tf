@@ -89,12 +89,12 @@ output "postgres_connection_string" {
 
 output "redis_endpoint" {
   description = "Redis endpoint"
-  value       = var.deploy_redis ? try(aws_elasticache_cluster.redis[0].cache_nodes[0].address, "") : ""
+  value       = var.deploy_redis ? try(aws_elasticache_replication_group.redis[0].primary_endpoint_address, "") : ""
 }
 
 output "redis_port" {
   description = "Redis port"
-  value       = var.deploy_redis ? try(aws_elasticache_cluster.redis[0].cache_nodes[0].port, 0) : 0
+  value       = var.deploy_redis ? try(aws_elasticache_replication_group.redis[0].port, 0) : 0
 }
 
 output "redis_auth_token" {
@@ -105,7 +105,7 @@ output "redis_auth_token" {
 
 output "redis_connection_string" {
   description = "Redis connection string (auth token not included, use rediss:// for TLS)"
-  value       = var.deploy_redis ? try("rediss://:[AUTH_TOKEN]@${aws_elasticache_cluster.redis[0].cache_nodes[0].address}:${aws_elasticache_cluster.redis[0].cache_nodes[0].port}/0", "") : ""
+  value       = var.deploy_redis ? try("rediss://:[AUTH_TOKEN]@${aws_elasticache_replication_group.redis[0].primary_endpoint_address}:${aws_elasticache_replication_group.redis[0].port}/0", "") : ""
 }
 
 ###########################################

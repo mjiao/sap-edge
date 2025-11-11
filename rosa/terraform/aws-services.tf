@@ -165,21 +165,23 @@ resource "random_password" "redis_auth_token" {
   override_special = "!&#$^<>-"
 }
 
-resource "aws_elasticache_cluster" "redis" {
+resource "aws_elasticache_replication_group" "redis" {
   count                      = var.deploy_redis ? 1 : 0
-  cluster_id                 = "${var.cluster_name}-redis"
+  replication_group_id       = "${var.cluster_name}-redis"
+  description                = "Redis replication group for ${var.cluster_name}"
   engine                     = "redis"
   engine_version             = var.redis_engine_version
   node_type                  = var.redis_node_type
-  num_cache_nodes            = 1
+  num_cache_clusters         = 1  # Single node for cost savings
   parameter_group_name       = "default.redis7"
   port                       = 6379
   subnet_group_name          = aws_elasticache_subnet_group.redis[0].name
   security_group_ids         = [aws_security_group.redis[0].id]
+  automatic_failover_enabled = false  # Not needed for single node
   
-  # Enable authentication
-  auth_token                 = random_password.redis_auth_token[0].result
+  # Enable authentication (transit_encryption_enabled must come BEFORE auth_token)
   transit_encryption_enabled = true
+  auth_token                 = random_password.redis_auth_token[0].result
 
   tags = merge(
     var.tags,
