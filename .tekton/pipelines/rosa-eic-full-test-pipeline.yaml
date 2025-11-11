@@ -335,6 +335,25 @@ spec:
 
             Ready for manual teardown approval. The complete EIC infrastructure will be destroyed once approved.
 
+    # Alternative path: Skip tests and go directly to teardown after Quay deployment
+    - name: manual-approval-skip-tests
+      runAfter: [deploy-quay]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+        - name: description
+          value: "Quay deployment completed. Approve to SKIP endpoint tests and tear down ROSA cluster immediately."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '168h'
+
     # Manual approval step before teardown - this will pause the pipeline
     - name: manual-approval-teardown
       runAfter:
@@ -356,7 +375,7 @@ spec:
           value: '168h'
 
     - name: teardown-rosa
-      runAfter: [manual-approval-teardown]
+      runAfter: [manual-approval-teardown, manual-approval-skip-tests]
       taskRef: { name: rosa-teardown }
       params:
         - name: clusterName
