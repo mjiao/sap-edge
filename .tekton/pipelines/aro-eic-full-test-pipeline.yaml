@@ -342,8 +342,22 @@ spec:
         - name: timeout
           value: '168h'
 
+    # Teardown after full test cycle
     - name: teardown-aro
-      runAfter: [manual-approval-teardown, manual-approval-skip-tests]
+      runAfter: [manual-approval-teardown]
+      taskRef: { name: aro-teardown }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Teardown after skipping tests (fast path)
+    - name: teardown-aro-fast
+      runAfter: [manual-approval-skip-tests]
       taskRef: { name: aro-teardown }
       params:
         - name: aroClusterName
