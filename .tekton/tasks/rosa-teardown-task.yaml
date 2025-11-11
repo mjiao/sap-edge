@@ -93,68 +93,60 @@ spec:
         echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
         rosa login --token="${REDHAT_OCM_TOKEN}"
         
-        # Navigate to Terraform directory
-        cd rosa/terraform
-        
-        # Check if Terraform state exists
-        if [[ ! -f "terraform.tfstate" ]] && [[ ! -f ".terraform/terraform.tfstate" ]]; then
-          echo "⚠️  No Terraform state found"
-          echo "🔍 Checking if cluster exists via ROSA CLI..."
-          
-          if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
-            echo "⚠️  Cluster exists but no Terraform state"
-            echo "🗑️ Attempting manual cleanup via ROSA CLI..."
-            rosa delete cluster -c "${CLUSTER_NAME}" --yes || echo "⚠️  Manual deletion initiated"
-          else
-            echo "✅ No cluster found, nothing to delete"
-          fi
-          
+        # Check if cluster exists
+        echo "🔍 Checking if ROSA cluster exists..."
+        if ! rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+          echo "✅ No cluster found with name: ${CLUSTER_NAME}"
+          echo "Nothing to delete!"
           exit 0
         fi
         
-        # Initialize Terraform
-        echo "🔧 Initializing Terraform..."
-        terraform init
+        # Get cluster state
+        CLUSTER_STATE=$(rosa describe cluster -c "${CLUSTER_NAME}" -o json | jq -r '.state')
+        echo "📋 Current cluster state: ${CLUSTER_STATE}"
         
-        # List resources to be destroyed
-        echo ""
-        echo "📋 Resources to be destroyed:"
-        terraform state list || echo "No resources found in state"
-        echo ""
-        
-        # Destroy infrastructure
-        echo "🗑️ Destroying ROSA infrastructure with Terraform..."
-        if terraform destroy -auto-approve; then
-          echo "✅ Terraform destroy completed successfully"
-        else
-          echo "❌ Terraform destroy failed"
-          echo "⚠️  Some resources may need manual cleanup"
+        # Check if already being deleted
+        if [[ "${CLUSTER_STATE}" == "uninstalling" ]]; then
+          echo "⏳ Cluster is already being deleted"
+          echo "Waiting for deletion to complete..."
           
-          # Try to get cluster state
-          if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
-            CLUSTER_STATE=$(rosa describe cluster -c "${CLUSTER_NAME}" -o json | jq -r '.state')
-            echo "Cluster state: ${CLUSTER_STATE}"
-            
-            if [[ "${CLUSTER_STATE}" != "uninstalling" ]]; then
-              echo "🗑️ Attempting manual cluster deletion..."
-              rosa delete cluster -c "${CLUSTER_NAME}" --yes || echo "Manual deletion initiated"
+          # Wait for up to 30 minutes
+          for i in {1..60}; do
+            if ! rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+              echo "✅ Cluster successfully deleted"
+              exit 0
             fi
-          fi
+            echo "⏳ Still deleting... (${i}/60 checks)"
+            sleep 30
+          done
           
+          echo "⚠️  Cluster deletion is taking longer than expected"
+          exit 0
+        fi
+        
+        # Delete the cluster
+        echo "🗑️ Deleting ROSA cluster: ${CLUSTER_NAME}"
+        echo "⚠️  This will delete:"
+        echo "  - ROSA cluster and all workloads"
+        echo "  - IAM roles and policies"
+        echo "  - VPC and networking (if created by ROSA)"
+        echo ""
+        
+        if rosa delete cluster -c "${CLUSTER_NAME}" --yes; then
+          echo "✅ Cluster deletion initiated successfully"
+          echo "⏳ Deletion will continue in the background (typically 10-15 minutes)"
+        else
+          echo "❌ Failed to initiate cluster deletion"
+          echo "Manual intervention may be required"
           exit 1
         fi
         
-        # Verify cleanup
+        # Note about Terraform-managed resources
         echo ""
-        echo "🔍 Verifying cleanup..."
-        if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
-          echo "⚠️  Cluster still exists, deletion may be in progress"
-          rosa describe cluster -c "${CLUSTER_NAME}"
-        else
-          echo "✅ Cluster successfully deleted"
-        fi
-        
-        cd ../..
+        echo "📝 Note: Terraform-managed AWS resources (PostgreSQL, Redis, S3, etc.)"
+        echo "   are NOT automatically deleted by ROSA cluster deletion."
+        echo "   Use the cleanup script or Terraform destroy manually if needed:"
+        echo "   ./hack/rosa/cleanup-rosa-resources.sh"
         
         # Clean up workspace files
         echo "🧹 Cleaning up workspace files..."
