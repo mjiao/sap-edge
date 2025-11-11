@@ -361,10 +361,16 @@ spec:
       params:
         - name: clusterName
           value: $(params.clusterName)
+        - name: awsRegion
+          value: $(params.awsRegion)
         - name: awsSecretName
           value: $(params.awsSecretName)
         - name: redhatTokenSecretName
           value: $(params.redhatTokenSecretName)
+        - name: terraformStateS3Bucket
+          value: $(params.terraformStateS3Bucket)
+        - name: terraformStateDynamoDBTable
+          value: $(params.terraformStateDynamoDBTable)
       workspaces:
         - name: source
           workspace: source
