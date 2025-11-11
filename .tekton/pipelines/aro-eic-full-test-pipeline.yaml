@@ -167,7 +167,7 @@ spec:
         - name: endpointPath
           value: /httpbinipfilter
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -183,7 +183,7 @@ spec:
         - name: endpointPath
           value: /http/test1
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -199,7 +199,7 @@ spec:
         - name: endpointPath
           value: /http/testelster
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -215,7 +215,7 @@ spec:
         - name: endpointPath
           value: /slvredis
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -231,7 +231,7 @@ spec:
         - name: endpointPath
           value: /slvredis
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
