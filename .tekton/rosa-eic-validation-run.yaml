@@ -17,7 +17,7 @@ spec:
   timeouts:
     pipeline: "240h"      # Total pipeline timeout (10 days for long validation)
     tasks: "180m"         # Individual task timeout (3 hours)
-    finally: "31m"        # Finally tasks timeout
+    finally: "30m"        # Finally tasks timeout
   params:
     - name: repoUrl
       value: "{{ repo_url }}"
@@ -28,7 +28,7 @@ spec:
     - name: clusterName
       value: "sap-eic-rosa"
     - name: rosaVersion
-      value: "4.20.1"
+      value: "4.20.4"
     - name: awsSecretName
       value: "aws-credentials-secret"
     - name: redhatTokenSecretName

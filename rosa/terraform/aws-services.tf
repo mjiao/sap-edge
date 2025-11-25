@@ -82,6 +82,9 @@ resource "aws_db_subnet_group" "postgres" {
   name       = "${var.cluster_name}-postgres-subnet-group"
   subnet_ids = module.vpc[0].private_subnets
 
+  # Explicit dependency to ensure VPC is created first
+  depends_on = [module.vpc]
+
   tags = merge(
     var.tags,
     {
@@ -95,6 +98,9 @@ resource "aws_elasticache_subnet_group" "redis" {
   count      = var.deploy_redis ? 1 : 0
   name       = "${var.cluster_name}-redis-subnet-group"
   subnet_ids = module.vpc[0].private_subnets
+
+  # Explicit dependency to ensure VPC is created first
+  depends_on = [module.vpc]
 
   tags = merge(
     var.tags,
@@ -141,6 +147,8 @@ resource "aws_db_instance" "postgres" {
   #tfsec:ignore:aws-rds-enable-iam-auth IAM authentication not required for testing environment
   iam_database_authentication_enabled = false
 
+  # Note: No explicit dependency on ROSA cluster - DB should be available before cluster creation
+
   tags = merge(
     var.tags,
     {
@@ -178,10 +186,12 @@ resource "aws_elasticache_replication_group" "redis" {
   subnet_group_name          = aws_elasticache_subnet_group.redis[0].name
   security_group_ids         = [aws_security_group.redis[0].id]
   automatic_failover_enabled = false  # Not needed for single node
-  
+
   # Enable authentication (transit_encryption_enabled must come BEFORE auth_token)
   transit_encryption_enabled = true
   auth_token                 = random_password.redis_auth_token[0].result
+
+  # Note: No explicit dependency on ROSA cluster - cache should be available before cluster creation
 
   tags = merge(
     var.tags,
@@ -197,8 +207,11 @@ resource "aws_elasticache_replication_group" "redis" {
 ###########################################
 
 resource "aws_s3_bucket" "quay" {
-  count  = var.deploy_quay ? 1 : 0
-  bucket = "${var.cluster_name}-quay-registry"
+  count         = var.deploy_quay ? 1 : 0
+  bucket        = "${var.cluster_name}-quay-registry"
+  force_destroy = true  # Allow deletion even with objects inside
+
+  # Note: No explicit dependency on ROSA cluster - registry should be available before cluster creation
 
   tags = merge(
     var.tags,
