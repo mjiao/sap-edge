@@ -142,8 +142,8 @@ spec:
         - name: source
           workspace: source
 
-    # Manual approval step - this will pause the pipeline
-    - name: manual-approval
+    # Single approval gate - Approve to run tests, Reject to skip tests and teardown
+    - name: approval-run-tests
       runAfter: [deploy-quay]
       taskRef:
         apiVersion: openshift-pipelines.org/v1alpha1
@@ -153,15 +153,20 @@ spec:
           value:
             - mjiao
             - rbhandar
+            - ksatarin
         - name: description
-          value: "ARO cluster, Azure services (PostgreSQL/Redis), and Quay registry are deployed. Please approve to run EIC endpoint tests."
+          value: |
+            ARO cluster, Azure services (PostgreSQL/Redis), and Quay registry are deployed.
+            
+            ✅ APPROVE: Run EIC endpoint tests, then wait for teardown approval
+            ❌ REJECT: Skip tests and proceed directly to teardown
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
           value: '168h'
 
     - name: test-httpbinipfilter
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -177,7 +182,7 @@ spec:
           workspace: source
 
     - name: test-http-test1
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -193,7 +198,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -209,7 +214,7 @@ spec:
           workspace: source
 
     - name: test-slvredis
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -303,27 +308,8 @@ spec:
 
             Ready for manual teardown approval. The complete EIC infrastructure will be destroyed once approved.
 
-    # Alternative path: Skip tests and go directly to teardown after Quay deployment
-    - name: manual-approval-skip-tests
-      runAfter: [deploy-quay]
-      taskRef:
-        apiVersion: openshift-pipelines.org/v1alpha1
-        kind: ApprovalTask
-      params:
-        - name: approvers
-          value:
-            - mjiao
-            - rbhandar
-            - ksatarin
-        - name: description
-          value: "Quay deployment completed. Approve to SKIP endpoint tests and tear down ARO cluster immediately."
-        - name: numberOfApprovalsRequired
-          value: '1'
-        - name: timeout
-          value: '168h'
-
     # Manual approval step before teardown - this will pause the pipeline
-    - name: manual-approval-teardown
+    - name: approval-teardown
       runAfter:
         - update-jira-ticket
       taskRef:
@@ -336,15 +322,19 @@ spec:
             - rbhandar
             - ksatarin
         - name: description
-          value: "All endpoint tests completed. Please review results and approve to tear down ARO cluster."
+          value: |
+            All endpoint tests completed. Please review results.
+            
+            ✅ APPROVE: Tear down ARO cluster and Azure resources
+            ❌ REJECT: Keep cluster running (will timeout after 168h and teardown anyway)
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
           value: '168h'
 
-    # Teardown after full test cycle
+    # Teardown after approval
     - name: teardown-aro
-      runAfter: [manual-approval-teardown]
+      runAfter: [approval-teardown]
       taskRef: { name: aro-teardown }
       params:
         - name: aroClusterName
@@ -355,9 +345,13 @@ spec:
         - name: source
           workspace: source
 
-    # Teardown after skipping tests (fast path)
-    - name: teardown-aro-fast
-      runAfter: [manual-approval-skip-tests]
+  # Finally block - ensures teardown runs even if tests fail or approval is rejected
+  finally:
+    - name: teardown-aro-on-failure
+      when:
+        - input: "$(tasks.teardown-aro.status)"
+          operator: notin
+          values: ["Succeeded"]
       taskRef: { name: aro-teardown }
       params:
         - name: aroClusterName
