@@ -346,8 +346,17 @@ The Bicep templates support the following parameters:
 | `postgresAdminPassword` | PostgreSQL admin password | - | ✅ (if PostgreSQL enabled) |
 | `postgresSkuName` | PostgreSQL SKU (dev mode: Standard_B1ms) | `Standard_B1ms` | ❌ |
 | `postgresTier` | PostgreSQL tier (dev mode: Burstable) | `Burstable` | ❌ |
-| `redisSku` | Redis SKU (dev mode: Basic) | `Basic` | ❌ |
-| `redisSize` | Redis size (dev mode: C0) | `C0` | ❌ |
+| `deployQuay` | Deploy Azure Storage Account for Quay | `true` | ❌ |
+| `redisSku` | Redis SKU | `Basic` | ❌ |
+| `redisFamily` | Redis family (C=Standard, P=Premium) | `C` | ❌ |
+| `redisCapacity` | Redis capacity (0-6) | `0` | ❌ |
+
+> **🔒 Secure VNet Integration & Storage**  
+> PostgreSQL and Redis are deployed with VNet integration for secure, private connectivity:
+> - **PostgreSQL**: Uses delegated subnet with private DNS zone
+> - **Redis**: Uses private endpoint in dedicated subnet
+> - **Quay Storage**: Azure Storage Account with private access only
+> - **Network isolation**: No public access, only accessible from within the ARO VNet
 
 #### Using Makefile with Bicep
 
@@ -365,6 +374,76 @@ make aro-services-info
 # Deploy only ARO (without Azure services - modify test parameters)
 make aro-deploy-test POSTGRES_ADMIN_PASSWORD="your-password"
 ```
+
+#### Cleanup and Destroy
+
+Bicep provides multiple cleanup options similar to Terraform's destroy mechanism:
+
+```bash
+# Option 1: Complete destroy (like terraform destroy)
+# Deletes ARO cluster, PostgreSQL, Redis, and all other resources
+make aro-destroy
+
+# Option 2: Fast cleanup - delete entire resource group
+# Fastest way to remove everything
+make aro-resource-group-delete
+
+# Option 3: Delete only ARO cluster (keeps PostgreSQL/Redis)
+make aro-delete-cluster
+
+# Option 4: Clean up individual services
+make postgres-delete
+make redis-delete
+```
+
+**Comparison with Terraform:**
+
+| Action | Terraform | Bicep Equivalent |
+|--------|-----------|------------------|
+| Destroy all resources | `terraform destroy` | `make aro-destroy` |
+| Fast cleanup | Delete state + resources manually | `make aro-resource-group-delete` |
+| View resources | `terraform state list` | `az resource list --resource-group <RG>` |
+| Resource tracking | State file | Azure Resource Manager deployment |
+
+> **💡 Tip**: `make aro-resource-group-delete` is the fastest cleanup method as Azure handles dependency ordering automatically.
+
+#### Deploying Quay Container Registry
+
+Quay storage is automatically provisioned by Bicep along with other Azure services. To deploy Quay on your ARO cluster:
+
+```bash
+# Step 1: Retrieve storage credentials from Bicep deployment
+make aro-quay-storage-create
+
+# This will output environment variables like:
+# export AZURE_STORAGE_ACCOUNT_NAME=quay...
+# export AZURE_STORAGE_ACCOUNT_KEY=...
+# export AZURE_STORAGE_CONTAINER=quay-registry
+
+# Step 2: Set the environment variables (copy from output above)
+export AZURE_STORAGE_ACCOUNT_NAME=<from-bicep-output>
+export AZURE_STORAGE_ACCOUNT_KEY=$(az deployment group show \
+  --name azure-services-deployment \
+  --resource-group $ARO_RESOURCE_GROUP \
+  --query 'properties.outputs.quayStorageAccountKey.value' -o tsv)
+export AZURE_STORAGE_CONTAINER=quay-registry
+
+# Step 3: Set Quay admin credentials
+export QUAY_ADMIN_PASSWORD="YourSecurePassword"
+export QUAY_ADMIN_EMAIL="admin@example.com"
+
+# Step 4: Deploy Quay using Ansible
+make aro-quay-deploy
+```
+
+The Ansible playbook will:
+1. Deploy the Quay operator
+2. Configure Azure Blob Storage backend
+3. Deploy the Quay registry instance
+4. Create admin user
+5. Configure certificate trust
+
+> **💡 Note**: Quay storage is managed by Bicep and will be automatically deleted when you run `make aro-destroy`.
 
 ## Pipeline Structure
 

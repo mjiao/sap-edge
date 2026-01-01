@@ -7,7 +7,9 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: aro-quay-deployment-pipeline
+  name: aro-edgelm-validation-pipeline
+  annotations:
+    description: "Edge LM validation pipeline: deploys ARO cluster with Quay storage only (no PostgreSQL/Redis), deploys Quay registry operator, and validates edgelm namespace pods"
 spec:
   params:
     - name: repoUrl
@@ -59,7 +61,7 @@ spec:
 
     - name: deploy-aro
       runAfter: [fetch-repository]
-      taskRef: { name: aro-deploy-only }
+      taskRef: { name: aro-deploy-with-eic-services }
       params:
         - name: aroLocation
           value: $(params.aroLocation)
@@ -71,6 +73,14 @@ spec:
           value: $(params.azureSecretName)
         - name: pullSecretName
           value: $(params.pullSecretName)
+        - name: postgresAdminPasswordSecretName
+          value: "azure-postgres-admin-password"
+        - name: deployPostgres
+          value: "false"
+        - name: deployRedis
+          value: "false"
+        - name: deployQuay
+          value: "true"
       workspaces:
         - name: source
           workspace: source
@@ -102,7 +112,7 @@ spec:
             - rbhandar
             - ksatarin
         - name: description
-          value: "ARO cluster and Quay registry are deployed. Please verify the deployments and approve to proceed with edgelm namespace pod checks."
+          value: "ARO cluster and Quay registry deployed successfully. Approve to proceed with Edge LM namespace pod validation."
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
@@ -133,30 +143,30 @@ spec:
           value: $(params.jiraIssueKey)
         - name: comment
           value: |
-            h2. ✅ ARO + Quay Deployment Pipeline Completed
+            h2. ✅ Edge LM Validation Pipeline Completed
 
-            ARO cluster, Quay registry, and edgelm namespace pod validation have completed successfully.
+            ARO cluster with Quay registry and edgelm namespace validation completed successfully.
 
-            *ARO Cluster Configuration:*
+            *Infrastructure Configuration:*
             * *Cluster Name:* $(params.aroClusterName)
             * *Location:* $(params.aroLocation)
             * *ARO Version:* $(params.aroVersion)
-            * *PostgreSQL Deployment:* false (not required)
-            * *Redis Deployment:* false (not required)
+            * *External Services:* None (lightweight deployment)
+            * *Use Case:* Edge LM validation with container registry
 
             *Deployment Status:*
             * Repository cloned: ✅
-            * ARO deployment with master scheduling: ✅ Completed
+            * ARO cluster deployed: ✅ Completed
+            * Master node scheduling enabled: ✅ Completed
             * Quay registry deployment: ✅ Completed
-            * Azure storage configuration: ✅ Completed
-            * Certificate trust configuration: ✅ Completed
-            * Edgelm namespace pod validation: ✅ Completed
+            * Azure storage for Quay: ✅ Configured
+            * Certificate trust: ✅ Configured
+            * Edgelm namespace validation: ✅ All Pods Running/Completed
 
             *Infrastructure Components:*
-            * ARO cluster deployed with master node scheduling ✅
-            * Quay registry with Azure storage ✅
-            * OpenShift certificate trust configured ✅
-            * All edgelm pods running/completed ✅
+            * Lightweight ARO cluster (no PostgreSQL/Redis) ✅
+            * Quay container registry with Azure storage ✅
+            * Edge LM workload validated ✅
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
@@ -177,7 +187,7 @@ spec:
             - rbhandar
             - ksatarin
         - name: description
-          value: "ARO cluster , Quay registry, and edgelm namespace validation completed successfully. Final approval for pipeline completion."
+          value: "Edge LM validation completed successfully. All edgelm namespace pods are running/completed. Approve to finalize pipeline."
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout

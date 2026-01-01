@@ -7,30 +7,39 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: endpoint-tests-bruhl-
+  generateName: rosa-edgelm-validation-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
 spec:
   pipelineRef:
-    name: endpoint-test-pipeline
+    name: rosa-edgelm-validation-pipeline
+  timeouts:
+    pipeline: "168h"      # Total pipeline timeout (7 days)
+    tasks: "120m"         # Individual task timeout (2 hours)
+    finally: "30m"        # Finally tasks timeout
   params:
     - name: repoUrl
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
-    - name: clusterConfigMapName
-      value: "cluster-info-bruhl"
-    - name: eicAuthSecretName
-      value: "eic-auth-secret"
-    - name: publicDNS
-      value: "false"
+    - name: clusterName
+      value: "rosa-edgelm"
+    - name: awsRegion
+      value: "us-east-1"
+    - name: rosaVersion
+      value: "4.17.0"
+    - name: awsSecretName
+      value: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      value: "redhat-token-secret"
+    - name: quayAdminPasswordSecretName
+      value: "quay-admin-secret"
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "SAPOCP-1715"
-    - name: extraInfo
-      value: "Current EIC version 8.36.8 \n OpenShift version is 4.20 \n further test the EIC."
+      value: "SAPOCP-1659"
   workspaces:
     - name: source
       volumeClaimTemplate:
@@ -39,4 +48,4 @@ spec:
           storageClassName: ocs-storagecluster-cephfs
           resources:
             requests:
-              storage: 10Mi
+              storage: 200Mi

@@ -77,7 +77,7 @@ aro-cluster-status:  ## Get ARO cluster provisioning state
 
 .PHONY: aro-cluster-exists
 aro-cluster-exists:  ## Check if ARO cluster exists
-	@hack/aro/cluster-check.sh --status-only
+	@hack/aro/cluster-check.sh --status-only || true
 
 .PHONY: aro-cluster-check
 aro-cluster-check:  ## Check ARO cluster status with detailed information
@@ -103,7 +103,11 @@ aro-credentials:  ## Get ARO credentials
 .PHONY: aro-kubeconfig
 aro-kubeconfig:  ## Get ARO kubeconfig file
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP}
+	@if [ ! -f kubeconfig ]; then \
+		az aro get-admin-kubeconfig --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --file kubeconfig; \
+	else \
+		echo "ℹ️  Kubeconfig file already exists, skipping download"; \
+	fi
 
 .PHONY: postgres-exists
 postgres-exists:  ## Check if PostgreSQL server exists
@@ -164,13 +168,68 @@ oc-login:  ## Login with oc to existing ARO cluster
 		-u "$(shell az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query 'kubeadminUsername' -o tsv)" \
 		-p "$(shell az aro list-credentials --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --query 'kubeadminPassword' -o tsv)"
 
+.PHONY: aro-destroy
+.ONESHELL:
+aro-destroy:  ## Destroy all Bicep-deployed resources (like terraform destroy)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+	@echo "🗑️  Destroying ARO deployment and all resources..."
+	@echo ""
+	@echo "This will delete the following resources:"
+	@az resource list --resource-group ${ARO_RESOURCE_GROUP} --query "[].{Name:name, Type:type}" -o table
+	@echo ""
+	@read -p "Are you sure you want to destroy all resources? (yes/no): " CONFIRM; \
+	if [ "$$CONFIRM" = "yes" ]; then \
+		echo ""; \
+		echo "Step 1/4: Deleting ARO cluster..."; \
+		az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait || echo "ARO cluster not found or already deleted"; \
+		echo "⏳ Waiting for ARO cluster deletion to start..."; \
+		sleep 30; \
+		echo ""; \
+		echo "Step 2/4: Deleting Azure services (PostgreSQL, Redis)..."; \
+		make postgres-delete 2>/dev/null || echo "PostgreSQL not found"; \
+		make redis-delete 2>/dev/null || echo "Redis not found"; \
+		echo ""; \
+		echo "Step 3/4: Waiting for ARO cluster deletion to complete..."; \
+		while az aro show --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} 2>/dev/null; do \
+			echo "⏳ ARO cluster still deleting... waiting 30s"; \
+			sleep 30; \
+		done; \
+		echo ""; \
+		echo "Step 4/4: Cleaning up remaining resources..."; \
+		REMAINING_RESOURCES=$$(az resource list --resource-group ${ARO_RESOURCE_GROUP} --query "[].id" -o tsv); \
+		if [ -n "$$REMAINING_RESOURCES" ]; then \
+			echo "Deleting remaining resources..."; \
+			for RESOURCE_ID in $$REMAINING_RESOURCES; do \
+				echo "  - Deleting: $$RESOURCE_ID"; \
+				az resource delete --ids "$$RESOURCE_ID" --no-wait 2>/dev/null || echo "    (already deleted)"; \
+			done; \
+		fi; \
+		echo ""; \
+		echo "✅ All resources destroyed successfully!"; \
+		echo ""; \
+		echo "📝 Note: The resource group ${ARO_RESOURCE_GROUP} still exists."; \
+		echo "   To delete it completely, run: make aro-resource-group-delete"; \
+	else \
+		echo "❌ Destroy cancelled."; \
+		exit 1; \
+	fi
+
 .PHONY: aro-resource-group-delete
-aro-resource-group-delete:  ## Delete the Azure resource group
+aro-resource-group-delete:  ## Delete the entire Azure resource group (fastest cleanup)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP)
-	az group delete --name ${ARO_RESOURCE_GROUP} --yes --no-wait
+	@echo "🗑️  Deleting resource group: ${ARO_RESOURCE_GROUP}"
+	@echo "⚠️  This will delete ALL resources in the resource group!"
+	@read -p "Are you sure? (yes/no): " CONFIRM; \
+	if [ "$$CONFIRM" = "yes" ]; then \
+		az group delete --name ${ARO_RESOURCE_GROUP} --yes --no-wait; \
+		echo "✅ Resource group deletion initiated (running in background)"; \
+	else \
+		echo "❌ Cancelled."; \
+		exit 1; \
+	fi
 
 .PHONY: aro-delete-cluster
-aro-delete-cluster:  ## Delete the ARO cluster
+aro-delete-cluster:  ## Delete only the ARO cluster (leaves other resources)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
 	az aro delete --name ${ARO_CLUSTER_NAME} --resource-group ${ARO_RESOURCE_GROUP} --yes --no-wait
 
@@ -264,7 +323,7 @@ aro-get-kubeconfig:  ## Get ARO kubeconfig with insecure TLS settings
 .PHONY: redis-get-info
 redis-get-info:  ## Get Redis cache connection information
 	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
-	@REDIS_LIST=$$(make redis-exists | tail -1); \
+	@REDIS_LIST=$$(make --no-print-directory redis-exists | tail -1); \
 	if [[ -n "$$REDIS_LIST" ]]; then \
 		REDIS_CACHE_NAME=$$(echo "$$REDIS_LIST" | head -1); \
 		echo "Redis Cache Name: $$REDIS_CACHE_NAME"; \
@@ -486,8 +545,11 @@ aro-cost-estimate:  ## Get cost estimate for test deployment
 
 # Azure Storage for Quay Registry
 .PHONY: aro-quay-storage-create
-aro-quay-storage-create:  ## Create Azure storage account for Quay registry
-	$(call required-environment-variables,ARO_RESOURCE_GROUP ARO_CLUSTER_NAME)
+aro-quay-storage-create:  ## Get Azure storage credentials for Quay (storage created by Bicep)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP)
+	@echo "💡 Note: Storage is created by Bicep deployment (make aro-deploy-test)"
+	@echo "   This command retrieves the credentials from Bicep outputs"
+	@echo ""
 	@hack/aro/quay-storage-create.sh
 
 .PHONY: aro-quay-storage-info
@@ -498,8 +560,11 @@ aro-quay-storage-info:  ## Get Azure storage account information for Quay
 	@az storage account list --resource-group "${ARO_RESOURCE_GROUP}" --query "[?tags.purpose=='quay'].{Name:name,Location:location,Cluster:tags.cluster}" -o table
 
 .PHONY: aro-quay-storage-delete
-aro-quay-storage-delete:  ## Delete Azure storage account for Quay (requires AZURE_STORAGE_ACCOUNT_NAME)
+aro-quay-storage-delete:  ## Delete Azure storage account for Quay (manual deletion, use aro-destroy for full cleanup)
 	$(call required-environment-variables,ARO_RESOURCE_GROUP AZURE_STORAGE_ACCOUNT_NAME)
+	@echo "💡 Note: Quay storage is managed by Bicep and will be deleted by 'make aro-destroy'"
+	@echo "   Only use this for manual cleanup of storage without deleting other resources"
+	@echo ""
 	@echo "🗑️ Deleting Azure storage account for Quay..."
 	@echo "⚠️  This will permanently delete all registry data!"
 	@read -p "Are you sure? Type 'yes' to confirm: " confirm; \
@@ -780,10 +845,11 @@ quay-info-generic:  ## Get Quay registry connection information (generic)
 
 # ROSA (Red Hat OpenShift Service on AWS) Quay Registry targets
 .PHONY: rosa-quay-s3-create
-rosa-quay-s3-create:  ## Create S3 bucket for ROSA Quay registry
-	$(call required-environment-variables,CLUSTER_NAME AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
-	@echo "🪣 Creating S3 bucket for ROSA Quay registry..."
-	./hack/rosa/quay-s3-create.sh
+rosa-quay-s3-create:  ## Get S3 credentials for Quay (bucket created by Terraform)
+	@echo "💡 Note: S3 bucket is created by Terraform deployment (cd rosa/terraform && terraform apply)"
+	@echo "   This command retrieves the credentials from Terraform outputs"
+	@echo ""
+	@./hack/rosa/quay-s3-create.sh
 
 .PHONY: rosa-quay-deploy
 rosa-quay-deploy:  ## Deploy Quay registry operator and instance on ROSA with S3 storage (uses Ansible)
@@ -827,21 +893,7 @@ rosa-quay-wait-http-ready:  ## Wait for Quay registry HTTP service to be ready o
 rosa-quay-deploy-complete:  ## Complete ROSA Quay deployment with S3 storage, registry, and trust configuration
 	$(call required-environment-variables,CLUSTER_NAME S3_BUCKET_NAME S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY)
 	$(call required-environment-variables,QUAY_ADMIN_PASSWORD QUAY_ADMIN_EMAIL)
-	@echo "🎯 Starting complete ROSA Quay deployment..."
-	@S3_HOST_DEFAULT=$${S3_HOST:-s3.$${S3_REGION}.amazonaws.com}; \
-	echo "Using S3 host: $$S3_HOST_DEFAULT"; \
-	ansible-playbook ansible/quay-deploy.yml \
-		-i ansible/inventory.yml \
-		-e platform=rosa \
-		-e cluster_name="${CLUSTER_NAME}" \
-		-e s3_bucket_name="${S3_BUCKET_NAME}" \
-		-e s3_region="${S3_REGION}" \
-		-e s3_host="$$S3_HOST_DEFAULT" \
-		-e aws_access_key_id="${AWS_ACCESS_KEY_ID}" \
-		-e aws_secret_access_key="${AWS_SECRET_ACCESS_KEY}" \
-		-e quay_admin_password="${QUAY_ADMIN_PASSWORD}" \
-		-e quay_admin_email="${QUAY_ADMIN_EMAIL}"
-	@echo "✅ ROSA Quay deployment completed"
+	@ansible/rosa-quay-deploy.sh
 
 .PHONY: rosa-quay-info
 rosa-quay-info:  ## Get ROSA Quay registry connection information

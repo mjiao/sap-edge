@@ -7,7 +7,9 @@
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: aro-endpoint-test-pipeline
+  name: aro-eic-full-test-pipeline
+  annotations:
+    description: "Complete SAP Edge Integration Cell validation pipeline: deploys ARO with Azure services (PostgreSQL, Redis, Quay Storage via Bicep), Quay registry operator, runs comprehensive endpoint tests, and tears down infrastructure"
 spec:
   params:
     - name: repoUrl
@@ -40,6 +42,10 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
       default: "azure-postgres-admin-password"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
     - name: deployPostgres
       type: string
       description: "Whether to deploy PostgreSQL (true/false)"
@@ -47,6 +53,10 @@ spec:
     - name: deployRedis
       type: string
       description: "Whether to deploy Redis (true/false)"
+      default: "true"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy Quay storage (true/false)"
       default: "true"
     - name: publicDNS
       type: string
@@ -58,6 +68,10 @@ spec:
     - name: jiraIssueKey
       type: string
       description: "Jira issue key to update with test results"
+  results:
+    - name: cluster-summary
+      description: "Brief cluster and services validation summary"
+      value: $(tasks.validate-and-get-access.results.cluster-summary)
   workspaces:
     - name: source
   tasks:
@@ -68,6 +82,8 @@ spec:
           value: $(params.repoUrl)
         - name: revision
           value: $(params.revision)
+        - name: depth
+          value: "0"  # Full clone to ensure all refs are available
       workspaces:
         - name: output
           workspace: source
@@ -92,6 +108,8 @@ spec:
           value: $(params.deployPostgres)
         - name: deployRedis
           value: $(params.deployRedis)
+        - name: deployQuay
+          value: $(params.deployQuay)
       workspaces:
         - name: source
           workspace: source
@@ -110,9 +128,23 @@ spec:
         - name: source
           workspace: source
 
-    # Manual approval step - this will pause the pipeline
-    - name: manual-approval
+    - name: deploy-quay
       runAfter: [validate-and-get-access]
+      taskRef: { name: aro-quay-deploy }
+      params:
+        - name: aroClusterName
+          value: $(params.aroClusterName)
+        - name: azureSecretName
+          value: $(params.azureSecretName)
+        - name: quayAdminPasswordSecretName
+          value: $(params.quayAdminPasswordSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Single approval gate - Approve to run tests, Reject to skip tests and teardown
+    - name: approval-run-tests
+      runAfter: [deploy-quay]
       taskRef:
         apiVersion: openshift-pipelines.org/v1alpha1
         kind: ApprovalTask
@@ -121,21 +153,26 @@ spec:
           value:
             - mjiao
             - rbhandar
+            - ksatarin
         - name: description
-          value: "ARO cluster and Azure services (PostgreSQL/Redis) are deployed via Bicep. Please approve to run endpoint tests."
+          value: |
+            ARO cluster, Azure services (PostgreSQL/Redis), and Quay registry are deployed.
+            
+            ✅ APPROVE: Run EIC endpoint tests, then wait for teardown approval
+            ❌ REJECT: Skip tests and proceed directly to teardown
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
           value: '168h'
 
     - name: test-httpbinipfilter
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
           value: /httpbinipfilter
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -145,13 +182,13 @@ spec:
           workspace: source
 
     - name: test-http-test1
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
           value: /http/test1
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -161,13 +198,13 @@ spec:
           workspace: source
 
     - name: test-http-testelster
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
           value: /http/testelster
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -177,13 +214,13 @@ spec:
           workspace: source
 
     - name: test-slvredis
-      runAfter: [manual-approval]
+      runAfter: [approval-run-tests]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
           value: /slvredis
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -199,7 +236,7 @@ spec:
         - name: endpointPath
           value: /slvredis
         - name: clusterConfigMapName
-          value: "cluster-info-$(params.aroClusterName)"
+          value: "cluster-info-aro-$(params.aroClusterName)"
         - name: eicAuthSecretName
           value: $(params.eicAuthSecretName)
         - name: publicDNS
@@ -224,20 +261,23 @@ spec:
           value: $(params.jiraIssueKey)
         - name: comment
           value: |
-            h2. ✅ ARO Deployment & Testing Pipeline Completed
+            h2. ✅ Complete EIC Validation Pipeline Completed
 
-            ARO cluster deployment and all automated endpoint tests have completed successfully.
+            ARO cluster with full EIC infrastructure and all automated endpoint tests completed successfully.
 
-            *ARO Cluster Configuration:*
+            *Infrastructure Configuration:*
             * *Cluster Name:* $(params.aroClusterName)
             * *Location:* $(params.aroLocation)
             * *ARO Version:* $(params.aroVersion)
-            * *PostgreSQL Deployment:* $(params.deployPostgres)
-            * *Redis Deployment:* $(params.deployRedis)
+            * *PostgreSQL:* $(params.deployPostgres) (VNet integrated, Bicep-managed)
+            * *Redis:* $(params.deployRedis) (Private endpoint, Bicep-managed)
+            * *Quay Storage:* $(params.deployQuay) (Azure Storage, Bicep-managed)
+            * *Quay Registry:* ✅ Deployed
 
             *Pipeline Status:*
             * Repository cloned: ✅
-            * ARO deployment: ✅ Completed
+            * ARO deployment with Azure services: ✅ Completed
+            * Quay registry deployment: ✅ Completed
             * Validation and access setup: ✅ Completed
             * Endpoint tests: ✅ All Passed
 
@@ -253,16 +293,23 @@ spec:
             * test-slvredis ✅
             * test-ratelimit-slvredis ✅
 
-            *Infrastructure Status:*
-            * ARO cluster deployed and validated ✅
-            * Azure services (PostgreSQL/Redis) provisioned ✅
-            * Kubeconfig and service access configured ✅
-            * All connectivity tests passed ✅
+            *Infrastructure Components:*
+            * ARO OpenShift cluster ✅
+            * Azure PostgreSQL (VNet integrated) ✅
+            * Azure Redis (Private endpoint) ✅
+            * Quay container registry ✅
+            * All EIC endpoints validated ✅
 
-            Ready for manual teardown approval. The pipeline will proceed with infrastructure cleanup once approved.
+            *Security:*
+            * PostgreSQL: Private connectivity via delegated subnet (Bicep-managed)
+            * Redis: Private endpoint with private DNS (Bicep-managed)
+            * Quay Storage: Azure Storage Account with private access (Bicep-managed)
+            * Quay: Certificate trust configured for OpenShift integration
+
+            Ready for manual teardown approval. The complete EIC infrastructure will be destroyed once approved.
 
     # Manual approval step before teardown - this will pause the pipeline
-    - name: manual-approval-teardown
+    - name: approval-teardown
       runAfter:
         - update-jira-ticket
       taskRef:
@@ -275,14 +322,19 @@ spec:
             - rbhandar
             - ksatarin
         - name: description
-          value: "All endpoint tests completed. Please review results and approve to tear down ARO cluster."
+          value: |
+            All endpoint tests completed. Please review results.
+            
+            ✅ APPROVE: Tear down ARO cluster and Azure resources
+            ❌ REJECT: Keep cluster running (will timeout after 168h and teardown anyway)
         - name: numberOfApprovalsRequired
           value: '1'
         - name: timeout
           value: '168h'
 
+    # Teardown after approval
     - name: teardown-aro
-      runAfter: [manual-approval-teardown]
+      runAfter: [approval-teardown]
       taskRef: { name: aro-teardown }
       params:
         - name: aroClusterName
@@ -292,4 +344,3 @@ spec:
       workspaces:
         - name: source
           workspace: source
-

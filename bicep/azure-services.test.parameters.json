@@ -11,6 +11,9 @@
     "deployRedis": {
       "value": true
     },
+    "deployQuay": {
+      "value": true
+    },
     "postgresSkuName": {
       "value": "Standard_B1ms"
     },
@@ -26,8 +29,11 @@
     "redisSku": {
       "value": "Basic"
     },
-    "redisSize": {
-      "value": "C0"
+    "redisFamily": {
+      "value": "C"
+    },
+    "redisCapacity": {
+      "value": 0
     },
     "testingTags": {
       "value": {

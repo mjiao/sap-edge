@@ -6,6 +6,11 @@
 ---
 - name: Ensure S3 storage for ROSA Quay deployment
   block:
+    - name: Set AWS credentials from env if not provided
+      set_fact:
+        aws_access_key_id: "{{ aws_access_key_id | default(lookup('env', 'AWS_ACCESS_KEY_ID')) | default('') }}"
+        aws_secret_access_key: "{{ aws_secret_access_key | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) | default('') }}"
+
     - name: Display S3 storage configuration
       debug:
         msg:

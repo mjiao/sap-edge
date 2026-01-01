@@ -21,6 +21,9 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
       default: "azure-postgres-admin-password"
+  results:
+    - name: cluster-summary
+      description: "Brief cluster and services summary (under 4KB)"
   workspaces:
     - name: source
   steps:
@@ -46,8 +49,12 @@ spec:
         rpm --import https://packages.microsoft.com/keys/microsoft.asc
         dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
         dnf clean all
-        # Install required tools
-        dnf install -y azure-cli tar jq make libicu
+        # Install required tools including Ansible
+        dnf install -y azure-cli tar jq make libicu python3-pip
+        
+        # Install Ansible for cluster configuration
+        echo "📦 Installing Ansible..."
+        pip3 install ansible kubernetes
 
         # Install OpenShift CLI
         echo "📦 Installing OpenShift CLI..."
@@ -66,7 +73,7 @@ spec:
         # Wait for cluster to be ready
         echo "⏳ Waiting for ARO cluster to be ready..."
         while true; do
-          CLUSTER_STATUS=$(make aro-cluster-status | tail -1)
+          CLUSTER_STATUS=$(make --no-print-directory aro-cluster-status | tail -1)
           echo "Cluster status: '$CLUSTER_STATUS'"
           echo "Status length: ${#CLUSTER_STATUS}"
           
@@ -83,9 +90,9 @@ spec:
         done
         
         # Get cluster URL and credentials
-        CLUSTER_URL=$(make aro-cluster-url | tail -1)
+        CLUSTER_URL=$(make --no-print-directory aro-cluster-url | tail -1)
         echo "🔍 Debug: Getting credentials..."
-        CREDENTIALS_RAW=$(make aro-credentials)
+        CREDENTIALS_RAW=$(make --no-print-directory aro-credentials)
         echo "🔍 Debug: Raw credentials output:"
         echo "$CREDENTIALS_RAW"
         echo "🔍 Debug: End raw credentials"
@@ -126,6 +133,8 @@ spec:
         # Enable scheduling on master nodes
         echo ""
         echo "🔧 Enabling scheduling on master nodes..."
+        export ARO_CLUSTER_NAME
+        export ARO_RESOURCE_GROUP
         make aro-enable-master-scheduling
         
         echo ""
@@ -141,19 +150,44 @@ spec:
         POSTGRES_ADMIN_USERNAME="eicadmin"
         POSTGRES_DATABASE_NAME="eic"
         POSTGRES_CONNECTION_STRING=""
+        POSTGRES_TLS_CERT_FILE=""
         
-        POSTGRES_EXISTS=$(make postgres-exists | tail -1)
+        POSTGRES_EXISTS=$(make --no-print-directory postgres-exists | tail -1)
+        POSTGRES_PUBLIC_ACCESS=""
+        POSTGRES_NETWORK_TYPE="Public Access"
         if [[ -n "$POSTGRES_EXISTS" ]]; then
           POSTGRES_SERVER_NAME="$EXPECTED_POSTGRES_NAME"
-          # Use public FQDN for PostgreSQL server
           POSTGRES_SERVER_FQDN="${EXPECTED_POSTGRES_NAME}.postgres.database.azure.com"
           
-          # Try to get connection string (requires admin password from secret)
-          if [[ -n "${POSTGRES_ADMIN_PASSWORD:-}" ]]; then
-            POSTGRES_CONNECTION_STRING="postgresql://${POSTGRES_ADMIN_USERNAME}:${POSTGRES_ADMIN_PASSWORD}@${POSTGRES_SERVER_FQDN}:5432/${POSTGRES_DATABASE_NAME}?sslmode=require"
+          # Check if public access is disabled (private endpoint/VNet integrated)
+          POSTGRES_PUBLIC_ACCESS=$(az postgres flexible-server show \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --name "$POSTGRES_SERVER_NAME" \
+            --query "network.publicNetworkAccess" -o tsv 2>/dev/null || echo "Enabled")
+          
+          if [[ "$POSTGRES_PUBLIC_ACCESS" == "Disabled" ]]; then
+            POSTGRES_NETWORK_TYPE="Private Access (VNet Integrated)"
           fi
           
-          echo "✅ Found PostgreSQL server: $POSTGRES_SERVER_NAME"
+          # Build connection string with URL-encoded password for @ symbol
+          if [[ -n "${POSTGRES_ADMIN_PASSWORD:-}" ]]; then
+            # URL-encode the password to handle special characters like @
+            POSTGRES_PASSWORD_ENCODED=$(printf %s "$POSTGRES_ADMIN_PASSWORD" | jq -sRr @uri)
+            POSTGRES_CONNECTION_STRING="postgresql://${POSTGRES_ADMIN_USERNAME}:${POSTGRES_PASSWORD_ENCODED}@${POSTGRES_SERVER_FQDN}:5432/${POSTGRES_DATABASE_NAME}?sslmode=require"
+          fi
+          
+          # Download PostgreSQL TLS root certificate (DigiCert Global Root G2)
+          echo "📥 Downloading PostgreSQL TLS root certificate..."
+          POSTGRES_TLS_CERT_FILE="external_postgres_db_tls_root_cert.crt"
+          curl -sL https://cacerts.digicert.com/DigiCertGlobalRootG2.crt.pem -o "$POSTGRES_TLS_CERT_FILE"
+          if [[ -f "$POSTGRES_TLS_CERT_FILE" ]]; then
+            echo "✅ PostgreSQL TLS certificate saved to $POSTGRES_TLS_CERT_FILE"
+          else
+            echo "⚠️  Failed to download PostgreSQL TLS certificate"
+            POSTGRES_TLS_CERT_FILE=""
+          fi
+          
+          echo "✅ Found PostgreSQL server: $POSTGRES_SERVER_NAME ($POSTGRES_NETWORK_TYPE)"
         else
           echo "⚠️ PostgreSQL server not found: $EXPECTED_POSTGRES_NAME"
         fi
@@ -165,9 +199,52 @@ spec:
         REDIS_SSL_PORT=""
         REDIS_ACCESS_KEY=""
         REDIS_CONNECTION_STRING=""
+        REDIS_PUBLIC_ACCESS=""
+        REDIS_NETWORK_TYPE="Public Access"
         
-        # Get Redis connection information
-        make redis-get-info
+        # Get Redis connection information using make target
+        REDIS_INFO=$(make --no-print-directory redis-get-info 2>&1)
+        echo "$REDIS_INFO"
+        
+        # Parse the output to extract values
+        REDIS_CACHE_NAME=$(echo "$REDIS_INFO" | grep "^Redis Cache Name:" | cut -d: -f2- | xargs)
+        REDIS_HOST_NAME=$(echo "$REDIS_INFO" | grep "^Redis Host:" | cut -d: -f2- | xargs)
+        REDIS_PORT=$(echo "$REDIS_INFO" | grep "^Redis Port:" | cut -d: -f2- | xargs)
+        REDIS_SSL_PORT=$(echo "$REDIS_INFO" | grep "^Redis SSL Port:" | cut -d: -f2- | xargs)
+        REDIS_ACCESS_KEY=$(echo "$REDIS_INFO" | grep "^Redis Access Key:" | cut -d: -f2- | xargs)
+        
+        # Check if we actually found Redis by checking if cache name was extracted
+        if [[ -n "$REDIS_CACHE_NAME" ]]; then
+          # Check if public access is disabled (private endpoint)
+          REDIS_PUBLIC_ACCESS=$(az redis show \
+            --resource-group "${ARO_RESOURCE_GROUP}" \
+            --name "$REDIS_CACHE_NAME" \
+            --query "publicNetworkAccess" -o tsv 2>/dev/null || echo "Enabled")
+          
+          if [[ "$REDIS_PUBLIC_ACCESS" == "Disabled" ]]; then
+            REDIS_NETWORK_TYPE="Private Access (Private Endpoint)"
+          fi
+          
+          # Generate Redis connection string
+          if [[ -n "$REDIS_ACCESS_KEY" && -n "$REDIS_HOST_NAME" && -n "$REDIS_SSL_PORT" ]]; then
+            REDIS_CONNECTION_STRING="rediss://:${REDIS_ACCESS_KEY}@${REDIS_HOST_NAME}:${REDIS_SSL_PORT}/0"
+          fi
+          
+          # Download Redis TLS root certificate (Baltimore CyberTrust Root)
+          echo "📥 Downloading Redis TLS root certificate..."
+          REDIS_TLS_CERT_FILE="external_redis_tls_certificate.pem"
+          curl -sL https://cacerts.digicert.com/BaltimoreCyberTrustRoot.crt.pem -o "$REDIS_TLS_CERT_FILE"
+          if [[ -f "$REDIS_TLS_CERT_FILE" ]]; then
+            echo "✅ Redis TLS certificate saved to $REDIS_TLS_CERT_FILE"
+          else
+            echo "⚠️  Failed to download Redis TLS certificate"
+            REDIS_TLS_CERT_FILE=""
+          fi
+          
+          echo "✅ Found Redis cache: $REDIS_CACHE_NAME ($REDIS_NETWORK_TYPE)"
+        else
+          echo "⚠️ No Redis cache found"
+        fi
         
         echo ""
         echo "📋 ==================================="
@@ -180,16 +257,24 @@ spec:
         echo ""
         
         if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
-          echo "🗄️ PostgreSQL (Public Access):"
+          echo "🗄️ PostgreSQL ($POSTGRES_NETWORK_TYPE):"
           echo "  Server Name: $POSTGRES_SERVER_NAME"
-          echo "  Public FQDN: $POSTGRES_SERVER_FQDN"
+          echo "  FQDN: $POSTGRES_SERVER_FQDN"
           echo "  Admin Username: $POSTGRES_ADMIN_USERNAME"
           echo "  Database: $POSTGRES_DATABASE_NAME"
-          echo "  📡 Note: Accessible from internet (with proper firewall rules)"
+          if [[ "$POSTGRES_PUBLIC_ACCESS" == "Disabled" ]]; then
+            echo "  🔒 Note: Only accessible from within the VNet/ARO cluster"
+          else
+            echo "  📡 Note: Accessible from internet (requires firewall rules)"
+          fi
           if [[ -n "$POSTGRES_CONNECTION_STRING" ]]; then
             echo "  Connection String: $POSTGRES_CONNECTION_STRING"
           else
             echo "  Connection String: (requires POSTGRES_ADMIN_PASSWORD from secret)"
+          fi
+          if [[ -n "$POSTGRES_TLS_CERT_FILE" ]]; then
+            echo "  🔐 TLS Root Certificate: $POSTGRES_TLS_CERT_FILE"
+            echo "  🔐 TLS Certificate Issuer: DigiCert Global Root G2"
           fi
           echo ""
         else
@@ -198,17 +283,27 @@ spec:
         fi
         
         if [[ -n "$REDIS_CACHE_NAME" ]]; then
-          echo "🔴 Redis:"
+          echo "🔴 Redis ($REDIS_NETWORK_TYPE):"
           echo "  Cache Name: $REDIS_CACHE_NAME"
           echo "  Host: $REDIS_HOST_NAME"
           echo "  Port: $REDIS_PORT"
           echo "  SSL Port: $REDIS_SSL_PORT"
+          if [[ "$REDIS_PUBLIC_ACCESS" == "Disabled" ]]; then
+            echo "  🔒 Note: Only accessible from within the VNet/ARO cluster"
+          else
+            echo "  📡 Note: Accessible from internet (requires firewall rules)"
+          fi
           if [[ -n "$REDIS_ACCESS_KEY" ]]; then
             echo "  Access Key: $REDIS_ACCESS_KEY"
             echo "  Connection String: $REDIS_CONNECTION_STRING"
           else
             echo "  Access Key: (not available - check permissions)"
             echo "  Connection String: (not available - check permissions)"
+          fi
+          if [[ -n "$REDIS_TLS_CERT_FILE" ]]; then
+            echo "  🔐 TLS Certificate: $REDIS_TLS_CERT_FILE"
+            echo "  🔐 TLS Server Name: $REDIS_HOST_NAME"
+            echo "  🔐 TLS Certificate Issuer: Baltimore CyberTrust Root"
           fi
           echo ""
         else
@@ -231,30 +326,111 @@ spec:
           echo "  Kubeconfig File: kubeconfig-$(params.aroClusterName).yaml"
           echo ""
           if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
-            echo "POSTGRESQL (Public Access):"
+            echo "POSTGRESQL ($POSTGRES_NETWORK_TYPE):"
             echo "  Server Name: $POSTGRES_SERVER_NAME"
-            echo "  Public FQDN: $POSTGRES_SERVER_FQDN"
+            echo "  FQDN: $POSTGRES_SERVER_FQDN"
             echo "  Admin Username: $POSTGRES_ADMIN_USERNAME"
             echo "  Database: $POSTGRES_DATABASE_NAME"
-            echo "  Note: Accessible from internet (with proper firewall rules)"
+            if [[ "$POSTGRES_PUBLIC_ACCESS" == "Disabled" ]]; then
+              echo "  Note: Only accessible from within the VNet/ARO cluster"
+            else
+              echo "  Note: Accessible from internet (requires firewall rules)"
+            fi
             if [[ -n "$POSTGRES_CONNECTION_STRING" ]]; then
               echo "  Connection String: $POSTGRES_CONNECTION_STRING"
+            fi
+            if [[ -n "$POSTGRES_TLS_CERT_FILE" ]]; then
+              echo "  TLS Root Certificate: $POSTGRES_TLS_CERT_FILE"
+              echo "  TLS Certificate Issuer: DigiCert Global Root G2"
             fi
             echo ""
           fi
           if [[ -n "$REDIS_CACHE_NAME" ]]; then
-            echo "REDIS:"
+            echo "REDIS ($REDIS_NETWORK_TYPE):"
             echo "  Cache Name: $REDIS_CACHE_NAME"
             echo "  Host: $REDIS_HOST_NAME"
             echo "  Port: $REDIS_PORT"
             echo "  SSL Port: $REDIS_SSL_PORT"
+            if [[ "$REDIS_PUBLIC_ACCESS" == "Disabled" ]]; then
+              echo "  Note: Only accessible from within the VNet/ARO cluster"
+            else
+              echo "  Note: Accessible from internet (requires firewall rules)"
+            fi
             if [[ -n "$REDIS_ACCESS_KEY" ]]; then
               echo "  Access Key: $REDIS_ACCESS_KEY"
               echo "  Connection String: $REDIS_CONNECTION_STRING"
+            fi
+            if [[ -n "$REDIS_TLS_CERT_FILE" ]]; then
+              echo "  TLS Certificate: $REDIS_TLS_CERT_FILE"
+              echo "  TLS Server Name: $REDIS_HOST_NAME"
+              echo "  TLS Certificate Issuer: Baltimore CyberTrust Root"
             fi
             echo ""
           fi
         } > cluster-and-services-info.txt
         
         echo "✅ Comprehensive information saved to cluster-and-services-info.txt"
+        echo ""
+        echo "📋 ============================================"
+        echo "📋 TLS CERTIFICATES"
+        echo "📋 ============================================"
+        echo ""
+        
+        # Display PostgreSQL TLS certificate in logs
+        if [[ -f "$POSTGRES_TLS_CERT_FILE" ]]; then
+          echo "🔐 PostgreSQL TLS Root Certificate (DigiCert Global Root G2):"
+          echo "---BEGIN CERTIFICATE---"
+          cat "$POSTGRES_TLS_CERT_FILE"
+          echo "---END CERTIFICATE---"
+          echo ""
+        fi
+        
+        # Display Redis TLS certificate in logs
+        if [[ -f "$REDIS_TLS_CERT_FILE" ]]; then
+          echo "🔐 Redis TLS Certificate (Baltimore CyberTrust Root):"
+          echo "---BEGIN CERTIFICATE---"
+          cat "$REDIS_TLS_CERT_FILE"
+          echo "---END CERTIFICATE---"
+          echo ""
+        fi
+        
+        echo "📋 ============================================"
+        echo ""
         echo "🎉 ARO cluster validation, kubeconfig generation, and services discovery completed successfully!"
+        echo ""
+        echo "💡 All connection details and certificates are displayed in the logs above."
+        echo "💡 Copy the information you need directly from the Logs tab!"
+        echo ""
+        echo "📥 To save certificates locally:"
+        echo "   1. Copy the certificate content from logs (between BEGIN/END lines)"
+        echo "   2. Save to a .crt or .pem file on your machine"
+        
+        # Write a brief summary to results (under 4KB for testing)
+        echo "📤 Writing result summary..."
+        {
+          echo "ARO CLUSTER VALIDATION SUMMARY"
+          echo "=============================="
+          echo "Cluster: $ARO_CLUSTER_NAME"
+          echo "Resource Group: $ARO_RESOURCE_GROUP"
+          echo "Status: ✅ VALIDATED"
+          echo ""
+          echo "Cluster URL: $CLUSTER_URL"
+          echo "Kubeconfig: kubeconfig-$(params.aroClusterName).yaml"
+          echo ""
+          if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
+            echo "PostgreSQL: ✅ DEPLOYED ($POSTGRES_NETWORK_TYPE)"
+            echo "  FQDN: $POSTGRES_SERVER_FQDN"
+          else
+            echo "PostgreSQL: ❌ NOT DEPLOYED"
+          fi
+          echo ""
+          if [[ -n "$REDIS_CACHE_NAME" ]]; then
+            echo "Redis: ✅ DEPLOYED ($REDIS_NETWORK_TYPE)"
+            echo "  Host: $REDIS_HOST_NAME"
+          else
+            echo "Redis: ❌ NOT DEPLOYED"
+          fi
+          echo ""
+          echo "View full details in the Logs tab!"
+        } > $(results.cluster-summary.path)
+        echo "✅ Summary written to results (viewable in OpenShift UI)"

@@ -93,6 +93,8 @@ schedulable
 edgelm
 Edgelm
 pipefail
+privatelink
+jsonencode
 Makefiles
 makefiles
 openshiftapps
@@ -101,4 +103,11 @@ Ufpe
 xlarge
 FINALIZER
 finalizers
+capa
+AKIA
+serviceaccount
+rediss
+seekable
+dovtso
+resourcegroupstaggingapi
 bpersistentvolumeclaims

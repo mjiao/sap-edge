@@ -1,0 +1,234 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: rosa-edgelm-validation-pipeline
+  annotations:
+    description: "Edge LM validation pipeline for ROSA: deploys ROSA HCP cluster with S3 for Quay only (no RDS/ElastiCache), deploys Quay registry operator, and validates edgelm namespace pods"
+spec:
+  params:
+    - name: repoUrl
+      type: string
+    - name: revision
+      type: string
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name (max 15 characters)"
+    - name: awsRegion
+      type: string
+      description: "AWS region"
+      default: "us-east-1"
+    - name: rosaVersion
+      type: string
+      description: "ROSA version"
+      default: "4.17.0"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+    - name: quayAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Quay admin password and email"
+      default: "quay-admin-secret"
+    - name: jiraSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Jira credentials"
+    - name: jiraIssueKey
+      type: string
+      description: "Jira issue key to update with deployment results"
+  workspaces:
+    - name: source
+  tasks:
+    - name: fetch-repository
+      taskRef: { name: git-clone }
+      params:
+        - name: url
+          value: $(params.repoUrl)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: output
+          workspace: source
+
+    - name: deploy-rosa
+      runAfter: [fetch-repository]
+      taskRef: { name: rosa-deploy-with-eic-services }
+      params:
+        - name: clusterName
+          value: $(params.clusterName)
+        - name: awsRegion
+          value: $(params.awsRegion)
+        - name: rosaVersion
+          value: $(params.rosaVersion)
+        - name: awsSecretName
+          value: $(params.awsSecretName)
+        - name: redhatTokenSecretName
+          value: $(params.redhatTokenSecretName)
+        - name: postgresAdminPassword
+          value: "NotDeployed"
+        - name: deployPostgres
+          value: "false"
+        - name: deployRedis
+          value: "false"
+        - name: deployQuay
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: deploy-quay
+      runAfter: [deploy-rosa]
+      taskRef: { name: rosa-quay-deploy }
+      params:
+        - name: clusterName
+          value: $(params.clusterName)
+        - name: s3BucketName
+          value: "$(params.clusterName)-quay-registry"  # Will be retrieved from Terraform
+        - name: s3Region
+          value: $(params.awsRegion)
+        - name: s3Host
+          value: "s3.$(params.awsRegion).amazonaws.com"
+        - name: awsSecretName
+          value: $(params.awsSecretName)
+        - name: quayAdminPasswordSecretName
+          value: $(params.quayAdminPasswordSecretName)
+        - name: redhatTokenSecretName
+          value: $(params.redhatTokenSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Manual approval step after ROSA and Quay deployment
+    - name: manual-approval-post-deployment
+      runAfter: [deploy-quay]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+        - name: description
+          value: "ROSA cluster and Quay registry deployed. Please approve to check edgelm namespace pods status."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '168h'
+
+    # Check edgelm namespace pod status
+    - name: check-edgelm-pods
+      runAfter: [manual-approval-post-deployment]
+      taskRef: { name: edgelm-pod-status-check }
+      params:
+        - name: namespace
+          value: "edgelm"
+        - name: expectedPodCount
+          value: "3"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: deployment-status-report
+      runAfter: [check-edgelm-pods]
+      taskRef: { name: deployment-status-report }
+      params:
+        - name: clusterName
+          value: $(params.clusterName)
+        - name: platform
+          value: "rosa"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: update-jira-ticket
+      runAfter: [deployment-status-report]
+      taskRef:
+        name: jira-add-comment-custom
+      params:
+        - name: jiraSecretName
+          value: $(params.jiraSecretName)
+        - name: jiraIssueKey
+          value: $(params.jiraIssueKey)
+        - name: comment
+          value: |
+            h2. ✅ ROSA Edge LM Validation Pipeline Completed
+
+            ROSA HCP cluster deployed with Quay registry for Edge LM validation.
+
+            *Lightweight Configuration:*
+            * *Cluster Name:* $(params.clusterName)
+            * *AWS Region:* $(params.awsRegion)
+            * *ROSA Version:* $(params.rosaVersion)
+            * *S3 for Quay:* ✅ Deployed (Terraform-managed)
+            * *Quay Registry:* ✅ Deployed
+            * *RDS PostgreSQL:* ❌ Not deployed (Edge LM uses internal storage)
+            * *ElastiCache Redis:* ❌ Not deployed (Edge LM uses internal cache)
+
+            *Pipeline Status:*
+            * Repository cloned: ✅
+            * ROSA HCP deployment: ✅ Completed
+            * Quay registry deployment: ✅ Completed
+            * Edge LM pod status check: ✅ Completed
+            * Deployment status report: ✅ Generated
+
+            *Infrastructure Components:*
+            * ROSA HCP OpenShift cluster ✅
+            * S3 bucket for Quay registry ✅
+            * Quay container registry ✅
+            * Edge LM namespace validated ✅
+
+            *Use Case:*
+            This is a lightweight deployment for Edge LM validation without external databases.
+            Edge LM uses internal storage and caching mechanisms.
+
+            Ready for manual teardown approval. The ROSA cluster and S3 bucket will be destroyed once approved.
+
+    # Manual approval step before teardown
+    - name: manual-approval-teardown
+      runAfter: [update-jira-ticket]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+        - name: description
+          value: "Edge LM validation completed. Please review results and approve to tear down ROSA cluster."
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '168h'
+
+    - name: teardown-rosa
+      runAfter: [manual-approval-teardown]
+      taskRef: { name: rosa-teardown }
+      params:
+        - name: clusterName
+          value: $(params.clusterName)
+        - name: awsRegion
+          value: $(params.awsRegion)
+        - name: awsSecretName
+          value: $(params.awsSecretName)
+        - name: redhatTokenSecretName
+          value: $(params.redhatTokenSecretName)
+        - name: terraformStateS3Bucket
+          value: $(params.terraformStateS3Bucket)
+        - name: terraformStateDynamoDBTable
+          value: $(params.terraformStateDynamoDBTable)
+      workspaces:
+        - name: source
+          workspace: source
+
