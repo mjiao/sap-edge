@@ -1,0 +1,604 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-validate-and-get-access
+spec:
+  description: Validate ROSA cluster and retrieve AWS services information from Terraform outputs
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name"
+    - name: awsRegion
+      type: string
+      description: "AWS region"
+      default: "eu-north-1"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "rosa-postgres-admin-password"
+    - name: terraformStateS3Bucket
+      type: string
+      description: "S3 bucket name for Terraform state storage"
+      default: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      type: string
+      description: "S3 key for Terraform state file (auto-generated as rosa/${CLUSTER_NAME}/terraform.tfstate)"
+      default: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      type: string
+      description: "DynamoDB table for Terraform state locking"
+      default: "eic-test-rosa-terraform-state-lock"
+  workspaces:
+    - name: source
+  steps:
+    - name: validate-and-get-access
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: "$(params.clusterName)"
+        - name: AWS_REGION
+          value: "$(params.awsRegion)"
+        - name: AWS_DEFAULT_REGION
+          value: "$(params.awsRegion)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: REDHAT_OCM_TOKEN
+        - name: POSTGRES_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.postgresAdminPasswordSecretName)
+              key: POSTGRES_ADMIN_PASSWORD
+        - name: TERRAFORM_STATE_S3_BUCKET
+          value: "$(params.terraformStateS3Bucket)"
+        - name: TERRAFORM_STATE_S3_KEY
+          value: "$(params.terraformStateS3Key)"
+        - name: TERRAFORM_STATE_DYNAMODB_TABLE
+          value: "$(params.terraformStateDynamoDBTable)"
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "✅ Validating ROSA cluster and retrieving access information..."
+        echo "=============================================="
+        
+        # Clean up workspace to maximize available disk space
+        echo "🧹 Cleaning up workspace to save disk space..."
+        rm -rf terraform_*.zip rosa-linux.tar.gz openshift-client-linux.tar.gz 2>/dev/null || true
+
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y wget unzip jq git
+
+        # Install Terraform
+        echo "📦 Installing Terraform..."
+        if ! command -v terraform &> /dev/null; then
+          TERRAFORM_VERSION="1.6.6"
+          wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          mv terraform /usr/local/bin/
+          rm -f "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        else
+          echo "✅ Terraform already installed"
+        fi
+
+        # Install ROSA CLI
+        echo "📦 Installing ROSA CLI..."
+        if ! command -v rosa &> /dev/null; then
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+          mkdir -p /tmp/rosa-install
+          tar xzf rosa-linux.tar.gz -C /tmp/rosa-install
+          mv /tmp/rosa-install/rosa /usr/local/bin/rosa
+          rm -rf /tmp/rosa-install rosa-linux.tar.gz
+        else
+          echo "✅ ROSA CLI already installed"
+        fi
+
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        if ! command -v oc &> /dev/null; then
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz
+          mkdir -p /tmp/oc-install
+          tar xzf openshift-client-linux.tar.gz -C /tmp/oc-install
+          mv /tmp/oc-install/oc /tmp/oc-install/kubectl /usr/local/bin/
+          rm -rf /tmp/oc-install openshift-client-linux.tar.gz
+        else
+          echo "✅ OpenShift CLI already installed"
+        fi
+
+        terraform version
+        rosa version
+        oc version --client
+        
+        # Fix git ownership issue that can prevent proper repository access
+        echo "🔧 Fixing git ownership..."
+        git config --global --add safe.directory /workspace/source
+
+        # Login to Red Hat OCM
+        echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
+        rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Get cluster info
+        echo "📋 Getting ROSA cluster information..."
+        rosa describe cluster -c "${CLUSTER_NAME}" -o json > cluster-info.json
+        
+        CLUSTER_ID=$(jq -r '.id' cluster-info.json)
+        CLUSTER_STATE=$(jq -r '.state' cluster-info.json)
+        API_URL=$(jq -r '.api.url' cluster-info.json)
+        CONSOLE_URL=$(jq -r '.console.url' cluster-info.json)
+        
+        echo "Cluster ID: ${CLUSTER_ID}"
+        echo "Cluster State: ${CLUSTER_STATE}"
+        echo "API URL: ${API_URL}"
+        echo "Console URL: ${CONSOLE_URL}"
+        
+        if [[ "${CLUSTER_STATE}" != "ready" ]]; then
+          echo "❌ Cluster is not ready yet (state: ${CLUSTER_STATE})"
+          exit 1
+        fi
+        
+        echo "✅ Cluster is ready"
+        
+        # Create admin user and get credentials
+        echo "👤 Managing cluster admin user..."
+
+        # For ROSA HCP, we need to handle admin credentials differently
+        ADMIN_USERNAME="cluster-admin"
+        ADMIN_PASSWORD=""
+
+        # Try to get or create admin user with proper error handling
+        echo "🔍 Checking admin user status..."
+        if rosa describe admin -c "${CLUSTER_NAME}" &>/dev/null; then
+          echo "ℹ️  Admin user already exists"
+
+          # For existing admin, try to get password from ROSA CLI
+          echo "🔐 Attempting to retrieve admin password..."
+          if rosa describe admin -c "${CLUSTER_NAME}" 2>&1 | grep -q "password"; then
+            # Extract password from the output if available
+            ADMIN_PASSWORD=$(rosa describe admin -c "${CLUSTER_NAME}" 2>&1 | grep -i password | awk '{print $NF}' || echo "")
+          fi
+
+          # If no password, try to recreate admin to get fresh credentials
+          if [[ -z "${ADMIN_PASSWORD}" ]]; then
+            echo "🔄 No password available, recreating admin user..."
+            rosa delete admin -c "${CLUSTER_NAME}" --yes || echo "Could not delete existing admin"
+            sleep 5
+            rosa create admin -c "${CLUSTER_NAME}" -o json > admin-creds.json 2>&1
+          fi
+        else
+          echo "📝 Creating new admin user..."
+          rosa create admin -c "${CLUSTER_NAME}" -o json > admin-creds.json 2>&1
+        fi
+
+        # Parse credentials from JSON if available
+        if [[ -f "admin-creds.json" ]] && jq -e . admin-creds.json >/dev/null 2>&1; then
+          ADMIN_USERNAME=$(jq -r '.username // "cluster-admin"' admin-creds.json)
+          ADMIN_PASSWORD=$(jq -r '.password // ""' admin-creds.json)
+          echo "📋 Successfully parsed credentials from JSON"
+          echo "Admin Username: ${ADMIN_USERNAME}"
+          if [[ -n "${ADMIN_PASSWORD}" ]]; then
+            echo "Admin Password: ${ADMIN_PASSWORD}"
+          fi
+        else
+          echo "⚠️  Could not get JSON credentials, using defaults"
+          echo "Admin Username: ${ADMIN_USERNAME}"
+        fi
+
+        # Attempt to login with retry logic (ROSA HCP credentials take time to propagate)
+        LOGIN_SUCCESS=false
+        MAX_ATTEMPTS=6
+        
+        if [[ -n "${ADMIN_PASSWORD}" ]] && [[ "${ADMIN_PASSWORD}" != "null" ]] && [[ "${ADMIN_PASSWORD}" != "empty" ]]; then
+          echo "🔐 Attempting login with admin credentials (with retry logic for ROSA HCP)..."
+          echo "Admin Password: ${ADMIN_PASSWORD}"
+          
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo ""
+            echo "🔐 Login attempt $attempt/$MAX_ATTEMPTS..."
+            
+            if oc login "${API_URL}" -u "${ADMIN_USERNAME}" -p "${ADMIN_PASSWORD}" --insecure-skip-tls-verify=true; then
+              echo "✅ Successfully logged in on attempt $attempt!"
+              LOGIN_SUCCESS=true
+              break
+            else
+              echo "❌ Login failed on attempt $attempt"
+              
+              if [[ $attempt -lt $MAX_ATTEMPTS ]]; then
+                # Exponential backoff: 15s, 30s, 45s, 60s, 75s
+                WAIT_TIME=$((attempt * 15))
+                echo "⏳ Credentials may still be propagating. Waiting ${WAIT_TIME} seconds before retry..."
+                sleep $WAIT_TIME
+              else
+                echo "❌ All login attempts exhausted"
+              fi
+            fi
+          done
+        fi
+
+        # Fallback: Try alternative authentication methods
+        if [[ "${LOGIN_SUCCESS}" != "true" ]]; then
+          echo ""
+          echo "🔐 Trying alternative authentication methods..."
+          
+          # Try with username only (OAuth flow)
+          echo "🔐 Attempt: Login with username only (OAuth)..."
+          if oc login "${API_URL}" -u "${ADMIN_USERNAME}" --insecure-skip-tls-verify=true; then
+            echo "✅ Successfully logged in with OAuth flow"
+            LOGIN_SUCCESS=true
+          fi
+        fi
+
+        # Check final authentication status
+        if [[ "${LOGIN_SUCCESS}" != "true" ]]; then
+          echo "⚠️  All authentication methods failed"
+          echo "🔍 Available authentication info:"
+          rosa describe admin -c "${CLUSTER_NAME}" || echo "Could not describe admin"
+          echo "🔍 Cluster API URL: ${API_URL}"
+          echo "💡 Manual login command: oc login ${API_URL} --username ${ADMIN_USERNAME}"
+
+          echo ""
+          echo "⚠️  AUTHENTICATION FAILURE - This may be a ROSA HCP limitation"
+          echo "ℹ️  Despite having fresh credentials, ROSA HCP may require interactive OAuth"
+          echo "ℹ️  Continuing with limited validation..."
+
+          # Set a flag to skip cluster-specific operations
+          CLUSTER_LOGIN_AVAILABLE=false
+        else
+          echo "✅ Authentication successful!"
+          CLUSTER_LOGIN_AVAILABLE=true
+        fi
+
+        # Generate long-lived kubeconfig using Service Account if login was successful
+        if [[ "${CLUSTER_LOGIN_AVAILABLE}" == "true" ]]; then
+          echo ""
+          echo "🔑 Generating long-lived kubeconfig using Service Account..."
+          echo "============================================"
+          
+          SERVICE_ACCOUNT_NAME="cluster-admin-sa"
+          NAMESPACE="default"
+          OUTPUT_KUBECONFIG_FILE="kubeconfig"
+          
+          # Step 1: Create Service Account
+          echo "1. Creating Service Account '${SERVICE_ACCOUNT_NAME}' in namespace '${NAMESPACE}'..."
+          if ! oc get sa "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+            oc create sa "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
+            echo "   ✅ Service Account created"
+          else
+            echo "   ℹ️  Service Account already exists, reusing it"
+          fi
+          
+          # Step 2: Grant cluster-admin permissions
+          echo "2. Granting 'cluster-admin' role to the Service Account..."
+          oc adm policy add-cluster-role-to-user cluster-admin -z "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
+          echo "   ✅ Cluster-admin role granted"
+          
+          # Step 3: Create permanent token Secret for the Service Account
+          echo "3. Creating permanent token Secret for Service Account..."
+          TOKEN_SECRET_NAME="${SERVICE_ACCOUNT_NAME}-token"
+          
+          # Check if token secret already exists
+          if ! oc get secret "${TOKEN_SECRET_NAME}" -n "${NAMESPACE}" &> /dev/null; then
+            echo "   Creating Secret '${TOKEN_SECRET_NAME}'..."
+            # Create the Secret using echo (avoids heredoc YAML parsing issues)
+            {
+              echo "apiVersion: v1"
+              echo "kind: Secret"
+              echo "metadata:"
+              echo "  name: ${TOKEN_SECRET_NAME}"
+              echo "  annotations:"
+              echo "    kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}"
+              echo "type: kubernetes.io/service-account-token"
+            } | oc apply -n "${NAMESPACE}" -f -
+            echo "   ✅ Secret created"
+          else
+            echo "   ℹ️  Secret '${TOKEN_SECRET_NAME}' already exists, reusing it"
+          fi
+          
+          # Step 4: Wait for Kubernetes to populate the token in the Secret
+          echo "4. Waiting for Kubernetes to populate the token in the Secret..."
+          for i in {1..30}; do
+            TOKEN=$(oc get secret "${TOKEN_SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
+            if [[ -n "${TOKEN}" ]]; then
+              echo "   ✅ Token populated by Kubernetes (length: ${#TOKEN} characters)"
+              break
+            fi
+            echo "   Waiting for token to be populated (attempt ${i}/30)..."
+            sleep 2
+          done
+          
+          if [[ -z "${TOKEN}" ]]; then
+            echo "   ❌ Token was not populated in Secret after 60 seconds"
+            echo "   This may indicate an issue with the Service Account or cluster configuration"
+            exit 1
+          fi
+          
+          # Step 5: Get cluster API server URL
+          echo "5. Fetching cluster server URL..."
+          API_SERVER_URL=$(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+          if [[ -z "${API_SERVER_URL}" ]]; then
+            echo "   ❌ Could not retrieve API server URL"
+            exit 1
+          fi
+          echo "   API Server: ${API_SERVER_URL}"
+          
+          # Step 6: Create the kubeconfig file
+          echo "6. Building the kubeconfig file..."
+          
+          # Extract cluster name from URL (remove https://)
+          CLUSTER_NAME_FROM_URL="${API_SERVER_URL#https://}"
+          
+          # Build kubeconfig using echo (avoids heredoc YAML issues)
+          {
+            echo "apiVersion: v1"
+            echo "kind: Config"
+            echo "clusters:"
+            echo "- name: ${CLUSTER_NAME_FROM_URL}"
+            echo "  cluster:"
+            echo "    insecure-skip-tls-verify: true"
+            echo "    server: ${API_SERVER_URL}"
+            echo ""
+            echo "users:"
+            echo "- name: ${SERVICE_ACCOUNT_NAME}"
+            echo "  user:"
+            echo "    token: ${TOKEN}"
+            echo ""
+            echo "contexts:"
+            echo "- name: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}"
+            echo "  context:"
+            echo "    cluster: ${CLUSTER_NAME_FROM_URL}"
+            echo "    namespace: ${NAMESPACE}"
+            echo "    user: ${SERVICE_ACCOUNT_NAME}"
+            echo ""
+            echo "current-context: ${NAMESPACE}/${CLUSTER_NAME_FROM_URL}/${SERVICE_ACCOUNT_NAME}"
+          } > "${OUTPUT_KUBECONFIG_FILE}"
+          
+          echo "   ✅ Kubeconfig file created: ${OUTPUT_KUBECONFIG_FILE}"
+          
+          # Display kubeconfig for verification
+          echo ""
+          echo "📄 Kubeconfig Contents:"
+          echo "========================"
+          cat "${OUTPUT_KUBECONFIG_FILE}"
+          echo "========================"
+          echo ""
+          
+          # Verify the kubeconfig works
+          echo "🔍 Verifying kubeconfig with new Service Account..."
+          export KUBECONFIG="${OUTPUT_KUBECONFIG_FILE}"
+          
+          if oc whoami; then
+            echo "✅ Service Account identity verified"
+            echo "   Expected: system:serviceaccount:${NAMESPACE}:${SERVICE_ACCOUNT_NAME}"
+          else
+            echo "⚠️  Could not verify identity, but kubeconfig was created"
+          fi
+          
+          # Try to get cluster info
+          echo ""
+          echo "🔍 Testing cluster access..."
+          if oc get nodes &> /dev/null; then
+            echo "✅ Can access cluster nodes"
+            oc get nodes
+          else
+            echo "⚠️  Cannot list nodes (may need additional RBAC permissions)"
+          fi
+          
+          if oc get clusterversion &> /dev/null; then
+            echo "✅ Can access cluster version"
+            oc get clusterversion
+          else
+            echo "⚠️  Cannot get cluster version"
+          fi
+          
+          echo ""
+          echo "✅ Long-lived kubeconfig generated successfully!"
+          echo "ℹ️  This kubeconfig uses a Service Account with non-expiring token"
+          echo "ℹ️  Subsequent tasks can use this kubeconfig without re-authentication"
+          
+        else
+          echo "⚠️  Skipping kubeconfig generation - no cluster login available"
+          echo "ℹ️  Cluster validation completed without oc access"
+        fi
+        
+        # Get Terraform outputs for AWS services
+        echo "📋 Retrieving AWS services information from Terraform..."
+        cd rosa/terraform
+        
+        # Debug: Show terraform.tfvars to verify deployment flags
+        if [[ -f terraform.tfvars ]]; then
+          echo ""
+          echo "📋 Current Terraform Configuration (terraform.tfvars):"
+          echo "=========================================="
+          cat terraform.tfvars | grep -E "^(deploy_postgres|deploy_redis|deploy_quay)" || echo "No deployment flags found"
+          echo "=========================================="
+          echo ""
+        fi
+        
+        # Prepare backend configuration
+        BACKEND_S3_KEY="rosa/${CLUSTER_NAME}/terraform.tfstate"  # Cluster-specific key
+        echo "  S3 State Location: s3://${TERRAFORM_STATE_S3_BUCKET}/${BACKEND_S3_KEY}"
+        
+        # Initialize Terraform with S3 backend using environment variables
+        echo "🔧 Initializing Terraform with S3 backend to access state..."
+        terraform init \
+          -backend-config="bucket=${TERRAFORM_STATE_S3_BUCKET}" \
+          -backend-config="key=${BACKEND_S3_KEY}" \
+          -backend-config="region=${AWS_REGION}" \
+          -backend-config="dynamodb_table=${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+          -backend-config="encrypt=true"
+        
+        echo ""
+        echo "📊 AWS Services Information:"
+        echo "============================"
+        
+        # VPC Info
+        VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "")
+        if [[ -n "${VPC_ID}" ]]; then
+          echo "VPC ID: ${VPC_ID}"
+        fi
+        
+        # PostgreSQL Info
+        POSTGRES_ENDPOINT=$(terraform output -raw postgres_endpoint 2>/dev/null || echo "")
+        if [[ -n "${POSTGRES_ENDPOINT}" ]] && [[ "${POSTGRES_ENDPOINT}" != "" ]]; then
+          POSTGRES_PORT=$(terraform output -raw postgres_port 2>/dev/null || echo '5432')
+          POSTGRES_DB=$(terraform output -raw postgres_database_name 2>/dev/null || echo 'eic')
+          POSTGRES_USER=$(terraform output -raw postgres_admin_username 2>/dev/null || echo 'eicadmin')
+          
+          echo ""
+          echo "=========================================="
+          echo "🐘 PostgreSQL (RDS) Access Details"
+          echo "=========================================="
+          echo ""
+          echo "Connection Information:"
+          echo "  Host: ${POSTGRES_ENDPOINT}"
+          echo "  Port: ${POSTGRES_PORT}"
+          echo "  Database: ${POSTGRES_DB}"
+          echo "  Username: ${POSTGRES_USER}"
+          echo "  Password: ${POSTGRES_ADMIN_PASSWORD}"
+          echo "  SSL Mode: require"
+          echo ""
+          
+          # URL-encode password for connection string
+          POSTGRES_PASSWORD_ENCODED=$(echo -n "${POSTGRES_ADMIN_PASSWORD}" | jq -sRr @uri)
+          
+          echo "Connection String (with SSL):"
+          echo "  postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ENCODED}@${POSTGRES_ENDPOINT}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=require"
+          echo ""
+          
+          echo "Test Connection from Pod:"
+          echo "  oc run -it --rm pg-test --image=postgres:15 --restart=Never -- \\"
+          echo "    psql \"postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD_ENCODED}@${POSTGRES_ENDPOINT}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=require\" \\"
+          echo "    -c \"SELECT version();\""
+          echo ""
+          echo "Download RDS CA Certificate:"
+          echo "  curl -sL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o rds-ca-bundle.pem"
+          echo "=========================================="
+        else
+          echo ""
+          echo "ℹ️  PostgreSQL (RDS) not deployed"
+          echo ""
+          echo "⚠️  Troubleshooting:"
+          echo "   1. Check terraform.tfvars above - is deploy_postgres = true?"
+          echo "   2. Check Terraform state: terraform state list | grep postgres"
+          echo "   3. If state shows postgres but output is empty, resource may have failed"
+          echo "   4. To force recreation: terraform destroy -target=aws_db_instance.postgres && terraform apply"
+        fi
+        
+        # Redis Info
+        REDIS_ENDPOINT=$(terraform output -raw redis_endpoint 2>/dev/null || echo "")
+        if [[ -n "${REDIS_ENDPOINT}" ]] && [[ "${REDIS_ENDPOINT}" != "" ]]; then
+          REDIS_PORT=$(terraform output -raw redis_port 2>/dev/null || echo '6379')
+          
+          # Auth token is sensitive, need to use -json and parse
+          echo "📋 Retrieving Redis auth token from Terraform..."
+          REDIS_AUTH_TOKEN_RAW=$(terraform output -json redis_auth_token 2>/dev/null || echo '""')
+          REDIS_AUTH_TOKEN=$(echo "${REDIS_AUTH_TOKEN_RAW}" | jq -r '.' 2>/dev/null || echo '')
+          
+          echo ""
+          echo "=========================================="
+          echo "🔴 Redis (ElastiCache) Access Details"
+          echo "=========================================="
+          echo ""
+          
+          if [[ -z "${REDIS_AUTH_TOKEN}" ]] || [[ "${REDIS_AUTH_TOKEN}" == "null" ]]; then
+            echo "⚠️  WARNING: Could not retrieve Redis auth token from Terraform"
+            echo ""
+            echo "This means Redis was created WITHOUT authentication."
+            echo "For security, Redis should have authentication enabled."
+            echo ""
+            echo "🔧 To fix this:"
+            echo "  1. Destroy existing Redis:"
+            echo "     terraform destroy -target=aws_elasticache_cluster.redis"
+            echo "  2. Re-apply:"
+            echo "     terraform apply"
+            echo "  3. New Redis will have auth_token automatically generated"
+            echo ""
+            echo "Connection Information (NO AUTH - INSECURE):"
+            echo "  Host: ${REDIS_ENDPOINT}"
+            echo "  Port: ${REDIS_PORT}"
+            echo "  Auth Token: [NONE - Redis created without authentication]"
+            echo "  TLS: Enabled (required)"
+            echo ""
+            echo "Test Connection from Pod (NO AUTH):"
+            echo "  oc run -it --rm redis-test --image=redis:7 --restart=Never -- \\"
+            echo "    redis-cli -h ${REDIS_ENDPOINT} -p ${REDIS_PORT} --tls PING"
+            echo ""
+            echo "Connection String (NO AUTH):"
+            echo "  rediss://${REDIS_ENDPOINT}:${REDIS_PORT}/0"
+          else
+            echo "Connection Information:"
+            echo "  Host: ${REDIS_ENDPOINT}"
+            echo "  Port: ${REDIS_PORT}"
+            echo "  Auth Token: ${REDIS_AUTH_TOKEN}"
+            echo "  TLS: Enabled (required)"
+            echo ""
+            echo "Test Connection from Pod:"
+            echo "  oc run -it --rm redis-test --image=redis:7 --restart=Never -- \\"
+            echo "    redis-cli -h ${REDIS_ENDPOINT} -p ${REDIS_PORT} --tls -a '${REDIS_AUTH_TOKEN}' PING"
+            echo ""
+            echo "Connection String:"
+            echo "  rediss://:${REDIS_AUTH_TOKEN}@${REDIS_ENDPOINT}:${REDIS_PORT}/0"
+          fi
+          echo "=========================================="
+        else
+          echo ""
+          echo "ℹ️  Redis (ElastiCache) not deployed"
+        fi
+        
+        # S3 Quay Storage Info
+        S3_BUCKET=$(terraform output -raw quay_s3_bucket_name 2>/dev/null || echo "")
+        if [[ -n "${S3_BUCKET}" ]] && [[ "${S3_BUCKET}" != "" ]]; then
+          echo ""
+          echo "📊 Quay S3 Storage Information:"
+          echo "  Bucket: ${S3_BUCKET}"
+          echo "  Region: $(terraform output -raw quay_s3_bucket_region 2>/dev/null || echo '')"
+          S3_ACCESS_KEY=$(terraform output -raw quay_s3_access_key_id 2>/dev/null || echo "")
+          echo "  Access Key ID: ${S3_ACCESS_KEY}"
+          echo "  Secret Access Key: [HIDDEN]"
+        fi
+        
+        cd ../..
+        
+        # Note: cluster-info ConfigMap is pre-created in the cluster
+        # The pipeline references it via clusterConfigMapName parameter
+
+        echo ""
+        echo "✅ ROSA cluster validation completed!"
+        echo "📋 Summary:"
+        echo "  Cluster Name: ${CLUSTER_NAME}"
+        echo "  Cluster ID: ${CLUSTER_ID}"
+        echo "  Cluster State: ready"
+        echo "  API URL: ${API_URL}"
+        echo "  Console URL: ${CONSOLE_URL}"
+        if [[ "${CLUSTER_LOGIN_AVAILABLE}" == "true" ]]; then
+          echo "  Cluster Access: ✅ Available"
+        else
+          echo "  Cluster Access: ⚠️  OAuth token required (manual)"
+        fi
+

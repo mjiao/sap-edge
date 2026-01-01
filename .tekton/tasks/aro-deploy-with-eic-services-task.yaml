@@ -9,7 +9,7 @@ kind: Task
 metadata:
   name: aro-deploy-with-eic-services
 spec:
-  description: Deploy ARO cluster with EIC services (PostgreSQL and Redis)
+  description: Deploy ARO cluster with EIC services (PostgreSQL, Redis, and Quay storage)
   params:
     - name: aroLocation
       type: string
@@ -42,6 +42,10 @@ spec:
       type: string
       description: "Whether to deploy Redis (true/false)"
       default: "true"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy Quay storage (true/false)"
+      default: "true"
   workspaces:
     - name: source
   steps:
@@ -60,6 +64,8 @@ spec:
           value: "$(params.deployPostgres)"
         - name: DEPLOY_REDIS
           value: "$(params.deployRedis)"
+        - name: DEPLOY_QUAY
+          value: "$(params.deployQuay)"
       envFrom:
         - secretRef:
             name: $(params.azureSecretName)
@@ -72,8 +78,17 @@ spec:
         set -euo pipefail
         
         # Environment variables are now directly available from secrets (no conversion needed)
-        # PostgreSQL admin password is already available as environment variable from envFrom
+        # PostgreSQL admin password must be available as POSTGRES_ADMIN_PASSWORD from the secret
         echo "🔐 PostgreSQL admin password available from secret mount..."
+        
+        # Validate POSTGRES_ADMIN_PASSWORD is set and export it
+        if [[ -z "${POSTGRES_ADMIN_PASSWORD:-}" ]]; then
+          echo "❌ ERROR: POSTGRES_ADMIN_PASSWORD environment variable is not set!"
+          echo "   The secret '$(params.postgresAdminPasswordSecretName)' must contain a key named 'POSTGRES_ADMIN_PASSWORD'"
+          exit 1
+        fi
+        export POSTGRES_ADMIN_PASSWORD
+        echo "✅ PostgreSQL admin password is set (length: ${#POSTGRES_ADMIN_PASSWORD} characters)"
         
         echo "📦 Installing required packages..."
         # Install make, libicu, and jq first (needed for makefile operations)
@@ -89,20 +104,28 @@ spec:
         
         echo "🔐 Logging into Azure..."
         make azure-login
-        
-        echo "🔍 Checking Azure services status..." 
+
+        # Export required environment variables for all makefile operations
+        export ARO_CLUSTER_NAME="$ARO_CLUSTER_NAME"
+        export ARO_RESOURCE_GROUP="$ARO_RESOURCE_GROUP"
+        export ARO_LOCATION="$ARO_LOCATION"
+        export ARO_VERSION="$ARO_VERSION"
+        export DEPLOY_POSTGRES="$DEPLOY_POSTGRES"
+        export DEPLOY_REDIS="$DEPLOY_REDIS"
+        export DEPLOY_QUAY="$DEPLOY_QUAY"
+
+        echo "🔍 Checking Azure services status..."
         # Set fixed PostgreSQL server name
         POSTGRES_SERVER_NAME="postgres-${ARO_CLUSTER_NAME}"
         
-        # Initialize deployment flags
+        # Initialize deployment flag
         CLUSTER_EXISTS=false
-        SERVICES_NEED_DEPLOYMENT=false
         
         # Check if cluster already exists
         echo "🔍 Checking existing cluster status..."
         echo "Using cluster name: $ARO_CLUSTER_NAME"
         echo "Using resource group: $ARO_RESOURCE_GROUP"
-        
+
         CLUSTER_EXISTS_RESULT=$(make aro-cluster-exists | tail -1)
         if [[ "$CLUSTER_EXISTS_RESULT" == "true" ]]; then
           echo "✅ Cluster EXISTS"
@@ -118,37 +141,9 @@ spec:
             CLUSTER_EXISTS=false  # After deletion, cluster doesn't exist
           elif [[ "$CLUSTER_STATUS" == "Succeeded" ]]; then
             echo "✅ Cluster already exists and is ready!"
-            # Check if services need deployment only when cluster exists and is ready
-            echo "🔍 Checking Azure services status..."
-            
-            if [[ "${DEPLOY_POSTGRES:-true}" == "true" ]]; then
-              echo "📊 Checking PostgreSQL server status..."
-              POSTGRES_EXISTS=$(make postgres-exists | tail -1)
-              if [[ -n "$POSTGRES_EXISTS" ]]; then
-                echo "✅ PostgreSQL server already exists: $POSTGRES_EXISTS"
-              else
-                echo "📦 PostgreSQL server needs to be created"
-                SERVICES_NEED_DEPLOYMENT=true
-              fi
-            fi
-
-            if [[ "${DEPLOY_REDIS:-true}" == "true" ]]; then
-              echo "📊 Checking Redis cache status..."
-              REDIS_EXISTS=$(make redis-exists | tail -1)
-              if [[ -n "$REDIS_EXISTS" ]]; then
-                echo "✅ Redis cache already exists: $REDIS_EXISTS"
-              else
-                echo "📦 Redis cache needs to be created"
-                SERVICES_NEED_DEPLOYMENT=true
-              fi
-            fi
-            
-            if [[ "$SERVICES_NEED_DEPLOYMENT" == "false" ]]; then
-              echo "✅ All services are ready, exiting successfully!"
+            echo "ℹ️  Assuming all Azure services (PostgreSQL, Redis, Quay storage) were deployed with the cluster"
+            echo "✅ Skipping deployment - cluster and services already exist!"
               exit 0
-            fi
-            # If services need deployment, continue to deployment section
-            break
           elif [[ "$CLUSTER_STATUS" == "Creating" || "$CLUSTER_STATUS" == "Updating" ]]; then
             echo "⏳ Cluster is in state: $CLUSTER_STATUS, waiting for completion..."
             if make aro-wait-for-ready; then
@@ -169,16 +164,9 @@ spec:
         make aro-resource-group-create
         
         # Deployment decision logic based on cluster existence
-        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS, SERVICES_NEED_DEPLOYMENT=$SERVICES_NEED_DEPLOYMENT"
+        echo "🔍 Deployment decision: CLUSTER_EXISTS=$CLUSTER_EXISTS"
         
-        if [[ "$CLUSTER_EXISTS" == "true" ]]; then
-          if [[ "$SERVICES_NEED_DEPLOYMENT" == "true" ]]; then
-            echo "🚀 Deploying Azure services only (cluster exists)..."
-            make aro-services-deploy-with-retry
-          else
-            echo "✅ Cluster exists and all services are ready - nothing to deploy!"
-          fi
-        else
+        if [[ "$CLUSTER_EXISTS" == "false" ]]; then
           echo "🚀 Deploying full ARO cluster with EIC services (PostgreSQL and Redis)..."
           
           # Final safety check - double-check cluster doesn't exist before deploying
@@ -189,6 +177,8 @@ spec:
 
           echo "🔄 Creating domain records for ARO..."
           make domain-records
+        else
+          echo "✅ Cluster exists - nothing to deploy!"
         fi
 
         echo "✅ ARO deployment with EIC services completed successfully!" 

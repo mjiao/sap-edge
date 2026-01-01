@@ -16,3 +16,4 @@ rosa/terraform/backend.config
 rosa/terraform/.terraform.lock.hcl
 
 CLAUDE.md
+rosa/terraform/create-approvers-simple.sh

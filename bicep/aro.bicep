@@ -127,8 +127,23 @@ resource aroCluster 'Microsoft.RedHatOpenShift/openShiftClusters@2023-11-22' = {
   }
 }
 
+// Deploy VNet with all required subnets
+module network 'network.bicep' = {
+  name: 'network-deployment'
+  params: {
+    location: location
+    vnetName: vnetName
+    masterSubnetName: masterSubnetName
+    workerSubnetName: workerSubnetName
+  }
+}
+
+// Reference the deployed VNet and subnets
 resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' existing = {
   name: vnetName
+  dependsOn: [
+    network
+  ]
 }
 
 resource masterSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
@@ -141,12 +156,25 @@ resource workerSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' exi
   parent: vnet
 }
 
+resource postgresSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
+  name: 'postgres-subnet'
+  parent: vnet
+}
+
+resource redisSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' existing = {
+  name: 'redis-subnet'
+  parent: vnet
+}
+
 // Deploy Azure services using the azure-services.bicep module
 module azureServices 'azure-services.bicep' = if (deployPostgres || deployRedis) {
   name: 'azure-services-deployment'
   params: {
     clusterName: clusterName
     location: location
+    vnetId: vnet.id
+    postgresSubnetId: postgresSubnet.id
+    redisSubnetId: redisSubnet.id
     deployPostgres: deployPostgres
     deployRedis: deployRedis
     postgresAdminPassword: postgresAdminPassword
@@ -154,19 +182,19 @@ module azureServices 'azure-services.bicep' = if (deployPostgres || deployRedis)
 }
 
 // Outputs for Azure services
-output postgresServerName string = (deployPostgres || deployRedis) && deployPostgres ? azureServices.outputs.postgresServerName : ''
-output postgresServerFqdn string = (deployPostgres || deployRedis) && deployPostgres ? azureServices.outputs.postgresServerFqdn : ''
-output postgresAdminUsername string = (deployPostgres || deployRedis) && deployPostgres ? azureServices.outputs.postgresAdminUsername : ''
-output postgresDatabaseName string = (deployPostgres || deployRedis) && deployPostgres ? azureServices.outputs.postgresDatabaseName : ''
+output postgresServerName string = deployPostgres ? azureServices!.outputs.postgresServerName : ''
+output postgresServerFqdn string = deployPostgres ? azureServices!.outputs.postgresServerFqdn : ''
+output postgresAdminUsername string = deployPostgres ? azureServices!.outputs.postgresAdminUsername : ''
+output postgresDatabaseName string = deployPostgres ? azureServices!.outputs.postgresDatabaseName : ''
 
-output redisCacheName string = (deployPostgres || deployRedis) && deployRedis ? azureServices.outputs.redisCacheName : ''
-output redisHostName string = (deployPostgres || deployRedis) && deployRedis ? azureServices.outputs.redisHostName : ''
-output redisPort int = (deployPostgres || deployRedis) && deployRedis ? azureServices.outputs.redisPort : 0
-output redisSslPort int = (deployPostgres || deployRedis) && deployRedis ? azureServices.outputs.redisSslPort : 0
+output redisCacheName string = deployRedis ? azureServices!.outputs.redisCacheName : ''
+output redisHostName string = deployRedis ? azureServices!.outputs.redisHostName : ''
+output redisPort int = deployRedis ? azureServices!.outputs.redisPort : 0
+output redisSslPort int = deployRedis ? azureServices!.outputs.redisSslPort : 0
 
 // Connection strings
-output postgresConnectionString string = (deployPostgres || deployRedis) && deployPostgres ? azureServices.outputs.postgresConnectionString : ''
-output redisConnectionString string = (deployPostgres || deployRedis) && deployRedis ? azureServices.outputs.redisConnectionString : ''
+output postgresConnectionString string = deployPostgres ? azureServices!.outputs.postgresConnectionString : ''
+output redisConnectionString string = deployRedis ? azureServices!.outputs.redisConnectionString : ''
 
 // Enhanced testing-focused outputs
 @description('Quick connection info for testing and debugging')
@@ -185,19 +213,19 @@ output quickConnectionInfo object = {
     ocLogin: 'oc login ${aroCluster.properties.apiserverProfile.url}'
   }
   services: {
-    postgres: (deployPostgres || deployRedis) && deployPostgres ? {
-      serverName: azureServices.outputs.postgresServerName
-      serverFqdn: azureServices.outputs.postgresServerFqdn
-      databaseName: azureServices.outputs.postgresDatabaseName
-      adminUsername: azureServices.outputs.postgresAdminUsername
-      connectCommand: 'az postgres flexible-server connect --name ${azureServices.outputs.postgresServerName} --admin-user ${azureServices.outputs.postgresAdminUsername} --database ${azureServices.outputs.postgresDatabaseName}'
+    postgres: deployPostgres ? {
+      serverName: azureServices!.outputs.postgresServerName
+      serverFqdn: azureServices!.outputs.postgresServerFqdn
+      databaseName: azureServices!.outputs.postgresDatabaseName
+      adminUsername: azureServices!.outputs.postgresAdminUsername
+      connectCommand: 'az postgres flexible-server connect --name ${azureServices!.outputs.postgresServerName} --admin-user ${azureServices!.outputs.postgresAdminUsername} --database ${azureServices!.outputs.postgresDatabaseName}'
     } : null
-    redis: (deployPostgres || deployRedis) && deployRedis ? {
-      cacheName: azureServices.outputs.redisCacheName
-      hostName: azureServices.outputs.redisHostName
-      port: azureServices.outputs.redisPort
-      sslPort: azureServices.outputs.redisSslPort
-      getKeysCommand: 'az redis list-keys --name ${azureServices.outputs.redisCacheName} --resource-group ${resourceGroup().name}'
+    redis: deployRedis ? {
+      cacheName: azureServices!.outputs.redisCacheName
+      hostName: azureServices!.outputs.redisHostName
+      port: azureServices!.outputs.redisPort
+      sslPort: azureServices!.outputs.redisSslPort
+      getKeysCommand: 'az redis list-keys --name ${azureServices!.outputs.redisCacheName} --resource-group ${resourceGroup().name}'
     } : null
   }
   testing: {

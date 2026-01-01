@@ -24,7 +24,7 @@
       until:
         - quay_pods is defined
         - "'resources' in quay_pods"
-        - quay_pods.resources | length >= 5
+        - quay_pods.resources | length >= 2  # Minimal setup (only core Quay components)
 
     - name: Wait for Quay registry endpoint to be available
       kubernetes.core.k8s_info:

@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-License-Identifier: Apache-2.0
+
+# Example terraform.tfvars file for ROSA HCP cluster deployment
+# Copy this file to terraform.tfvars and customize the values
+
+###########################################
+# Required Variables
+###########################################
+
+cluster_name = "my-rosa-test"  # Max 15 characters!
+aws_region   = "us-east-1"
+vpc_name     = "my-rosa-vpc"
+rosa_version = "4.14.9"
+
+# Worker node instance type (default: m5.2xlarge - 8 vCPU, 32 GB RAM)
+# Common options: m5.xlarge, m5.2xlarge, m5.4xlarge, m6i.xlarge, m6i.2xlarge
+compute_machine_type = "m5.2xlarge"
+
+###########################################
+# IAM Role Configuration
+###########################################
+# By default, use pre-existing account roles (recommended for pipelines)
+# This avoids IAM role lifecycle issues during terraform destroy
+#
+# ONE-TIME SETUP (run once before first deployment):
+#   rosa login --token=<your-ocm-token>
+#   rosa create account-roles --prefix ManagedOpenShift --mode auto --yes
+#   rosa create oidc-config --mode auto --yes
+#   rosa list oidc-config  # Get the OIDC config ID for oidc_config_id below
+#
+# For isolated testing with per-cluster roles, set all to true and remove oidc_config_id:
+
+create_account_roles  = false  # Use pre-existing account roles
+create_oidc           = false  # Use pre-existing OIDC config
+create_operator_roles = false  # Use pre-existing operator roles
+account_role_prefix   = "ManagedOpenShift"
+operator_role_prefix  = "ManagedOpenShift"
+oidc_config_id        = "REPLACE_WITH_YOUR_OIDC_CONFIG_ID"  # Required when create_oidc=false
+
+###########################################
+# Optional: Network Configuration
+###########################################
+
+vpc_cidr        = "10.0.0.0/16"
+public_subnets  = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+private_subnets = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+###########################################
+# Optional: AWS Services
+###########################################
+
+# Quay Storage (enabled by default)
+deploy_quay = true
+
+# PostgreSQL Configuration
+deploy_postgres         = true
+postgres_version        = "15.5"
+postgres_instance_class = "db.t3.micro"
+postgres_admin_password = "CHANGE-ME-SecurePassword123!"
+
+# Redis Configuration
+deploy_redis          = true
+redis_engine_version  = "7.0"
+redis_node_type       = "cache.t3.micro"
+
+###########################################
+# Optional: Tags
+###########################################
+
+tags = {
+  Environment = "test"
+  Team        = "sap-edge"
+  Terraform   = "true"
+  Purpose     = "rosa-hcp-validation"
+}
+

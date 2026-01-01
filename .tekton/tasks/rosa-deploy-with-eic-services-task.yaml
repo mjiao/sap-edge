@@ -1,0 +1,451 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: rosa-deploy-with-eic-services
+spec:
+  description: Deploy ROSA HCP cluster with EIC services (RDS PostgreSQL, ElastiCache Redis, and S3 for Quay) using Terraform
+  params:
+    - name: clusterName
+      type: string
+      description: "ROSA cluster name (max 15 characters)"
+    - name: awsRegion
+      type: string
+      description: "AWS region"
+      default: "eu-north-1"
+    - name: rosaVersion
+      type: string
+      description: "ROSA version"
+      default: "4.17.0"
+    - name: awsSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing AWS credentials"
+      default: "aws-credentials-secret"
+    - name: redhatTokenSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat OCM token"
+      default: "redhat-token-secret"
+    - name: postgresAdminPasswordSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
+      default: "rosa-postgres-admin-password"
+    - name: deployPostgres
+      type: string
+      description: "Whether to deploy RDS PostgreSQL (true/false)"
+      default: "false"
+    - name: deployRedis
+      type: string
+      description: "Whether to deploy ElastiCache Redis (true/false)"
+      default: "false"
+    - name: deployQuay
+      type: string
+      description: "Whether to deploy S3 bucket for Quay (true/false)"
+      default: "true"
+    - name: terraformStateS3Bucket
+      type: string
+      description: "S3 bucket name for Terraform state storage"
+      default: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      type: string
+      description: "S3 key for Terraform state file (auto-generated as rosa/${CLUSTER_NAME}/terraform.tfstate)"
+      default: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      type: string
+      description: "DynamoDB table for Terraform state locking"
+      default: "eic-test-rosa-terraform-state-lock"
+  workspaces:
+    - name: source
+  steps:
+    - name: deploy-rosa-with-terraform
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "120m"
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: CLUSTER_NAME
+          value: "$(params.clusterName)"
+        - name: AWS_REGION
+          value: "$(params.awsRegion)"
+        - name: ROSA_VERSION
+          value: "$(params.rosaVersion)"
+        - name: POSTGRES_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: $(params.postgresAdminPasswordSecretName)
+              key: POSTGRES_ADMIN_PASSWORD
+        - name: DEPLOY_POSTGRES
+          value: "$(params.deployPostgres)"
+        - name: DEPLOY_REDIS
+          value: "$(params.deployRedis)"
+        - name: DEPLOY_QUAY
+          value: "$(params.deployQuay)"
+        - name: TERRAFORM_STATE_S3_BUCKET
+          value: "$(params.terraformStateS3Bucket)"
+        - name: TERRAFORM_STATE_S3_KEY
+          value: "$(params.terraformStateS3Key)"
+        - name: TERRAFORM_STATE_DYNAMODB_TABLE
+          value: "$(params.terraformStateDynamoDBTable)"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.awsSecretName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: REDHAT_OCM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.redhatTokenSecretName)
+              key: REDHAT_OCM_TOKEN
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        
+        echo "🚀 Starting ROSA HCP cluster deployment with Terraform..."
+        echo "=============================================="
+        echo "📋 Configuration:"
+        echo "  Cluster Name: ${CLUSTER_NAME}"
+        echo "  AWS Region: ${AWS_REGION}"
+        echo "  ROSA Version: ${ROSA_VERSION}"
+        echo "  Deploy PostgreSQL: ${DEPLOY_POSTGRES}"
+        echo "  Deploy Redis: ${DEPLOY_REDIS}"
+        echo "  Deploy Quay S3: ${DEPLOY_QUAY}"
+        echo ""
+        
+        # Clean up workspace to maximize available disk space
+        echo "🧹 Cleaning up workspace to save disk space..."
+        rm -rf aws awscliv2.zip terraform_*.zip rosa-linux.tar.gz 2>/dev/null || true
+        df -h /workspace/source
+
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y make wget unzip jq git
+
+        # Install Terraform
+        echo "📦 Installing Terraform..."
+        if ! command -v terraform &> /dev/null; then
+          TERRAFORM_VERSION="1.6.6"
+          wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          mv terraform /usr/local/bin/
+          rm -f "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"  # Clean up immediately
+        else
+          echo "✅ Terraform already installed"
+        fi
+        terraform version
+
+        # Install ROSA CLI
+        echo "📦 Installing ROSA CLI..."
+        if ! command -v rosa &> /dev/null; then
+          wget -q https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+          # Extract to a temporary directory to avoid conflicts
+          mkdir -p /tmp/rosa-install
+          tar xzf rosa-linux.tar.gz -C /tmp/rosa-install
+          # Move the binary with overwrite
+          mv /tmp/rosa-install/rosa /usr/local/bin/rosa
+          rm -rf /tmp/rosa-install rosa-linux.tar.gz  # Clean up immediately
+        else
+          echo "✅ ROSA CLI already installed"
+        fi
+        rosa version
+
+        # Install AWS CLI
+        echo "📦 Installing AWS CLI..."
+        if ! command -v aws &> /dev/null; then
+          curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf aws awscliv2.zip  # Clean up immediately
+        else
+          echo "✅ AWS CLI already installed"
+        fi
+        aws --version
+
+        # Check available disk space after installations
+        echo "💾 Available disk space after tool installation:"
+        df -h /workspace/source
+        
+        # Verify AWS credentials
+        echo "🔐 Verifying AWS credentials..."
+        if AWS_IDENTITY=$(aws sts get-caller-identity 2>&1); then
+          AWS_ACCOUNT=$(echo "${AWS_IDENTITY}" | jq -r '.Account')
+          AWS_USER=$(echo "${AWS_IDENTITY}" | jq -r '.Arn' | cut -d'/' -f2)
+          echo "✅ AWS credentials verified (Account: ${AWS_ACCOUNT}, User: ${AWS_USER})"
+        else
+          echo "❌ AWS credentials verification failed"
+          exit 1
+        fi
+        
+        # Login to Red Hat OCM
+        echo "🔐 Logging into Red Hat OpenShift Cluster Manager..."
+        rosa login --token="${REDHAT_OCM_TOKEN}"
+        
+        # Fix git ownership issue that can prevent proper repository access
+        echo "🔧 Fixing git ownership..."
+        git config --global --add safe.directory /workspace/source
+
+        # Ensure we have the complete repository state
+        echo "🔧 Ensuring complete repository state..."
+        git status
+        echo "🔍 Current HEAD commit:"
+        git log --oneline -1
+
+        # Navigate to Terraform directory
+        echo "📂 Navigating to Terraform directory..."
+        echo "🔍 Current directory: $(pwd)"
+        echo "🔍 Workspace contents:"
+        ls -la
+        echo "🔍 Checking for rosa directory:"
+        if [[ ! -d "rosa" ]]; then
+          echo "❌ rosa directory not found"
+          echo "🔍 Searching for rosa directory recursively:"
+          find . -name "rosa" -type d 2>/dev/null || echo "No rosa directory found anywhere"
+          echo "🔍 Verifying if rosa directory exists in git:"
+          git ls-tree -r HEAD | grep rosa/ | head -10 || echo "No rosa files found in git tree"
+
+          # Try to restore the rosa directory
+          echo "🔧 Attempting to restore rosa directory..."
+          if git ls-tree -r HEAD | grep -q rosa/; then
+            echo "✅ rosa files exist in git tree, attempting restore..."
+            git checkout HEAD -- rosa/ || echo "Failed to checkout rosa directory"
+            if [[ -d "rosa" ]]; then
+              echo "✅ Successfully restored rosa directory!"
+            else
+              echo "❌ Failed to restore rosa directory"
+              # Last resort: try to reset the working directory
+              echo "🔧 Attempting full working directory reset..."
+              git reset --hard HEAD
+              if [[ -d "rosa" ]]; then
+                echo "✅ Successfully restored rosa directory via reset!"
+              else
+                echo "❌ All restoration attempts failed"
+                exit 1
+              fi
+            fi
+          else
+            echo "❌ rosa files do not exist in git tree"
+            exit 1
+          fi
+        fi
+        ls -la rosa/
+        if [[ ! -d "rosa/terraform" ]]; then
+          echo "❌ rosa/terraform directory not found"
+          exit 1
+        fi
+        
+        # Setup Terraform S3 backend for state persistence
+        echo "🗄️  Setting up Terraform S3 backend for persistent state..."
+        echo "  S3 Bucket: ${TERRAFORM_STATE_S3_BUCKET}"
+        echo "  S3 Key: ${TERRAFORM_STATE_S3_KEY}"
+        echo "  DynamoDB Table: ${TERRAFORM_STATE_DYNAMODB_TABLE}"
+        
+        # Create S3 bucket for Terraform state if it doesn't exist
+        if ! aws s3 ls "s3://${TERRAFORM_STATE_S3_BUCKET}" 2>/dev/null; then
+          echo "📦 Creating S3 bucket: ${TERRAFORM_STATE_S3_BUCKET}"
+          aws s3api create-bucket \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --region "${AWS_REGION}" \
+            $(if [ "${AWS_REGION}" != "us-east-1" ]; then echo "--create-bucket-configuration LocationConstraint=${AWS_REGION}"; fi)
+          
+          # Enable versioning for state file safety
+          echo "🔄 Enabling versioning on S3 bucket..."
+          aws s3api put-bucket-versioning \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --versioning-configuration Status=Enabled
+          
+          # Enable server-side encryption
+          echo "🔒 Enabling encryption on S3 bucket..."
+          aws s3api put-bucket-encryption \
+            --bucket "${TERRAFORM_STATE_S3_BUCKET}" \
+            --server-side-encryption-configuration '{
+              "Rules": [{
+                "ApplyServerSideEncryptionByDefault": {
+                  "SSEAlgorithm": "AES256"
+                }
+              }]
+            }'
+          
+          echo "✅ S3 bucket created and configured"
+        else
+          echo "✅ S3 bucket already exists"
+        fi
+        
+        # Create DynamoDB table for state locking if it doesn't exist
+        if ! aws dynamodb describe-table --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" --region "${AWS_REGION}" 2>/dev/null; then
+          echo "🔒 Creating DynamoDB table for state locking: ${TERRAFORM_STATE_DYNAMODB_TABLE}"
+          aws dynamodb create-table \
+            --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+            --attribute-definitions AttributeName=LockID,AttributeType=S \
+            --key-schema AttributeName=LockID,KeyType=HASH \
+            --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+            --region "${AWS_REGION}" \
+            --tags Key=Purpose,Value=TerraformStateLock Key=ManagedBy,Value=Tekton
+          
+          echo "⏳ Waiting for DynamoDB table to become active..."
+          aws dynamodb wait table-exists --table-name "${TERRAFORM_STATE_DYNAMODB_TABLE}" --region "${AWS_REGION}"
+          echo "✅ DynamoDB table created"
+        else
+          echo "✅ DynamoDB table already exists"
+        fi
+        
+        cd rosa/terraform
+        
+        # Prepare backend configuration variables
+        echo "📝 Preparing Terraform backend configuration..."
+        BACKEND_S3_KEY="rosa/${CLUSTER_NAME}/terraform.tfstate"  # Cluster-specific key
+        echo "  S3 State Location: s3://${TERRAFORM_STATE_S3_BUCKET}/${BACKEND_S3_KEY}"
+        
+        # Convert string boolean parameters to lowercase for Terraform
+        # Terraform expects: true/false (lowercase, no quotes)
+        DEPLOY_POSTGRES_TF=$(echo "${DEPLOY_POSTGRES}" | tr '[:upper:]' '[:lower:]')
+        DEPLOY_REDIS_TF=$(echo "${DEPLOY_REDIS}" | tr '[:upper:]' '[:lower:]')
+        DEPLOY_QUAY_TF=$(echo "${DEPLOY_QUAY}" | tr '[:upper:]' '[:lower:]')
+        
+        echo "📝 Boolean parameter conversion:"
+        echo "  deploy_postgres: ${DEPLOY_POSTGRES} → ${DEPLOY_POSTGRES_TF}"
+        echo "  deploy_redis: ${DEPLOY_REDIS} → ${DEPLOY_REDIS_TF}"
+        echo "  deploy_quay: ${DEPLOY_QUAY} → ${DEPLOY_QUAY_TF}"
+        echo ""
+
+        # Create terraform.tfvars using cat (avoids heredoc YAML issues)
+        echo "📝 Creating terraform.tfvars..."
+        {
+          echo "# AWS Configuration"
+          echo "aws_region = \"${AWS_REGION}\""
+          echo ""
+          echo "# VPC Configuration"
+          echo "vpc_name        = \"${CLUSTER_NAME}-vpc\""
+          echo "vpc_cidr        = \"10.0.0.0/16\""
+          echo "public_subnets  = [\"10.0.0.0/24\", \"10.0.1.0/24\", \"10.0.2.0/24\"]"
+          echo "private_subnets = [\"10.0.101.0/24\", \"10.0.102.0/24\", \"10.0.103.0/24\"]"
+          echo ""
+          echo "# ROSA Cluster Configuration"
+          echo "cluster_name     = \"${CLUSTER_NAME}\""
+          echo "rosa_version     = \"${ROSA_VERSION}\""
+          echo "redhat_ocm_token = \"${REDHAT_OCM_TOKEN}\""
+          echo ""
+          echo "# IAM Role Configuration"
+          echo "# Account roles: pre-existing (created once per AWS account)"
+          echo "# OIDC + Operator roles: created per cluster (required for each deployment)"
+          echo "create_account_roles  = false"
+          echo "create_oidc           = true"
+          echo "create_operator_roles = true"
+          echo "account_role_prefix   = \"ManagedOpenShift\""
+          echo "operator_role_prefix  = \"${CLUSTER_NAME}\""
+          echo ""
+          echo "# AWS Services Configuration"
+          echo "deploy_postgres         = ${DEPLOY_POSTGRES_TF}"
+          echo "deploy_redis            = ${DEPLOY_REDIS_TF}"
+          echo "deploy_quay             = ${DEPLOY_QUAY_TF}"
+          echo "postgres_admin_password = \"${POSTGRES_ADMIN_PASSWORD}\""
+          echo ""
+          echo "# Tags"
+          echo "tags = {"
+          echo "  Environment = \"pipeline\""
+          echo "  ManagedBy   = \"tekton\""
+          echo "  Cluster     = \"${CLUSTER_NAME}\""
+          echo "}"
+        } > terraform.tfvars
+        
+        echo "✅ terraform.tfvars created"
+        echo "📋 Contents:"
+        cat terraform.tfvars
+        echo ""
+        
+        # Check if infrastructure already exists
+        echo "🔍 Checking if ROSA cluster already exists..."
+        if rosa describe cluster -c "${CLUSTER_NAME}" &>/dev/null; then
+          CLUSTER_STATE=$(rosa describe cluster -c "${CLUSTER_NAME}" -o json | jq -r '.state')
+          echo "✅ ROSA cluster exists with state: ${CLUSTER_STATE}"
+          
+          if [[ "${CLUSTER_STATE}" == "ready" ]]; then
+            echo "✅ Cluster is ready, skipping deployment"
+            
+            # Still need to initialize Terraform with backend for state access
+            echo "🔧 Initializing Terraform with S3 backend for state access..."
+            terraform init \
+              -backend-config="bucket=${TERRAFORM_STATE_S3_BUCKET}" \
+              -backend-config="key=rosa/${CLUSTER_NAME}/terraform.tfstate" \
+              -backend-config="region=${AWS_REGION}" \
+              -backend-config="dynamodb_table=${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+              -backend-config="encrypt=true"
+            
+            exit 0
+          elif [[ "${CLUSTER_STATE}" == "error" || "${CLUSTER_STATE}" == "failed" ]]; then
+            echo "❌ Cluster is in ${CLUSTER_STATE} state"
+            echo "🗑️ Manual cleanup required. Please delete the cluster first:"
+            echo "   rosa delete cluster -c ${CLUSTER_NAME} --yes"
+            exit 1
+          else
+            echo "⏳ Cluster is in ${CLUSTER_STATE} state, waiting..."
+            rosa logs install -c "${CLUSTER_NAME}" --watch || true
+          fi
+        else
+          echo "📋 No existing ROSA cluster found - will deploy"
+        fi
+        
+        # Initialize Terraform with S3 backend using environment variables
+        echo "🔧 Initializing Terraform with S3 backend..."
+        terraform init \
+          -backend-config="bucket=${TERRAFORM_STATE_S3_BUCKET}" \
+          -backend-config="key=${BACKEND_S3_KEY}" \
+          -backend-config="region=${AWS_REGION}" \
+          -backend-config="dynamodb_table=${TERRAFORM_STATE_DYNAMODB_TABLE}" \
+          -backend-config="encrypt=true"
+        
+        # Plan
+        echo "📋 Planning Terraform deployment..."
+        terraform plan -out=tfplan
+        
+        # Apply
+        echo "🚀 Applying Terraform configuration..."
+        if terraform apply tfplan; then
+          echo "✅ Terraform deployment completed successfully"
+        else
+          echo "❌ Terraform deployment failed"
+          exit 1
+        fi
+        
+        # Get outputs
+        echo ""
+        echo "📋 Deployment Outputs:"
+        echo "====================="
+        terraform output
+        
+        # Save deployment info
+        cd ../..
+        cat > rosa-deployment-info.txt << EOF
+        CLUSTER_NAME=${CLUSTER_NAME}
+        AWS_REGION=${AWS_REGION}
+        ROSA_CLUSTER_ID=$(cd rosa/terraform && terraform output -raw rosa_cluster_id 2>/dev/null || echo "")
+        VPC_ID=$(cd rosa/terraform && terraform output -raw vpc_id 2>/dev/null || echo "")
+        DEPLOY_POSTGRES=${DEPLOY_POSTGRES}
+        DEPLOY_REDIS=${DEPLOY_REDIS}
+        DEPLOY_QUAY=${DEPLOY_QUAY}
+        EOF
+        
+        if [[ "${DEPLOY_POSTGRES}" == "true" ]]; then
+          POSTGRES_ENDPOINT=$(cd rosa/terraform && terraform output -raw postgres_endpoint 2>/dev/null || echo "")
+          echo "POSTGRES_ENDPOINT=${POSTGRES_ENDPOINT}" >> rosa-deployment-info.txt
+        fi
+        
+        if [[ "${DEPLOY_REDIS}" == "true" ]]; then
+          REDIS_ENDPOINT=$(cd rosa/terraform && terraform output -raw redis_endpoint 2>/dev/null || echo "")
+          echo "REDIS_ENDPOINT=${REDIS_ENDPOINT}" >> rosa-deployment-info.txt
+        fi
+        
+        if [[ "${DEPLOY_QUAY}" == "true" ]]; then
+          S3_BUCKET=$(cd rosa/terraform && terraform output -raw quay_s3_bucket_name 2>/dev/null || echo "")
+          echo "S3_BUCKET_NAME=${S3_BUCKET}" >> rosa-deployment-info.txt
+        fi
+        
+        echo "✅ ROSA cluster deployment completed successfully!"
+        echo "💾 Deployment information saved to rosa-deployment-info.txt"
+

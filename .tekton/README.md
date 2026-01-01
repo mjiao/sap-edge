@@ -96,12 +96,33 @@ oc create secret generic redhat-pull-secret \
 
 # PostgreSQL admin password (only needed for endpoint testing pipeline)
 oc create secret generic azure-postgres-admin-password \
-  --from-literal=password="your-secure-password"
+  --from-literal=POSTGRES_ADMIN_PASSWORD="your-secure-password"
 
 # Quay admin credentials (for Quay deployment pipeline)
 oc create secret generic quay-admin-secret \
   --from-literal=password="quay-admin-password" \
   --from-literal=email="admin@sap.com"
+
+# ROSA-specific secrets
+# AWS credentials
+oc create secret generic aws-credentials-secret \
+  --from-literal=AWS_ACCESS_KEY_ID="your-access-key" \
+  --from-literal=AWS_SECRET_ACCESS_KEY="your-secret-key"
+
+# Red Hat OCM token
+oc create secret generic redhat-token-secret \
+  --from-literal=REDHAT_OCM_TOKEN="your-ocm-token"
+
+# PostgreSQL admin password for ROSA (RDS)
+# ⚠️ IMPORTANT: AWS RDS PostgreSQL does NOT allow these characters: / @ " (space)
+# Use only: letters, numbers, and these special characters: ! # $ % & ( ) * + , - . : ; < = > ? [ \ ] ^ _ ` { | } ~
+oc create secret generic rosa-postgres-admin-password \
+  --from-literal=POSTGRES_ADMIN_PASSWORD="YourSecure-Password123!"
+
+# EIC authentication secret
+oc create secret generic eic-auth-secret \
+  --from-literal=username="eic-user" \
+  --from-literal=password="eic-password"
 ```
 
 ### 2. Deploy Pipeline Resources

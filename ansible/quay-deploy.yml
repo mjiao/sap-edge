@@ -24,8 +24,8 @@
         bucket_name: "{{ s3_bucket_name | default('') }}"
         region: "{{ s3_region | default('us-east-1') }}"
         host: "{{ s3_host | default('s3.amazonaws.com') }}"
-        access_key: "{{ aws_access_key_id | default('') }}"
-        secret_key: "{{ aws_secret_access_key | default('') }}"
+        access_key: "{{ aws_access_key_id | default(lookup('env', 'AWS_ACCESS_KEY_ID')) | default('') }}"
+        secret_key: "{{ aws_secret_access_key | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) | default('') }}"
 
     # Quay configuration
     quay:
@@ -128,7 +128,7 @@
       when: trust_ca_bundle is defined
       tags: trust
 
-    - name: Update cluster image configuration with trust
+    - name: Update cluster image configuration with trust (ARO)
       kubernetes.core.k8s:
         definition:
           apiVersion: config.openshift.io/v1
@@ -141,17 +141,88 @@
         state: present
         merge_type: merge
         kubeconfig: "{{ kubeconfig_path | default(omit) }}"
-      when: trust_ca_bundle is defined
+      when:
+        - trust_ca_bundle is defined
+        - platform == 'aro'
       tags: trust
 
-    - name: Display trust configuration results
+    - name: Configure trust bundle for ROSA HCP cluster
+      block:
+        - name: Write certificate to file for ROSA CLI
+          copy:
+            content: "{{ trust_ca_bundle }}"
+            dest: "/tmp/quay-registry-ca.crt"
+            mode: '0644'
+
+        - name: Verify ROSA CLI is available
+          command: /usr/local/bin/rosa version
+          register: rosa_version_check
+          changed_when: false
+          failed_when: false
+
+        - name: Display ROSA CLI version
+          debug:
+            msg: "ROSA CLI version: {{ rosa_version_check.stdout }}"
+          when: rosa_version_check.rc == 0
+
+        - name: Authenticate with Red Hat OCM
+          command: >
+            /usr/local/bin/rosa login
+            --token={{ lookup('env', 'REDHAT_OCM_TOKEN') }}
+          register: rosa_login_result
+          changed_when: false
+
+        - name: Apply trust bundle to ROSA HCP cluster
+          command: >
+            /usr/local/bin/rosa edit cluster
+            --cluster {{ cluster_name }}
+            --additional-trust-bundle-file /tmp/quay-registry-ca.crt
+            --yes
+          register: rosa_trust_result
+
+        - name: Display ROSA trust configuration result
+          debug:
+            msg:
+              - "✅ ROSA HCP trust bundle configured successfully"
+              - "Registry: {{ trust_registry_hostname }}"
+              - "Method: rosa edit cluster --additional-trust-bundle-file"
+              - "Certificate saved to: /tmp/quay-registry-ca.crt"
+
+        - name: Clean up temporary certificate file
+          file:
+            path: "/tmp/quay-registry-ca.crt"
+            state: absent
+      rescue:
+        - name: Handle ROSA trust configuration failure
+          debug:
+            msg:
+              - "⚠️  ROSA trust configuration failed"
+              - "This is expected if:"
+              - "  - ROSA CLI is not available"
+              - "  - OCM token is invalid or expired"
+              - "  - Cluster is not ROSA HCP"
+              - "Error: {{ rosa_trust_result.stderr | default('Unknown') }}"
+
+        - name: Clean up temporary certificate file on failure
+          file:
+            path: "/tmp/quay-registry-ca.crt"
+            state: absent
+      when:
+        - trust_ca_bundle is defined
+        - platform == 'rosa'
+      tags: trust
+
+    - name: Display trust configuration results (ARO)
       debug:
         msg:
           - "✅ Certificate trust configured successfully"
           - "Registry: {{ trust_registry_hostname }}"
           - "ConfigMap: trusted-registry-cabundles created in openshift-config"
+          - "images.config.openshift.io/cluster updated"
           - "⚠️  Note: OpenShift nodes may need to restart"
-      when: trust_ca_bundle is defined
+      when:
+        - trust_ca_bundle is defined
+        - platform == 'aro'
       tags: trust
 
     - name: Create admin user

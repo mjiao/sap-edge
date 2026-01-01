@@ -6,14 +6,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 terraform {
+  # S3 backend for remote state storage
+  # Configuration values are provided via backend.config at runtime
   backend "s3" {
-    bucket         = ""
-    key            = ""
-    region         = ""
-    encrypt        = true
-    dynamodb_table = ""
-
+    # Values will be overridden by -backend-config=backend.config
   }
+  
   required_version = ">= 1.4.6"
 
   required_providers {
@@ -24,6 +22,10 @@ terraform {
     rhcs = {
       source  = "terraform-redhat/rhcs"
       version = "~> 1.6.2"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
     }
   }
 }
@@ -37,5 +39,6 @@ provider "aws" {
 }
 
 provider "rhcs" {
-  url = "https://api.openshift.com"
+  url   = "https://api.openshift.com"
+  token = var.redhat_ocm_token
 }

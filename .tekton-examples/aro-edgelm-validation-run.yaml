@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileCopyrightText: 2024 SAP edge team
 # SPDX-FileContributor: Manjun Jiao (@mjiao)
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -7,14 +7,18 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  generateName: aro-endpoint-test-
+  generateName: aro-edgelm-validation-
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
 spec:
   pipelineRef:
-    name: aro-endpoint-test-pipeline
+    name: aro-edgelm-validation-pipeline
+  timeouts:
+    pipeline: "168h"      # Total pipeline timeout (7 days)
+    tasks: "120m"         # Individual task timeout (2 hours)
+    finally: "30m"        # Finally tasks timeout
   params:
     - name: repoUrl
       value: "{{ repo_url }}"
@@ -23,27 +27,19 @@ spec:
     - name: aroLocation
       value: "northeurope"
     - name: aroClusterName
-      value: "sapeic"
+      value: "sapedgelm"
     - name: aroVersion
       value: "4.17.27"
     - name: azureSecretName
       value: "azure-sp-secret"
     - name: pullSecretName
       value: "mj-pull-secret"
-    - name: eicAuthSecretName
-      value: "eic-auth-secret"
-    - name: postgresAdminPasswordSecretName
-      value: "azure-postgres-admin-password"
-    - name: deployPostgres
-      value: "true"
-    - name: deployRedis
-      value: "true"
-    - name: publicDNS
-      value: "false"
+    - name: quayAdminPasswordSecretName
+      value: "quay-admin-secret"
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "SAPOCP-1590"
+      value: "SAPOCP-1659"
   workspaces:
     - name: source
       volumeClaimTemplate:
@@ -52,4 +48,4 @@ spec:
           storageClassName: ocs-storagecluster-cephfs
           resources:
             requests:
-              storage: 10Mi
+              storage: 200Mi

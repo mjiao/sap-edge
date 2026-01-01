@@ -6,176 +6,104 @@
 
 set -euo pipefail
 
-# Create S3 bucket for ROSA Quay registry
-# Required environment variables:
-# - CLUSTER_NAME: ROSA cluster name
-# - AWS_REGION: AWS region for S3 bucket (optional, defaults to us-east-1)
-# - AWS_ACCESS_KEY_ID: AWS access key
-# - AWS_SECRET_ACCESS_KEY: AWS secret key
+# Get S3 bucket credentials for ROSA Quay registry
+# S3 bucket is created by Terraform deployment (rosa/terraform/aws-services.tf)
+# This script retrieves the credentials from Terraform outputs
+#
+# Required: Must be run from rosa/terraform directory or TERRAFORM_DIR must be set
 
 usage() {
     echo "Usage: $0"
-    echo "Creates S3 bucket for ROSA Quay registry"
+    echo "Retrieves S3 bucket credentials for ROSA Quay registry"
     echo ""
-    echo "Required environment variables:"
-    echo "  CLUSTER_NAME           - ROSA cluster name"
-    echo "  AWS_ACCESS_KEY_ID      - AWS access key"
-    echo "  AWS_SECRET_ACCESS_KEY  - AWS secret access key"
-    echo "  AWS_REGION             - AWS region (optional, defaults to us-east-1)"
+    echo "Must be run from rosa/terraform directory, or set TERRAFORM_DIR"
+    echo ""
+    echo "NOTE: S3 bucket must be created first by running:"
+    echo "  cd rosa/terraform && terraform apply"
     exit 1
 }
 
 validate_requirements() {
-    local missing_vars=()
-    
-    if [[ -z "${CLUSTER_NAME:-}" ]]; then
-        missing_vars+=("CLUSTER_NAME")
+    # Check if Terraform CLI is available
+    if ! command -v terraform >/dev/null 2>&1; then
+        echo "❌ Terraform CLI not found. Please install Terraform." >&2
+        exit 1
     fi
     
-    if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
-        missing_vars+=("AWS_ACCESS_KEY_ID")
-    fi
-    
-    if [[ -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-        missing_vars+=("AWS_SECRET_ACCESS_KEY")
-    fi
-    
-    if [[ ${#missing_vars[@]} -gt 0 ]]; then
-        echo "❌ Missing required environment variables: ${missing_vars[*]}" >&2
+    # Determine Terraform directory
+    if [[ -n "${TERRAFORM_DIR:-}" ]]; then
+        cd "${TERRAFORM_DIR}" || {
+            echo "❌ Cannot change to TERRAFORM_DIR: ${TERRAFORM_DIR}" >&2
+            exit 1
+        }
+    elif [[ -f "terraform.tfstate" ]] || [[ -f ".terraform/terraform.tfstate" ]]; then
+        echo "✅ Found Terraform state in current directory"
+    else
+        echo "❌ Not in Terraform directory. Please run from rosa/terraform/ or set TERRAFORM_DIR." >&2
         usage
-    fi
-    
-    # Set default region if not provided
-    AWS_REGION="${AWS_REGION:-us-east-1}"
-    export AWS_REGION
-    
-    # Check if AWS CLI is available
-    if ! command -v aws >/dev/null 2>&1; then
-        echo "❌ AWS CLI not found. Please install AWS CLI." >&2
-        exit 1
-    fi
-    
-    # Validate AWS credentials
-    if ! aws sts get-caller-identity >/dev/null 2>&1; then
-        echo "❌ AWS credentials not valid or not configured." >&2
-        echo "💡 Make sure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set correctly." >&2
-        exit 1
     fi
 }
 
-create_s3_bucket() {
-    echo "🪣 Creating S3 bucket for ROSA Quay registry..."
+get_s3_credentials() {
+    echo "🔍 Retrieving S3 credentials from Terraform outputs..."
+    echo ""
     
-    # Generate deterministic bucket name using cluster hash
-    local cluster_hash
-    cluster_hash=$(echo "${CLUSTER_NAME}" | sha256sum | cut -c1-12)
-    local bucket_name="rosa-quay-${cluster_hash}"
-    
-    echo "S3 bucket name: ${bucket_name} (for cluster: ${CLUSTER_NAME})"
-    echo "AWS region: ${AWS_REGION}"
-    
-    # Check if bucket already exists
-    echo "🔍 Checking if S3 bucket already exists..."
-    if aws s3api head-bucket --bucket "${bucket_name}" 2>/dev/null; then
-        echo "✅ S3 bucket already exists: ${bucket_name}"
-        echo "ℹ️  Reusing existing bucket for cluster: ${CLUSTER_NAME}"
-    else
-        echo "📦 Creating new S3 bucket..."
-        
-        # Create bucket with region-specific configuration and retry logic
-        create_bucket_success=false
-        for attempt in 1 2 3 4 5; do
-            echo "Attempt ${attempt}/5 to create bucket..."
-            
-            # Create bucket with LocationConstraint for the specified region
-            if create_result=$(aws s3api create-bucket \
-                --bucket "${bucket_name}" \
-                --region "${AWS_REGION}" \
-                --create-bucket-configuration LocationConstraint="${AWS_REGION}" 2>&1); then
-                create_exit_code=0
-            else
-                create_exit_code=$?
-            fi
-            
-            if [[ ${create_exit_code} -eq 0 ]]; then
-                echo "✅ S3 bucket created successfully"
-                create_bucket_success=true
-                break
-            else
-                echo "⚠️  Attempt ${attempt} failed: ${create_result}"
-                
-                if echo "${create_result}" | grep -q "OperationAborted.*conflicting conditional operation"; then
-                    echo "🔄 Conflicting operation detected, waiting 30 seconds before retry..."
-                    if [[ ${attempt} -lt 5 ]]; then
-                        sleep 30
-                    fi
-                elif echo "${create_result}" | grep -q "BucketAlreadyExists"; then
-                    echo "ℹ️  Bucket already exists (possibly just created by another process)"
-                    create_bucket_success=true
-                    break
-                elif echo "${create_result}" | grep -q "BucketAlreadyOwnedByYou"; then
-                    echo "ℹ️  Bucket already owned by you"
-                    create_bucket_success=true
-                    break
-                else
-                    echo "❌ Unexpected error: ${create_result}"
-                    if [[ ${attempt} -lt 5 ]]; then
-                        echo "Waiting 15 seconds before retry..."
-                        sleep 15
-                    fi
-                fi
-            fi
-        done
-        
-        if [[ "${create_bucket_success}" != "true" ]]; then
-            echo "❌ Failed to create S3 bucket after 5 attempts" >&2
-            echo "💡 Try again in a few minutes or use a different cluster name" >&2
-            exit 1
-        fi
-        
-        # Wait for bucket to be available
-        echo "⏳ Waiting for bucket to be available..."
-        aws s3api wait bucket-exists --bucket "${bucket_name}" || {
-            echo "⚠️  Bucket creation succeeded but wait failed, continuing anyway..."
-        }
+    # Check if Terraform has been initialized and applied
+    if ! terraform output >/dev/null 2>&1; then
+        echo "❌ Terraform outputs not available. Please run 'terraform apply' first." >&2
+        exit 1
     fi
     
-    # Configure bucket versioning (recommended for Quay)
-    echo "🔧 Configuring bucket versioning..."
-    aws s3api put-bucket-versioning \
-        --bucket "${bucket_name}" \
-        --versioning-configuration Status=Enabled
+    # Get S3 bucket name
+    local bucket_name
+    bucket_name=$(terraform output -raw quay_s3_bucket_name 2>/dev/null)
     
-    # Add tags to bucket
-    echo "🏷️  Adding tags to bucket..."
-    # Use centralized tags from Makefile if available, otherwise use defaults
-    local tag_set="${AWS_TAGS_QUAY:-{Key=purpose,Value=quay},{Key=cluster,Value=${CLUSTER_NAME}},{Key=team,Value=sap-edge}},{Key=platform,Value=rosa}"
-    aws s3api put-bucket-tagging \
-        --bucket "${bucket_name}" \
-        --tagging "TagSet=[${tag_set}]"
+    if [[ -z "${bucket_name}" ]] || [[ "${bucket_name}" == "null" ]]; then
+        echo "❌ Quay S3 bucket not deployed. Please set deploy_quay=true in terraform.tfvars." >&2
+        exit 1
+    fi
+    
+    # Get S3 bucket region
+    local bucket_region
+    bucket_region=$(terraform output -raw quay_s3_bucket_region 2>/dev/null)
+    
+    # Get IAM access key ID
+    local access_key_id
+    access_key_id=$(terraform output -raw quay_s3_access_key_id 2>/dev/null)
+    
+    # Get IAM secret access key (retrieved to validate it exists, but not exported for security)
+    # shellcheck disable=SC2034,SC2155
+    local secret_access_key=$(terraform output -raw quay_s3_secret_access_key 2>/dev/null)
+    
+    # Construct S3 host
+    local s3_host="s3.${bucket_region}.amazonaws.com"
     
     # Output configuration information
-    echo ""
-    echo "✅ S3 bucket is ready!"
+    echo "✅ S3 credentials retrieved!"
     echo "📋 S3 Configuration:"
     echo "   Bucket Name: ${bucket_name}"
-    echo "   Region: ${AWS_REGION}"
-    echo "   Cluster: ${CLUSTER_NAME}"
-    echo "   S3 Host: s3.${AWS_REGION}.amazonaws.com"
+    echo "   Region: ${bucket_region}"
+    echo "   S3 Host: ${s3_host}"
     echo ""
-    echo "🔑 Environment variables for ROSA Quay deployment:"
+    echo "🔑 Environment variables for Quay deployment:"
     echo "   export S3_BUCKET_NAME=${bucket_name}"
-    echo "   export S3_REGION=${AWS_REGION}"
-    echo "   export S3_HOST=s3.${AWS_REGION}.amazonaws.com"
-    echo "   export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-    echo "   export AWS_SECRET_ACCESS_KEY=***hidden***"
+    echo "   export S3_REGION=${bucket_region}"
+    echo "   export S3_HOST=${s3_host}"
+    echo "   export AWS_ACCESS_KEY_ID=${access_key_id}"
+    echo "   export AWS_SECRET_ACCESS_KEY='<hidden>'"
     echo ""
-    echo "♻️  Note: This S3 bucket will be reused for future deployments of cluster '${CLUSTER_NAME}'"
+    echo "📝 To use with Ansible Quay deployment:"
+    echo "   export S3_BUCKET_NAME=${bucket_name}"
+    echo "   export S3_REGION=${bucket_region}"
+    echo "   export S3_HOST=${s3_host}"
+    echo "   export AWS_ACCESS_KEY_ID=${access_key_id}"
+    echo "   export AWS_SECRET_ACCESS_KEY=\$(cd rosa/terraform && terraform output -raw quay_s3_secret_access_key)"
+    echo "   make rosa-quay-deploy"
 }
 
 main() {
     validate_requirements
-    create_s3_bucket
+    get_s3_credentials
 }
 
 # Allow script to be sourced for testing
