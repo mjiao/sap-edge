@@ -441,6 +441,52 @@ aro-deploy-only:  ## Deploy ARO cluster only (no PostgreSQL/Redis services)
 	fi; \
 	rm -f $$TEMP_PARAMS
 
+.PHONY: aro-deploy-minimal
+aro-deploy-minimal:  ## Deploy ARO cluster with minimal network (no postgres/redis subnets, avoids delegation conflicts)
+	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET)
+	@echo "🧪 Deploying minimal ARO cluster (no Azure services, no extra subnets)..."
+	@echo "🔍 Checking if cluster already exists..."
+	@CLUSTER_CHECK_RESULT=$$(make --no-print-directory aro-cluster-exists 2>/dev/null | grep -E '^(true|false)$$' | tail -1); \
+	echo "🔍 Cluster check result: '$$CLUSTER_CHECK_RESULT'"; \
+	if [ "$$CLUSTER_CHECK_RESULT" = "true" ]; then \
+		echo "✅ ARO cluster '${ARO_CLUSTER_NAME}' already exists. Skipping deployment."; \
+		exit 0; \
+	else \
+		echo "🔍 Cluster '${ARO_CLUSTER_NAME}' not found, proceeding with deployment..."; \
+	fi
+	@echo "🔍 Checking for running deployments..."
+	@EXISTING_STATE=$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound"); \
+	if [ "$$EXISTING_STATE" = "Running" ]; then \
+		echo "⏳ Found deployment in progress. Waiting for completion..."; \
+		while [ "$$(az deployment group show --resource-group ${ARO_RESOURCE_GROUP} --name aro-deploy-${ARO_CLUSTER_NAME} --query "properties.provisioningState" -o tsv 2>/dev/null)" = "Running" ]; do \
+			echo "⏳ Still running... waiting 60 seconds"; \
+			sleep 60; \
+		done; \
+	fi
+	@echo "🔐 Preparing secure deployment parameters..."
+	@PULL_SECRET_BASE64=$$(printf '%s' "$$PULL_SECRET" | tr -d '\n' | sed 's/^"//;s/"$$//' | base64 -w 0); \
+	TEMP_PARAMS=$$(mktemp); \
+	echo "{ \
+		\"clusterName\": { \"value\": \"${ARO_CLUSTER_NAME}\" }, \
+		\"domain\": { \"value\": \"${ARO_CLUSTER_NAME}.${ARO_DOMAIN}\" }, \
+		\"servicePrincipalClientId\": { \"value\": \"${CLIENT_ID}\" }, \
+		\"servicePrincipalClientSecret\": { \"value\": \"${CLIENT_SECRET}\" }, \
+		\"pullSecret\": { \"value\": \"$$PULL_SECRET_BASE64\" } \
+	}" > $$TEMP_PARAMS; \
+	echo "🚀 Starting minimal Bicep deployment..."; \
+	if az deployment group create --resource-group ${ARO_RESOURCE_GROUP} \
+		--name aro-deploy-${ARO_CLUSTER_NAME} \
+		--template-file bicep/aro-minimal.bicep \
+		--parameters @bicep/test.parameters.json \
+		--parameters @$$TEMP_PARAMS; then \
+		echo "✅ Minimal Bicep deployment completed successfully"; \
+	else \
+		echo "❌ Bicep deployment failed"; \
+		rm -f $$TEMP_PARAMS; \
+		exit 1; \
+	fi; \
+	rm -f $$TEMP_PARAMS
+
 .PHONY: aro-deploy-test
 aro-deploy-test:  ## Deploy ARO with cost-optimized test settings
 	$(call required-environment-variables,ARO_RESOURCE_GROUP CLIENT_ID CLIENT_SECRET TENANT_ID PULL_SECRET POSTGRES_ADMIN_PASSWORD)
