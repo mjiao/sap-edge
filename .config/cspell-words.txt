@@ -111,3 +111,5 @@ seekable
 dovtso
 resourcegroupstaggingapi
 bpersistentvolumeclaims
+patroni
+installplan
