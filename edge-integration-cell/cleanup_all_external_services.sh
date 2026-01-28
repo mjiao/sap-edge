@@ -214,7 +214,7 @@ if [[ "$CLEANUP_POSTGRES" == "true" ]]; then
     POSTGRES_SCRIPT="$SCRIPT_DIR/cleanup_postgres.sh"
     if [[ ! -f "$POSTGRES_SCRIPT" ]]; then
         log ERROR "PostgreSQL cleanup script not found: $POSTGRES_SCRIPT"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         CLEANUP_ARGS=(
             "--namespace" "$POSTGRES_NAMESPACE"
@@ -236,7 +236,7 @@ if [[ "$CLEANUP_POSTGRES" == "true" ]]; then
             log SUCCESS "PostgreSQL cleanup completed successfully"
         else
             log ERROR "PostgreSQL cleanup failed"
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
     echo ""
@@ -249,7 +249,7 @@ if [[ "$CLEANUP_REDIS" == "true" ]]; then
     REDIS_SCRIPT="$SCRIPT_DIR/cleanup_redis.sh"
     if [[ ! -f "$REDIS_SCRIPT" ]]; then
         log ERROR "Redis cleanup script not found: $REDIS_SCRIPT"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         CLEANUP_ARGS=(
             "--namespace" "$REDIS_NAMESPACE"
@@ -275,7 +275,7 @@ if [[ "$CLEANUP_REDIS" == "true" ]]; then
             log SUCCESS "Redis cleanup completed successfully"
         else
             log ERROR "Redis cleanup failed"
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
     echo ""
