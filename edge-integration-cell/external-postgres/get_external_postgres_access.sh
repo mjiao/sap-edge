@@ -6,37 +6,93 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Set namespace and secret name
-namespace="sap-eic-external-postgres"
-secret_name="eic-pguser-eic"
+set -euo pipefail
+
+# Determine CLI tool (KUBE_CLI env var or oc)
+if [[ -n "${KUBE_CLI:-}" ]] && command -v "${KUBE_CLI}" &> /dev/null; then
+    KUBE_CLI="${KUBE_CLI}"
+elif command -v oc &> /dev/null; then
+    KUBE_CLI="oc"
+elif command -v kubectl &> /dev/null; then
+    KUBE_CLI="kubectl"
+else
+    echo "Error: Neither oc nor kubectl found in PATH"
+    exit 1
+fi
+
+# Default values
+NAMESPACE="sap-eic-external-postgres"
+SECRET_NAME="eic-pguser-eic"
+
+# Usage function
+usage() {
+    cat <<EOF
+Usage: $0 [OPTIONS]
+
+Retrieve PostgreSQL access details from the deployed PostgresCluster.
+
+OPTIONS:
+    -n, --namespace NAMESPACE    Namespace where PostgreSQL is deployed (default: sap-eic-external-postgres)
+    -h, --help                   Display this help message
+
+EXAMPLES:
+    # Get access details from default namespace
+    $0
+
+    # Get access details from custom namespace
+    $0 --namespace my-postgres-namespace
+
+EOF
+    exit 0
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|--namespace)
+            NAMESPACE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+namespace="$NAMESPACE"
+secret_name="$SECRET_NAME"
 
 # Get dbhostname from the secret
-dbhostname=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.host}" | base64 --decode)
+dbhostname=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.host}" | base64 --decode)
 
 # Output the dbhostname
 echo "External DB Hostname: $dbhostname "
 
 # Get dbport from the secret
-dbport=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.port}" | base64 --decode)
+dbport=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.port}" | base64 --decode)
 
 # Output the dbport
 echo "External DB Port: $dbport"
 
 
 # Get dbname from the secret
-dbname=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.dbname}" | base64 --decode)
+dbname=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.dbname}" | base64 --decode)
 
 # Output the dbname
 echo "External DB Name: $dbname"
 
 # Get dbusername from the secret
-dbusername=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.user}" | base64 --decode)
+dbusername=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.user}" | base64 --decode)
 
 # Output the dbusername
 echo "External DB Username: $dbusername "
 
 # Get dbpassword from the secret
-dbpassword=$(kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.password}" | base64 --decode)
+dbpassword=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.password}" | base64 --decode)
 
 # Output the dbpassword
 echo "External DB Password: $dbpassword "
@@ -46,7 +102,7 @@ secret_name="pgo-root-cacert"
 output_file="external_postgres_db_tls_root_cert.crt"
 
 # Get the secret and extract the root.crt field
-root_crt=$(kubectl get secret "$secret_name" -n "$namespace" -o json | jq -r '.data["root.crt"]' | base64 -d)
+root_crt=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o json | jq -r '.data["root.crt"]' | base64 -d)
 
 # Check if root_crt is not empty
 if [[ -n "$root_crt" ]]; then
