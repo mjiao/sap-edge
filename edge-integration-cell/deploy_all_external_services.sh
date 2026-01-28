@@ -230,7 +230,7 @@ if [[ "$DEPLOY_POSTGRES" == "true" ]]; then
     POSTGRES_SCRIPT="$SCRIPT_DIR/deploy_postgres.sh"
     if [[ ! -f "$POSTGRES_SCRIPT" ]]; then
         log ERROR "PostgreSQL deployment script not found: $POSTGRES_SCRIPT"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         DEPLOY_ARGS=(
             "--namespace" "$POSTGRES_NAMESPACE"
@@ -257,7 +257,7 @@ if [[ "$DEPLOY_POSTGRES" == "true" ]]; then
             log SUCCESS "PostgreSQL deployment completed successfully"
         else
             log ERROR "PostgreSQL deployment failed"
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
     echo ""
@@ -270,7 +270,7 @@ if [[ "$DEPLOY_REDIS" == "true" ]]; then
     REDIS_SCRIPT="$SCRIPT_DIR/deploy_redis.sh"
     if [[ ! -f "$REDIS_SCRIPT" ]]; then
         log ERROR "Redis deployment script not found: $REDIS_SCRIPT"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         DEPLOY_ARGS=(
             "--namespace" "$REDIS_NAMESPACE"
@@ -301,7 +301,7 @@ if [[ "$DEPLOY_REDIS" == "true" ]]; then
             log SUCCESS "Redis deployment completed successfully"
         else
             log ERROR "Redis deployment failed"
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
     echo ""

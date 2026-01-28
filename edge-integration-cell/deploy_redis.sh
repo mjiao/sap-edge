@@ -429,7 +429,7 @@ if [[ "$DRY_RUN" != "true" ]]; then
     RETRY_DELAY=20
     
     while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
-        ((RETRY_COUNT++))
+        RETRY_COUNT=$((RETRY_COUNT + 1))
         log INFO "Attempt $RETRY_COUNT/$MAX_RETRIES: Creating RedisEnterpriseDatabase..."
         
         if oc apply -f "$REDIS_DB_FILE" 2>&1; then
