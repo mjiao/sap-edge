@@ -10,7 +10,7 @@ set -euo pipefail
 
 # Determine CLI tool (KUBE_CLI env var or oc)
 if [[ -n "${KUBE_CLI:-}" ]] && command -v "${KUBE_CLI}" &> /dev/null; then
-    KUBE_CLI="${KUBE_CLI}"
+    : # KUBE_CLI already set from environment
 elif command -v oc &> /dev/null; then
     KUBE_CLI="oc"
 elif command -v kubectl &> /dev/null; then
