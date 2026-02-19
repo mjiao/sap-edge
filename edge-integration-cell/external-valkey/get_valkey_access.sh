@@ -11,20 +11,6 @@ set -euo pipefail
 NAMESPACE="sap-eic-external-valkey"
 OUTPUT_DIR="."
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
 usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
@@ -55,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             usage
             ;;
         *)
-            log_error "Unknown option: $1"
+            echo "Unknown option: $1"
             usage
             ;;
     esac
@@ -63,21 +49,15 @@ done
 
 # Check if logged in
 if ! oc whoami &> /dev/null; then
-    log_error "Not logged into OpenShift cluster"
+    echo "Not logged into OpenShift cluster"
     exit 1
 fi
 
 # Check if Valkey is deployed
 if ! oc get pods -l name=valkey -n "$NAMESPACE" &> /dev/null; then
-    log_error "Valkey not found in namespace ${NAMESPACE}"
+    echo "Valkey not found in namespace ${NAMESPACE}"
     exit 1
 fi
-
-echo ""
-echo "========================================"
-echo "  Valkey Access Details"
-echo "========================================"
-echo ""
 
 # Get service hostname
 SERVICE_HOST="valkey.${NAMESPACE}.svc"
@@ -97,38 +77,13 @@ CA_CERT_FILE="${OUTPUT_DIR}/valkey_tls_certificate.pem"
 if oc get configmap valkey-service-ca -n "$NAMESPACE" &> /dev/null; then
     oc get configmap valkey-service-ca -n "$NAMESPACE" -o jsonpath='{.data.service-ca\.crt}' > "$CA_CERT_FILE"
 else
-    log_error "Service CA ConfigMap not found - TLS certificate cannot be exported"
+    echo "Service CA ConfigMap not found - TLS certificate cannot be exported"
     exit 1
 fi
 
-echo -e "${CYAN}SAP EIC Valkey Configuration:${NC}"
-echo "  Datastore Type: Valkey"
-echo "  Valkey Address: ${SERVICE_HOST_FULL}:${PORT}"
-echo "  Valkey Mode: standalone"
-echo "  Valkey Username: [leave blank]"
-echo "  Valkey Password: ${VALKEY_PASSWORD:-"<not found>"}"
-echo "  Valkey TLS Certificate: ${CA_CERT_FILE}"
-echo "  Valkey Server Name: ${SERVICE_HOST_FULL}"
-
-echo ""
-
-echo -e "${CYAN}Test Connection:${NC}"
-echo "  valkey-cli -h ${SERVICE_HOST} -p ${PORT} \\"
-echo "    --tls --cacert ${CA_CERT_FILE} \\"
-echo "    -a '${VALKEY_PASSWORD:-<password>}' ping"
-echo ""
-
-echo -e "${CYAN}Mount CA Certificate in Application:${NC}"
-cat <<EOF
-  volumeMounts:
-    - name: service-ca
-      mountPath: /etc/ssl/service-ca
-      readOnly: true
-  volumes:
-    - name: service-ca
-      configMap:
-        name: valkey-service-ca
-EOF
-
-echo ""
-log_info "Access details retrieved successfully"
+echo "External Valkey Addresses: ${SERVICE_HOST}:${PORT}"
+echo "External Valkey Mode: standalone"
+echo "External Valkey Username: [leave me blank]"
+echo "External Valkey Password: ${VALKEY_PASSWORD:-"<not found>"}"
+echo "External Valkey TLS Certificate content saved to ${CA_CERT_FILE}"
+echo "External Valkey Server Name: ${SERVICE_HOST_FULL}"
