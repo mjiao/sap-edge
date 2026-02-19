@@ -45,15 +45,15 @@ Deploy Valkey with TLS on OpenShift for SAP EIC.
 
 OPTIONS:
     -n, --namespace NAMESPACE    Namespace for Valkey (default: sap-eic-external-valkey)
-    -p, --password PASSWORD      Valkey password (required)
+    -p, --password PASSWORD      Valkey password (optional, default: testp)
     --dry-run                    Show what would be done without executing
     -f, --force                  Skip confirmation prompts
     -h, --help                   Display this help message
 
 EXAMPLES:
+    $0
     $0 --password mySecretPassword
     $0 --namespace my-valkey --password mySecretPassword
-    $0 --password mySecretPassword --dry-run
 
 NOTE: TLS is always enabled (required by SAP EIC).
 
@@ -89,12 +89,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Validate required parameters
-if [[ -z "$VALKEY_PASSWORD" ]]; then
-    log_error "Valkey password is required. Use -p or --password to specify."
-    exit 1
-fi
 
 # Check prerequisites
 check_prerequisites() {
@@ -172,17 +166,28 @@ install_imagestreams() {
 install_valkey() {
     log_info "Installing redhat-valkey-persistent chart..."
 
-    local helm_cmd="helm install ${RELEASE_NAME} ${CHARTS_DIR}/redhat-valkey-persistent/src -n ${NAMESPACE} --set valkey_password=${VALKEY_PASSWORD}"
+    local helm_cmd="helm install ${RELEASE_NAME} ${CHARTS_DIR}/redhat-valkey-persistent/src -n ${NAMESPACE}"
+    local helm_upgrade_cmd="helm upgrade ${RELEASE_NAME} ${CHARTS_DIR}/redhat-valkey-persistent/src -n ${NAMESPACE}"
+
+    # Add password if provided
+    if [[ -n "$VALKEY_PASSWORD" ]]; then
+        helm_cmd="${helm_cmd} --set valkey_password=${VALKEY_PASSWORD}"
+        helm_upgrade_cmd="${helm_upgrade_cmd} --set valkey_password=${VALKEY_PASSWORD}"
+    fi
 
     if $DRY_RUN; then
-        log_info "[DRY-RUN] Would run: helm install ${RELEASE_NAME} ... --set valkey_password=*** [password hidden]"
+        if [[ -n "$VALKEY_PASSWORD" ]]; then
+            log_info "[DRY-RUN] Would run: helm install ${RELEASE_NAME} ... --set valkey_password=*** [password hidden]"
+        else
+            log_info "[DRY-RUN] Would run: helm install ${RELEASE_NAME} ... (using default password)"
+        fi
         return
     fi
 
     # Check if already installed
     if helm list -n "$NAMESPACE" | grep -q "^${RELEASE_NAME}\s"; then
         log_info "Valkey release already installed, upgrading..."
-        helm upgrade "${RELEASE_NAME}" "${CHARTS_DIR}/redhat-valkey-persistent/src" -n "${NAMESPACE}" --set valkey_password="${VALKEY_PASSWORD}"
+        eval "$helm_upgrade_cmd"
     else
         eval "$helm_cmd"
     fi

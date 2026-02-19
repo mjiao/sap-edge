@@ -270,16 +270,17 @@ For detailed deployment instructions, see [edge-integration-cell/external-valkey
 #### Quick Start
 
 ```bash
-cd edge-integration-cell/external-valkey
+# Deploy Valkey with TLS (password optional, default: testp)
+bash sap-edge/edge-integration-cell/external-valkey/deploy_valkey.sh
 
-# Deploy Valkey with TLS
-bash deploy_valkey.sh --password <your-password>
+# Deploy with custom password
+bash sap-edge/edge-integration-cell/external-valkey/deploy_valkey.sh --password <your-password>
 
 # Get access details for SAP EIC configuration
-bash get_valkey_access.sh
+bash sap-edge/edge-integration-cell/external-valkey/get_valkey_access.sh
 
 # Cleanup
-bash cleanup_valkey.sh
+bash sap-edge/edge-integration-cell/external-valkey/cleanup_valkey.sh
 ```
 
 ## GitOps with Argo CD

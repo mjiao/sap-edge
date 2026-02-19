@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2024 SAP edge team
+SPDX-FileCopyrightText: 2026 SAP edge team
 SPDX-FileContributor: Manjun Jiao (@mjiao)
 
 SPDX-License-Identifier: Apache-2.0
@@ -35,14 +35,17 @@ external-valkey/
 ### Automated Deployment
 
 ```bash
-# Deploy Valkey with TLS (required by SAP EIC)
+# Deploy Valkey with TLS (password optional, default: testp)
+bash deploy_valkey.sh
+
+# Deploy with custom password
 bash deploy_valkey.sh --password <your-password>
 
 # Deploy to custom namespace
 bash deploy_valkey.sh --namespace my-valkey --password <your-password>
 
 # Dry-run to preview
-bash deploy_valkey.sh --password <your-password> --dry-run
+bash deploy_valkey.sh --dry-run
 ```
 
 ### Get Access Details
