@@ -235,15 +235,14 @@ verify_deployment() {
     log_info "Checking pods..."
     oc get pods -l name=valkey -n "$NAMESPACE"
 
-    if [[ "$TLS_ENABLED" == "true" ]]; then
-        echo ""
-        log_info "Checking TLS secret..."
-        oc get secret valkey-tls -n "$NAMESPACE" 2>/dev/null || log_warn "TLS secret not found yet (may take a moment)"
+    # TLS is always enabled for SAP EIC
+    echo ""
+    log_info "Checking TLS secret..."
+    oc get secret valkey-tls -n "$NAMESPACE" 2>/dev/null || log_warn "TLS secret not found yet (may take a moment)"
 
-        echo ""
-        log_info "Checking Service CA ConfigMap..."
-        oc get configmap valkey-service-ca -n "$NAMESPACE" 2>/dev/null || log_warn "Service CA ConfigMap not found yet"
-    fi
+    echo ""
+    log_info "Checking Service CA ConfigMap..."
+    oc get configmap valkey-service-ca -n "$NAMESPACE" 2>/dev/null || log_warn "Service CA ConfigMap not found yet"
 
     echo ""
     log_info "Running helm test..."
