@@ -101,16 +101,29 @@ spec:
         oc get nodes
         echo "✅ Successfully connected to hosted cluster"
 
-        # Verify Service Mesh 3.x operator is installed
+        # Wait for OLM to be ready and verify Service Mesh 3.x operator is installed
         echo ""
-        echo "🔍 Checking for Red Hat OpenShift Service Mesh 3.x operator..."
-        CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
+        echo "🔍 Waiting for Operator Lifecycle Manager to be ready..."
+        MAX_RETRIES=30
+        RETRY_INTERVAL=30
+        CSV_OUTPUT=""
+        for i in $(seq 1 ${MAX_RETRIES}); do
+          CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
+          if [[ -n "${CSV_OUTPUT}" ]]; then
+            echo "✅ OLM is ready"
+            break
+          fi
+          if [[ ${i} -eq ${MAX_RETRIES} ]]; then
+            echo "❌ OLM not ready after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
+            echo "   Could not list ClusterServiceVersions in openshift-operators namespace"
+            echo "   Ensure the operator lifecycle manager is running and you have cluster-admin access"
+            exit 1
+          fi
+          echo "   Attempt ${i}/${MAX_RETRIES}: OLM not ready yet, retrying in ${RETRY_INTERVAL}s..."
+          sleep ${RETRY_INTERVAL}
+        done
 
-        if [[ -z "${CSV_OUTPUT}" ]]; then
-          echo "❌ Could not list ClusterServiceVersions in openshift-operators namespace"
-          echo "   Ensure the operator lifecycle manager is running and you have cluster-admin access"
-          exit 1
-        fi
+        echo "🔍 Checking for Red Hat OpenShift Service Mesh 3.x operator..."
 
         # Search for OSSM 3.x operator (may appear as servicemeshoperator3 or sail-operator)
         OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
