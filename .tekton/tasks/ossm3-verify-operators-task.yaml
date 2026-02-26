@@ -101,15 +101,13 @@ spec:
         oc get nodes
         echo "✅ Successfully connected to hosted cluster"
 
-        # Wait for OLM to be ready and verify Service Mesh 3.x operator is installed
+        # Wait for OLM to be ready (check exit code, not output)
         echo ""
         echo "🔍 Waiting for Operator Lifecycle Manager to be ready..."
         MAX_RETRIES=30
         RETRY_INTERVAL=30
-        CSV_OUTPUT=""
         for i in $(seq 1 ${MAX_RETRIES}); do
-          CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
-          if [[ -n "${CSV_OUTPUT}" ]]; then
+          if oc get csv -n openshift-operators > /dev/null 2>&1; then
             echo "✅ OLM is ready"
             break
           fi
@@ -123,20 +121,27 @@ spec:
           sleep ${RETRY_INTERVAL}
         done
 
-        echo "🔍 Checking for Red Hat OpenShift Service Mesh 3.x operator..."
-
-        # Search for OSSM 3.x operator (may appear as servicemeshoperator3 or sail-operator)
-        OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
-
-        if [[ -z "${OSSM3_CSV}" ]]; then
-          echo "❌ Red Hat OpenShift Service Mesh 3.x operator NOT found"
-          echo ""
-          echo "   Available CSVs in openshift-operators namespace:"
-          echo "${CSV_OUTPUT}"
-          echo ""
-          echo "   Please install the Service Mesh 3.x operator from OperatorHub before running this pipeline."
-          exit 1
-        fi
+        # Wait for OSSM3 operator CSV to appear
+        echo "🔍 Waiting for Red Hat OpenShift Service Mesh 3.x operator..."
+        OSSM3_CSV=""
+        for i in $(seq 1 ${MAX_RETRIES}); do
+          CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
+          OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
+          if [[ -n "${OSSM3_CSV}" ]]; then
+            break
+          fi
+          if [[ ${i} -eq ${MAX_RETRIES} ]]; then
+            echo "❌ Red Hat OpenShift Service Mesh 3.x operator NOT found after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
+            echo ""
+            echo "   Available CSVs in openshift-operators namespace:"
+            echo "${CSV_OUTPUT:-  (none)}"
+            echo ""
+            echo "   Please install the Service Mesh 3.x operator from OperatorHub before running this pipeline."
+            exit 1
+          fi
+          echo "   Attempt ${i}/${MAX_RETRIES}: OSSM3 operator not found yet, retrying in ${RETRY_INTERVAL}s..."
+          sleep ${RETRY_INTERVAL}
+        done
 
         OPERATOR_VERSION=$(echo "${OSSM3_CSV}" | awk '{print $1}' | head -1)
         echo "✅ Service Mesh 3.x operator found: ${OPERATOR_VERSION}"
