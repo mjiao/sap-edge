@@ -119,6 +119,17 @@ spec:
     # Phase 1: Create HCP KubeVirt Cluster
     # =============================================
 
+    # Step 0: Pre-flight validation (runs in parallel with fetch-repository)
+    - name: preflight-check
+      taskRef: { name: ossm3-preflight-check }
+      params:
+        - name: rbacResourcesConfigMapName
+          value: $(params.rbacResourcesConfigMapName)
+        - name: pullSecretName
+          value: $(params.pullSecretName)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+
     # Step 1: Clone repository
     - name: fetch-repository
       taskRef: { name: git-clone }
@@ -133,7 +144,7 @@ spec:
 
     # Step 2: Create HostedCluster and NodePool
     - name: create-hosted-cluster
-      runAfter: [fetch-repository]
+      runAfter: [fetch-repository, preflight-check]
       taskRef: { name: hcp-create-hosted-cluster }
       params:
         - name: hostedClusterName
