@@ -72,7 +72,7 @@ CI/CD pipelines for deploying and testing SAP Edge Integration Cell on ARO, ROSA
 - `ossm3-prepare-namespaces-task`: Create and configure namespaces with labels and SCC annotations
 - `ossm3-configure-mesh-task`: Deploy IstioCNI and Istio control plane
 - `ossm3-apply-rbac-task`: Apply RBAC permissions from SAP Note 3618713 resources
-- `ossm3-generate-kubeconfig-task`: Generate restricted kubeconfig for ELM registration
+- `ossm3-generate-sa-based-kubeconfig-task`: Generate SA-based restricted kubeconfig for ELM registration
 
 ### Common Tasks
 - `endpoint-tests`: Test EIC API endpoints
