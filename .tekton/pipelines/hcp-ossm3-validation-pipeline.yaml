@@ -258,10 +258,10 @@ spec:
         - name: rbac-resources
           workspace: rbac-resources
 
-    # Step 8: Generate restricted kubeconfig for ELM registration
-    - name: generate-kubeconfig
+    # Step 8: Generate SA-based restricted kubeconfig for ELM registration
+    - name: generate-sa-based-kubeconfig
       runAfter: [apply-rbac]
-      taskRef: { name: ossm3-generate-kubeconfig }
+      taskRef: { name: ossm3-generate-sa-based-kubeconfig }
       params:
         - name: hostedClusterName
           value: $(params.hostedClusterName)
@@ -279,7 +279,7 @@ spec:
 
     # Step 9: Deploy PostgreSQL on hosted cluster (parallel with Redis)
     - name: deploy-postgres
-      runAfter: [generate-kubeconfig]
+      runAfter: [generate-sa-based-kubeconfig]
       taskRef: { name: hcp-deploy-postgres }
       params:
         - name: hostedClusterName
@@ -296,7 +296,7 @@ spec:
 
     # Step 10: Deploy Redis on hosted cluster (parallel with PostgreSQL)
     - name: deploy-redis
-      runAfter: [generate-kubeconfig]
+      runAfter: [generate-sa-based-kubeconfig]
       taskRef: { name: hcp-deploy-redis }
       params:
         - name: hostedClusterName
@@ -354,7 +354,7 @@ spec:
             Namespace: $(params.hostedClusterNamespace)
             Workers: $(params.nodePoolReplicas) x ($(params.nodePoolCpuCores) vCPU, $(params.nodePoolMemoryGB)GB RAM)
 
-            Restricted kubeconfig stored as Secret 'edgelm-kubeconfig-generated'.
+            Restricted kubeconfig stored as Secret 'edgelm-kubeconfig-generated-$(params.hostedClusterName)'.
 
             Please complete the following manually:
             1. Register the cluster in ELM (use restricted kubeconfig, check "Restricted Access")
