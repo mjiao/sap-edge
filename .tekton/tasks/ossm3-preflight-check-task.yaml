@@ -27,7 +27,7 @@ spec:
       default: ""
   steps:
     - name: preflight-check
-      image: registry.access.redhat.com/ubi9/ubi-minimal
+      image: registry.access.redhat.com/ubi9/ubi
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
