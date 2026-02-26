@@ -134,7 +134,7 @@ spec:
         echo ""
         echo "🔧 Creating IstioCNI resource..."
         cat <<EOF | oc apply -f -
-        apiVersion: sailoperator.io/v1alpha1
+        apiVersion: sailoperator.io/v1
         kind: IstioCNI
         metadata:
           name: default
@@ -148,7 +148,7 @@ spec:
         echo ""
         echo "🔧 Creating Istio control plane (standard configuration)..."
         cat <<EOF | oc apply -f -
-        apiVersion: sailoperator.io/v1alpha1
+        apiVersion: sailoperator.io/v1
         kind: Istio
         metadata:
           name: default
