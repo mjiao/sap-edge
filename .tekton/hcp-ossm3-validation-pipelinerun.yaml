@@ -29,9 +29,9 @@ spec:
   params:
     # --- Git parameters ---
     - name: repoUrl
-      value:  "{{ repo_url }}"
+      value: "{{ repo_url }}"
     - name: revision
-      value:  "{{ revision }}"
+      value: "{{ revision }}"
 
     # --- HCP cluster parameters ---
     - name: hostedClusterName
