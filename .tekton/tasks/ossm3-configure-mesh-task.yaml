@@ -100,6 +100,27 @@ spec:
         oc get nodes
         echo "✅ Successfully connected to hosted cluster"
 
+        # --- Wait for OSSM3 CRDs to be available ---
+        echo ""
+        echo "⏳ Waiting for OSSM3 CRDs to be registered..."
+        MAX_RETRIES=30
+        RETRY_INTERVAL=30
+        for CRD in "istiocnis.sailoperator.io" "istios.sailoperator.io"; do
+          for i in $(seq 1 ${MAX_RETRIES}); do
+            if oc get crd "${CRD}" > /dev/null 2>&1; then
+              echo "   ✅ CRD ${CRD} is available"
+              break
+            fi
+            if [[ ${i} -eq ${MAX_RETRIES} ]]; then
+              echo "   ❌ CRD ${CRD} not found after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
+              exit 1
+            fi
+            echo "   Attempt ${i}/${MAX_RETRIES}: CRD ${CRD} not ready, retrying in ${RETRY_INTERVAL}s..."
+            sleep ${RETRY_INTERVAL}
+          done
+        done
+        echo "✅ All OSSM3 CRDs are available"
+
         # --- Create Service Mesh control plane namespace ---
         echo ""
         echo "📦 Creating istio-system namespace..."
