@@ -24,6 +24,10 @@ spec:
       type: string
       description: "Name of the Secret containing kubeconfig for hub cluster (optional, uses in-cluster config if empty)"
       default: ""
+    - name: ossm3Channel
+      type: string
+      description: "OLM subscription channel for the OSSM3 operator"
+      default: "stable-3.2"
   workspaces:
     - name: source
   results:
@@ -41,6 +45,7 @@ spec:
         CLUSTER_NAME="$(params.hostedClusterName)"
         CLUSTER_NS="$(params.hostedClusterNamespace)"
         HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
+        OSSM3_CHANNEL="$(params.ossm3Channel)"
 
         echo "=========================================="
         echo "OSSM3 Verify Operators Task"
@@ -135,7 +140,7 @@ spec:
           name: servicemeshoperator3
           namespace: openshift-operators
         spec:
-          channel: candidates
+          channel: ${OSSM3_CHANNEL}
           name: servicemeshoperator3
           source: redhat-operators
           sourceNamespace: openshift-marketplace
