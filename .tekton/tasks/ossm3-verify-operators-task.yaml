@@ -10,8 +10,8 @@ metadata:
   name: ossm3-verify-operators
 spec:
   description: >-
-    Verify that Red Hat OpenShift Service Mesh 3.x operators are installed
-    on the hosted cluster.
+    Install and verify that Red Hat OpenShift Service Mesh 3.x operators
+    are available on the hosted cluster.
   params:
     - name: hostedClusterName
       type: string
@@ -121,27 +121,50 @@ spec:
           sleep ${RETRY_INTERVAL}
         done
 
-        # Wait for OSSM3 operator CSV to appear
-        echo "🔍 Waiting for Red Hat OpenShift Service Mesh 3.x operator..."
-        OSSM3_CSV=""
-        for i in $(seq 1 ${MAX_RETRIES}); do
-          CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
-          OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
-          if [[ -n "${OSSM3_CSV}" ]]; then
-            break
-          fi
-          if [[ ${i} -eq ${MAX_RETRIES} ]]; then
-            echo "❌ Red Hat OpenShift Service Mesh 3.x operator NOT found after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
-            echo ""
-            echo "   Available CSVs in openshift-operators namespace:"
-            echo "${CSV_OUTPUT:-  (none)}"
-            echo ""
-            echo "   Please install the Service Mesh 3.x operator from OperatorHub before running this pipeline."
-            exit 1
-          fi
-          echo "   Attempt ${i}/${MAX_RETRIES}: OSSM3 operator not found yet, retrying in ${RETRY_INTERVAL}s..."
-          sleep ${RETRY_INTERVAL}
-        done
+        # Install OSSM3 operator if not already present
+        echo "🔍 Checking for Red Hat OpenShift Service Mesh 3.x operator..."
+        CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
+        OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
+
+        if [[ -z "${OSSM3_CSV}" ]]; then
+          echo "ℹ️  OSSM3 operator not found, installing via Subscription..."
+          oc apply -f - <<SUBSCRIPTION_EOF
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: servicemeshoperator3
+          namespace: openshift-operators
+        spec:
+          channel: candidates
+          name: servicemeshoperator3
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+          installPlanApproval: Automatic
+        SUBSCRIPTION_EOF
+          echo "✅ Subscription created, waiting for operator to install..."
+
+          # Wait for OSSM3 operator CSV to appear
+          OSSM3_CSV=""
+          for i in $(seq 1 ${MAX_RETRIES}); do
+            CSV_OUTPUT=$(oc get csv -n openshift-operators 2>/dev/null || true)
+            OSSM3_CSV=$(echo "${CSV_OUTPUT}" | grep -iE "servicemeshoperator3|sailoperator|sail-operator|servicemesh.*3" || true)
+            if [[ -n "${OSSM3_CSV}" ]]; then
+              break
+            fi
+            if [[ ${i} -eq ${MAX_RETRIES} ]]; then
+              echo "❌ OSSM3 operator CSV not found after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
+              echo ""
+              echo "   Subscription status:"
+              oc get subscription servicemeshoperator3 -n openshift-operators -o yaml 2>/dev/null || true
+              echo ""
+              echo "   Available CSVs in openshift-operators namespace:"
+              echo "${CSV_OUTPUT:-  (none)}"
+              exit 1
+            fi
+            echo "   Attempt ${i}/${MAX_RETRIES}: Waiting for OSSM3 operator CSV, retrying in ${RETRY_INTERVAL}s..."
+            sleep ${RETRY_INTERVAL}
+          done
+        fi
 
         OPERATOR_VERSION=$(echo "${OSSM3_CSV}" | awk '{print $1}' | head -1)
         echo "✅ Service Mesh 3.x operator found: ${OPERATOR_VERSION}"
