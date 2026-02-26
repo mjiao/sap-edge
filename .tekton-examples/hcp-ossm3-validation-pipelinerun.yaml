@@ -56,6 +56,8 @@ spec:
       value: "hub-admin-kubeconfig"
 
     # --- OSSM3 parameters ---
+    - name: ossm3Channel
+      value: "stable-3.2"
     - name: rbacResourcesConfigMapName
       value: "ossm3-rbac-resources"
     - name: skipWebhook

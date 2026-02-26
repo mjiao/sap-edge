@@ -63,6 +63,10 @@ spec:
       default: ""
 
     # --- OSSM3 parameters ---
+    - name: ossm3Channel
+      type: string
+      description: "OLM subscription channel for the OSSM3 operator"
+      default: "stable-3.2"
     - name: rbacResourcesConfigMapName
       type: string
       description: "Name of the ConfigMap containing RBAC YAML files from SAP Note 3618713 resources.zip"
@@ -188,6 +192,8 @@ spec:
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
           value: $(params.hubKubeconfigSecretName)
+        - name: ossm3Channel
+          value: $(params.ossm3Channel)
       workspaces:
         - name: source
           workspace: source
