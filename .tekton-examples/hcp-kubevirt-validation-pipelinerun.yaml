@@ -43,7 +43,7 @@ spec:
     - name: etcdStorageClass
       value: ""
     - name: postgresVersion
-      value: "v15"
+      value: "v17"
     - name: redisClusterType
       value: "standard"
     - name: eicAuthSecretName
@@ -53,7 +53,7 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: ""
+      value: "SAPOCP-1945"
     - name: skipTeardown
       value: "false"
     - name: hubKubeconfigSecretName
