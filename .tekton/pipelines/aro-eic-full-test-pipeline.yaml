@@ -16,6 +16,10 @@ spec:
       type: string
     - name: revision
       type: string
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
     - name: aroLocation
       type: string
       description: "ARO location"
@@ -421,6 +425,7 @@ spec:
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
             * *Revision:* $(params.revision)
             * *Public DNS:* $(params.publicDNS)
 

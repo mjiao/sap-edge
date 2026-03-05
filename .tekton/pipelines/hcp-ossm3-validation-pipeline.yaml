@@ -20,6 +20,10 @@ spec:
       type: string
       description: "Git revision (branch/tag/commit)"
       default: "main"
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
 
     # --- HCP cluster parameters ---
     - name: hostedClusterName
@@ -641,6 +645,7 @@ spec:
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
             * *Revision:* $(params.revision)
             * *Public DNS:* $(params.publicDNS)
 

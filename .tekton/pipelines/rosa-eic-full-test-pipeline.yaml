@@ -16,6 +16,10 @@ spec:
       type: string
     - name: revision
       type: string
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
     - name: clusterName
       type: string
       description: "ROSA cluster name (max 15 characters)"
@@ -457,6 +461,7 @@ spec:
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
             * *Revision:* $(params.revision)
             * *Public DNS:* $(params.publicDNS)
 
