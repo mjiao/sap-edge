@@ -16,6 +16,10 @@ spec:
       type: string
     - name: revision
       type: string
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
     - name: aroLocation
       type: string
       description: "ARO location"
@@ -262,6 +266,7 @@ spec:
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
             * *Revision:* $(params.revision)
 
             Ready for final approval or additional operations. The infrastructure is fully deployed and operational.

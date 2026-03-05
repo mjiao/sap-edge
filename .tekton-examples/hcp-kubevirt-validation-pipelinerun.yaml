@@ -24,6 +24,8 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
+    - name: pullRequestNumber
+      value: "{{ pull_request_number }}"
     - name: hostedClusterName
       value: "hcp-eic-test"
     - name: hostedClusterNamespace

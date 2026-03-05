@@ -14,6 +14,10 @@ spec:
       type: string
     - name: revision
       type: string
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
     - name: clusterConfigMapName
       type: string
     - name: eicAuthSecretName
@@ -145,6 +149,7 @@ spec:
 
             *Details:*
             * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
             * *Revision:* $(params.revision)
             * *Target Cluster ConfigMap:* $(params.clusterConfigMapName)
             * *Extra Info:* $(params.extraInfo)

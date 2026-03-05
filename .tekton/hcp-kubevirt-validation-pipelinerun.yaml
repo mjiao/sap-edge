@@ -24,6 +24,8 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
+    - name: pullRequestNumber
+      value: "{{ pull_request_number }}"
     - name: hostedClusterName
       value: "hcp-mj-test"
     - name: hostedClusterNamespace
@@ -53,7 +55,7 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: ""
+      value: "SAPOCP-1947"
     - name: skipTeardown
       value: "false"
     - name: hubKubeconfigSecretName
