@@ -9,7 +9,7 @@ ARO_LOCATION?=northeurope
 
 ARO_CLUSTER_NAME?=sapeic
 ARO_DOMAIN?=saponrhel.org
-ARO_VERSION?=4.15.35
+ARO_VERSION?=4.19.20
 
 # Azure services configuration
 DEPLOY_POSTGRES?=true
