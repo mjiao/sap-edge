@@ -51,7 +51,7 @@ spec:
     - name: postgresHA
       value: "true"
     - name: datastoreType
-      value: "valkey"
+      value: "valkey-cluster"
     - name: redisClusterType
       value: "cluster"
     - name: eicAuthSecretName
