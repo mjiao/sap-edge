@@ -62,6 +62,10 @@ spec:
       type: string
       description: "PostgreSQL version (v15/v16/v17)"
       default: "v15"
+    - name: postgresHA
+      type: string
+      description: "Deploy PostgreSQL in HA mode (3 replicas with anti-affinity)"
+      default: "false"
     - name: datastoreType
       type: string
       description: "Datastore type: redis, valkey-standalone, or valkey-cluster"
@@ -166,6 +170,8 @@ spec:
           value: $(params.hostedClusterNamespace)
         - name: postgresVersion
           value: $(params.postgresVersion)
+        - name: postgresHA
+          value: $(params.postgresHA)
         - name: hubKubeconfigSecretName
           value: $(params.hubKubeconfigSecretName)
       workspaces:

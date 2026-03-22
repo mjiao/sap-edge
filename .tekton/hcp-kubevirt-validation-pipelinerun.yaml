@@ -27,7 +27,7 @@ spec:
     - name: pullRequestNumber
       value: "{{ pull_request_number }}"
     - name: hostedClusterName
-      value: "hcp-eic-test"
+      value: "hcp-test-nodeport"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
@@ -46,6 +46,8 @@ spec:
       value: ""
     - name: postgresVersion
       value: "v15"
+    - name: postgresHA
+      value: "true"
     - name: datastoreType
       value: "valkey"
     - name: redisClusterType
