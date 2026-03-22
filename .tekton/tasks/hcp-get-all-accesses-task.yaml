@@ -121,46 +121,7 @@ spec:
         echo "✅ Successfully connected to hosted cluster"
         echo ""
 
-        # Run the get_all_accesses.sh script if it exists
-        GET_ACCESS_SCRIPT="./edge-integration-cell/get_all_accesses.sh"
-
-        if [[ -f "${GET_ACCESS_SCRIPT}" ]]; then
-          echo "🔧 Running get_all_accesses.sh script..."
-          chmod +x "${GET_ACCESS_SCRIPT}"
-
-          # Run the script and capture output
-          "${GET_ACCESS_SCRIPT}" || echo "⚠️ Script completed with warnings"
-
-          echo ""
-          echo "=============================================="
-          echo "📄 Certificate File Contents"
-          echo "=============================================="
-          echo ""
-
-          # Display PostgreSQL TLS certificate if generated
-          if [[ -f "external_postgres_db_tls_root_cert.crt" ]]; then
-            echo "📜 PostgreSQL TLS Root Certificate (external_postgres_db_tls_root_cert.crt):"
-            echo "----------------------------------------------"
-            cat external_postgres_db_tls_root_cert.crt
-            echo ""
-            echo "----------------------------------------------"
-            echo ""
-          fi
-
-          # Display Redis TLS certificate if generated
-          if [[ -f "external_redis_tls_certificate.pem" ]]; then
-            echo "📜 Redis TLS Certificate (external_redis_tls_certificate.pem):"
-            echo "----------------------------------------------"
-            cat external_redis_tls_certificate.pem
-            echo ""
-            echo "----------------------------------------------"
-            echo ""
-          fi
-        else
-          echo "⚠️ get_all_accesses.sh not found, retrieving credentials manually..."
-          echo ""
-
-          # ================== PostgreSQL ==================
+        # ================== PostgreSQL ==================
           echo "=====================================Postgres========================================="
 
           PG_NAMESPACE="sap-eic-external-postgres"
@@ -337,7 +298,6 @@ spec:
               echo -n "N/A" > $(results.redis-port.path)
             fi
           fi
-        fi
 
         echo ""
         echo "=============================================="
