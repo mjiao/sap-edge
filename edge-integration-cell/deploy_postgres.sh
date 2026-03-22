@@ -16,6 +16,7 @@ DRY_RUN=false
 FORCE=false
 VERBOSE=false
 SKIP_WAIT=false
+HA_MODE=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,6 +68,7 @@ OPTIONS:
     -v, --version VERSION        PostgreSQL version: v15, v16, v17 (default: v15)
     -f, --force                  Skip confirmation prompts (for automation)
     -d, --dry-run               Show what would be deployed without actually deploying
+    --ha                         Deploy in HA mode (3 replicas with anti-affinity)
     --skip-wait                  Skip waiting for operator/cluster readiness
     --verbose                    Enable verbose output
     -h, --help                  Display this help message
@@ -105,6 +107,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -d|--dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --ha)
+            HA_MODE=true
             shift
             ;;
         --skip-wait)
@@ -291,7 +297,12 @@ fi
 
 # Step 5: Create PostgresCluster
 log INFO "Step 5/7: Creating PostgresCluster ($POSTGRES_VERSION)..."
-POSTGRES_CLUSTER_FILE="$SCRIPT_DIR/external-postgres/postgrescluster-${POSTGRES_VERSION}.yaml"
+HA_SUFFIX=""
+if [[ "$HA_MODE" == "true" ]]; then
+    HA_SUFFIX="-ha"
+    log INFO "HA mode enabled: deploying with 3 replicas and pod anti-affinity"
+fi
+POSTGRES_CLUSTER_FILE="$SCRIPT_DIR/external-postgres/postgrescluster-${POSTGRES_VERSION}${HA_SUFFIX}.yaml"
 if [[ ! -f "$POSTGRES_CLUSTER_FILE" ]]; then
     log ERROR "PostgresCluster file not found: $POSTGRES_CLUSTER_FILE"
     exit 1

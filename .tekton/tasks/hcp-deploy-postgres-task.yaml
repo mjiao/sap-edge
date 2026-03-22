@@ -26,6 +26,10 @@ spec:
       type: string
       description: "PostgreSQL version: v15, v16, v17"
       default: "v15"
+    - name: postgresHA
+      type: string
+      description: "Deploy PostgreSQL in HA mode (3 replicas with anti-affinity)"
+      default: "false"
     - name: skipWait
       type: string
       description: "Skip waiting for PostgreSQL readiness"
@@ -142,7 +146,12 @@ spec:
 
         cd "$(workspaces.source.path)/edge-integration-cell"
 
+        PG_HA="$(params.postgresHA)"
+
         DEPLOY_ARGS=("-n" "${PG_NAMESPACE}" "-v" "${PG_VERSION}" "-f")
+        if [[ "${PG_HA}" == "true" ]]; then
+          DEPLOY_ARGS+=("--ha")
+        fi
         if [[ "${SKIP_WAIT}" == "true" ]]; then
           DEPLOY_ARGS+=("--skip-wait")
         fi

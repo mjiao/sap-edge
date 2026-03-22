@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Kirill Satarin (@kksat)
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: postgres-operator.crunchydata.com/v1beta1
+kind: PostgresCluster
+metadata:
+  name: eic
+  namespace: sap-eic-external-postgres
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  postgresVersion: 17
+  instances:
+    - name: instance1
+      replicas: 3
+      dataVolumeClaimSpec:
+        accessModes:
+          - "ReadWriteOnce"
+        resources:
+          requests:
+            storage: 50Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 1
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    postgres-operator.crunchydata.com/cluster: eic
+  users:
+    - name: eic
+      databases:
+        - eic
+      options: 'SUPERUSER'
+  backups:
+    pgbackrest:
+      global:
+        repo1-retention-full: "1"
+        repo1-retention-full-type: count
+      repos:
+        - name: repo1
+          schedules:
+            full: "0 1 * * 0"
+            differential: "0 1 * * 1-6"
+          volume:
+            volumeClaimSpec:
+              accessModes:
+                - "ReadWriteOnce"
+              resources:
+                requests:
+                  storage: 50Gi
