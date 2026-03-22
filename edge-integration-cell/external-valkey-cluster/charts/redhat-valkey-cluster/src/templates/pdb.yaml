@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.database_service_name }}-pdb
+  labels:
+    template: valkey-cluster-template
+spec:
+  minAvailable: {{ div (int .Values.replicas) 2 | add 1 }}
+  selector:
+    matchLabels:
+      name: {{ .Values.database_service_name }}
