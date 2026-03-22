@@ -59,15 +59,19 @@ done
 cluster_name="$CLUSTER_NAME"
 namespace="$NAMESPACE"
 
-# Loop until readyReplicas equals 1
+# Get the desired replica count from the spec
+desired_replicas=$($KUBE_CLI get postgrescluster "$cluster_name" -n "$namespace" -o json | jq -r '.spec.instances[0].replicas // 1')
+echo "Waiting for $desired_replicas replica(s) to be ready..."
+
+# Loop until readyReplicas equals the desired count
 while true; do
     ready_replicas=$($KUBE_CLI get postgrescluster "$cluster_name" -o json -n "$namespace" | jq -r '.status.instances[0].readyReplicas')
 
-    if [[ "$ready_replicas" == "1" ]]; then
-        echo "Crunchy Postgres is ready. Exiting loop."
+    if [[ "$ready_replicas" == "$desired_replicas" ]]; then
+        echo "Crunchy Postgres is ready ($ready_replicas/$desired_replicas replicas). Exiting loop."
         break
     else
-        echo "Crunchy Postgres readyReplicas is $ready_replicas. Waiting..."
-        sleep 5  # Adjust the sleep time as needed
+        echo "Crunchy Postgres readyReplicas is $ready_replicas/$desired_replicas. Waiting..."
+        sleep 5
     fi
 done
