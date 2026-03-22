@@ -47,9 +47,9 @@ spec:
     - name: postgresVersion
       value: "v15"
     - name: datastoreType
-      value: "redis"
+      value: "valkey"
     - name: redisClusterType
-      value: "standard"
+      value: "cluster"
     - name: eicAuthSecretName
       value: "eic-auth-secret"
     - name: publicDNS
