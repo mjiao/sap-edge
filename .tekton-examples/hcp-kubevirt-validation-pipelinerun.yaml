@@ -59,7 +59,7 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: ""
+      value: "SAPOCP-1949"
     - name: skipTeardown
       value: "false"
     - name: hubKubeconfigSecretName
