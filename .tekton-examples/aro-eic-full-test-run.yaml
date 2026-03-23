@@ -26,6 +26,8 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
+    - name: pullRequestNumber
+      value: "{{ pull_request_number }}"
     - name: aroLocation
       value: "northeurope"
     - name: aroClusterName

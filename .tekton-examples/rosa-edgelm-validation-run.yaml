@@ -26,6 +26,8 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
+    - name: pullRequestNumber
+      value: "{{ pull_request_number }}"
     - name: clusterName
       value: "rosa-edgelm"
     - name: awsRegion
@@ -44,6 +46,12 @@ spec:
       value: "SAPOCP-1659"
     - name: skipEdgelmValidation
       value: "false"
+    - name: terraformStateS3Bucket
+      value: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      value: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      value: "eic-test-rosa-terraform-state-lock"
   workspaces:
     - name: source
       volumeClaimTemplate:

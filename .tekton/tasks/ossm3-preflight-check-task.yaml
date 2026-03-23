@@ -11,12 +11,13 @@ metadata:
 spec:
   description: >-
     Pre-flight validation for the HCP OSSM3 pipeline. Checks that
-    required ConfigMaps, Secrets, and other prerequisites exist before
+    required Secrets, ConfigMaps (OBC), and other prerequisites exist before
     starting expensive cluster provisioning operations.
   params:
-    - name: rbacResourcesConfigMapName
+    - name: obcName
       type: string
-      description: "Name of the ConfigMap containing RBAC YAML files from SAP Note 3618713 resources.zip"
+      description: "Name of the ObjectBucketClaim (OBC) for downloading restricted-access RBAC resources from S3"
+      default: "sap-eic-restricted-cluster-config-resources"
     - name: pullSecretName
       type: string
       description: "Name of the pull secret"
@@ -32,7 +33,7 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        RBAC_CM="$(params.rbacResourcesConfigMapName)"
+        OBC_NAME="$(params.obcName)"
         PULL_SECRET="$(params.pullSecretName)"
         HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
 
@@ -48,21 +49,25 @@ spec:
         cp /usr/local/bin/oc /usr/local/bin/kubectl
         rm -f /tmp/oc.tar.gz
 
-        # Check RBAC resources ConfigMap
+        # Check OBC Secret (S3 credentials)
         echo ""
-        echo "🔍 Checking RBAC resources ConfigMap: ${RBAC_CM}..."
-        if kubectl get configmap "${RBAC_CM}" > /dev/null 2>&1; then
-          YAML_COUNT=$(kubectl get configmap "${RBAC_CM}" -o json | python3 -c "import sys,json; print(len([k for k in json.load(sys.stdin).get('data',{}).keys() if k.endswith('.yaml')]))" 2>/dev/null || echo "0")
-          if [[ "${YAML_COUNT}" -gt 0 ]]; then
-            echo "   ✅ ConfigMap '${RBAC_CM}' exists with ${YAML_COUNT} YAML file(s)"
-          else
-            echo "   ❌ ConfigMap '${RBAC_CM}' exists but contains no YAML files"
-            echo "      Create it with: oc create configmap ${RBAC_CM} --from-file=/path/to/extracted/resources/"
-            ERRORS=$((ERRORS + 1))
-          fi
+        echo "🔍 Checking OBC Secret: ${OBC_NAME}..."
+        if kubectl get secret "${OBC_NAME}" > /dev/null 2>&1; then
+          echo "   ✅ OBC Secret '${OBC_NAME}' exists (S3 credentials)"
         else
-          echo "   ❌ ConfigMap '${RBAC_CM}' not found"
-          echo "      Create it with: oc create configmap ${RBAC_CM} --from-file=/path/to/extracted/resources/"
+          echo "   ❌ OBC Secret '${OBC_NAME}' not found"
+          echo "      Ensure the ObjectBucketClaim '${OBC_NAME}' is created and bound"
+          ERRORS=$((ERRORS + 1))
+        fi
+
+        # Check OBC ConfigMap (S3 endpoint info)
+        echo ""
+        echo "🔍 Checking OBC ConfigMap: ${OBC_NAME}..."
+        if kubectl get configmap "${OBC_NAME}" > /dev/null 2>&1; then
+          echo "   ✅ OBC ConfigMap '${OBC_NAME}' exists (S3 endpoint info)"
+        else
+          echo "   ❌ OBC ConfigMap '${OBC_NAME}' not found"
+          echo "      Ensure the ObjectBucketClaim '${OBC_NAME}' is created and bound"
           ERRORS=$((ERRORS + 1))
         fi
 

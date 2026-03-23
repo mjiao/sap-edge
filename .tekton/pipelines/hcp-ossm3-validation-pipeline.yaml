@@ -71,9 +71,14 @@ spec:
       type: string
       description: "OLM subscription channel for the OSSM3 operator"
       default: "stable-3.2"
-    - name: rbacResourcesConfigMapName
+    - name: obcName
       type: string
-      description: "Name of the ConfigMap containing RBAC YAML files from SAP Note 3618713 resources.zip"
+      description: "Name of the ObjectBucketClaim (OBC) for downloading restricted-access RBAC resources from S3"
+      default: "sap-eic-restricted-cluster-config-resources"
+    - name: s3Prefix
+      type: string
+      description: "S3 key prefix for the restricted-resources zip files"
+      default: "restricted-resources/"
     - name: skipWebhook
       type: string
       description: "Skip optional admission webhook installation"
@@ -123,8 +128,6 @@ spec:
       default: "false"
   workspaces:
     - name: source
-    - name: rbac-resources
-      description: "ConfigMap-backed workspace containing RBAC YAML files from SAP Note 3618713 resources.zip"
 
   tasks:
     # =============================================
@@ -135,8 +138,8 @@ spec:
     - name: preflight-check
       taskRef: { name: ossm3-preflight-check }
       params:
-        - name: rbacResourcesConfigMapName
-          value: $(params.rbacResourcesConfigMapName)
+        - name: obcName
+          value: $(params.obcName)
         - name: pullSecretName
           value: $(params.pullSecretName)
         - name: hubKubeconfigSecretName
@@ -251,10 +254,10 @@ spec:
         - name: source
           workspace: source
 
-    # Step 7: Apply RBAC permissions from SAP Note 3618713 resources
+    # Step 7: Download and apply RBAC permissions from S3 (restricted-access resources)
     - name: apply-rbac
       runAfter: [configure-mesh]
-      taskRef: { name: ossm3-apply-rbac }
+      taskRef: { name: ossm3-download-and-apply-rbac }
       params:
         - name: hostedClusterName
           value: $(params.hostedClusterName)
@@ -262,13 +265,15 @@ spec:
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
           value: $(params.hubKubeconfigSecretName)
+        - name: obcName
+          value: $(params.obcName)
+        - name: s3Prefix
+          value: $(params.s3Prefix)
         - name: skipWebhook
           value: $(params.skipWebhook)
       workspaces:
         - name: source
           workspace: source
-        - name: rbac-resources
-          workspace: rbac-resources
 
     # Step 8: Generate SA-based restricted kubeconfig for ELM registration
     - name: generate-sa-based-kubeconfig

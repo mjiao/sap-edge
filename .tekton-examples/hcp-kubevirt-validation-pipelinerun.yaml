@@ -48,6 +48,8 @@ spec:
       value: ""
     - name: postgresVersion
       value: "v15"
+    - name: postgresHA
+      value: "false"
     - name: datastoreType
       value: "redis"
     - name: redisClusterType
