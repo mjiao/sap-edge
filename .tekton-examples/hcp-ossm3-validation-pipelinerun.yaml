@@ -19,6 +19,8 @@ metadata:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"   # only PRs
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/task: "[./.tekton/tasks/git-clone.yaml]"
+    pipelinesascode.tekton.dev/max-keep-runs: "1"
+    pipelinesascode.tekton.dev/cancel-in-progress: "true"
 spec:
   pipelineRef:
     name: hcp-ossm3-validation-pipeline
@@ -37,7 +39,7 @@ spec:
 
     # --- HCP cluster parameters ---
     - name: hostedClusterName
-      value: "hcp-ossm3-mj-test"
+      value: "hcp-ossm-pr{{ pull_request_number }}"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
