@@ -49,11 +49,11 @@ spec:
     - name: postgresVersion
       value: "v15"
     - name: postgresHA
-      value: "false"
+      value: "true"
     - name: datastoreType
-      value: "redis"
+      value: "valkey-cluster"
     - name: redisClusterType
-      value: "standard"
+      value: "cluster"
     - name: eicAuthSecretName
       value: "eic-auth-secret"
     - name: publicDNS
@@ -61,7 +61,7 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "SAPOCP-1949"
+      value: ""
     - name: skipTeardown
       value: "false"
     - name: hubKubeconfigSecretName
