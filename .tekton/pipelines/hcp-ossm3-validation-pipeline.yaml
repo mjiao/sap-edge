@@ -219,39 +219,10 @@ spec:
         - name: source
           workspace: source
 
-    # Step 5: Prepare namespaces with labels and SCC annotations
-    - name: prepare-namespaces
-      runAfter: [verify-operators]
-      taskRef: { name: ossm3-prepare-namespaces }
-      params:
-        - name: hostedClusterName
-          value: $(params.hostedClusterName)
-        - name: hostedClusterNamespace
-          value: $(params.hostedClusterNamespace)
-        - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
-      workspaces:
-        - name: source
-          workspace: source
-
-    # Step 6: Configure OpenShift Service Mesh 3.x
-    - name: configure-mesh
-      runAfter: [prepare-namespaces]
-      taskRef: { name: ossm3-configure-mesh }
-      params:
-        - name: hostedClusterName
-          value: $(params.hostedClusterName)
-        - name: hostedClusterNamespace
-          value: $(params.hostedClusterNamespace)
-        - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
-      workspaces:
-        - name: source
-          workspace: source
-
-    # Step 7: Download and apply RBAC permissions from S3 (restricted-access resources)
+    # Step 5: Download and apply RBAC permissions from S3 (restricted-access resources)
+    #         This creates namespaces and applies CRDs, ClusterRoles, RoleBindings, etc.
     - name: apply-rbac
-      runAfter: [configure-mesh]
+      runAfter: [verify-operators]
       taskRef: { name: ossm3-download-and-apply-rbac }
       params:
         - name: hostedClusterName
@@ -268,9 +239,41 @@ spec:
         - name: source
           workspace: source
 
+    # Step 6: Prepare namespaces with labels and SCC annotations
+    #         Runs after apply-rbac to re-apply correct annotations that may
+    #         have been overridden by namespace definitions in the zip files.
+    - name: prepare-namespaces
+      runAfter: [apply-rbac]
+      taskRef: { name: ossm3-prepare-namespaces }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 7: Configure OpenShift Service Mesh 3.x
+    - name: configure-mesh
+      runAfter: [prepare-namespaces]
+      taskRef: { name: ossm3-configure-mesh }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
     # Step 8: Generate SA-based restricted kubeconfig for ELM registration
     - name: generate-sa-based-kubeconfig
-      runAfter: [apply-rbac]
+      runAfter: [configure-mesh]
       taskRef: { name: ossm3-generate-sa-based-kubeconfig }
       params:
         - name: hostedClusterName
