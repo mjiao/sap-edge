@@ -26,6 +26,8 @@ spec:
       value: "{{ repo_url }}"
     - name: revision
       value: "{{ revision }}"
+    - name: pullRequestNumber
+      value: "{{ pull_request_number }}"
     - name: clusterName
       value: "rosa-eic-test"
     - name: awsRegion
@@ -38,8 +40,8 @@ spec:
       value: "redhat-token-secret"
     - name: eicAuthSecretName
       value: "eic-auth-secret"
-    - name: postgresAdminPassword
-      value: "ChangeMe123!"
+    - name: postgresAdminPasswordSecretName
+      value: "rosa-postgres-admin-password"
     - name: quayAdminPasswordSecretName
       value: "quay-admin-secret"
     - name: deployPostgres
@@ -54,6 +56,12 @@ spec:
       value: "jira-secret-mj"
     - name: jiraIssueKey
       value: "SAPOCP-1590"
+    - name: terraformStateS3Bucket
+      value: "eic-test-rosa-terraform-state"
+    - name: terraformStateS3Key
+      value: "rosa/terraform.tfstate"
+    - name: terraformStateDynamoDBTable
+      value: "eic-test-rosa-terraform-state-lock"
   workspaces:
     - name: source
       volumeClaimTemplate:

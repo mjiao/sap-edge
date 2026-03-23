@@ -1,0 +1,361 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ossm3-download-and-apply-rbac
+spec:
+  description: >-
+    Download restricted-access resource zip files from an ODF S3 bucket (via OBC),
+    extract them, and apply RBAC permissions on the hosted cluster. Replaces the
+    ConfigMap-based approach for providing RBAC resources.
+  params:
+    - name: hostedClusterName
+      type: string
+      description: "Name of the hosted cluster"
+    - name: hostedClusterNamespace
+      type: string
+      description: "Namespace for HostedCluster resources"
+      default: "clusters"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional, uses in-cluster config if empty)"
+      default: ""
+    - name: obcName
+      type: string
+      description: "Name of the ObjectBucketClaim (OBC) — used to look up the S3 credentials Secret and endpoint ConfigMap"
+      default: "sap-eic-restricted-cluster-config-resources"
+    - name: s3Prefix
+      type: string
+      description: "S3 key prefix for the restricted-resources zip files"
+      default: "restricted-resources/"
+    - name: skipWebhook
+      type: string
+      description: "Skip optional admission webhook installation"
+      default: "false"
+  workspaces:
+    - name: source
+  steps:
+    - name: download-and-apply-rbac
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "336h"
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.obcName)
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: $(params.obcName)
+              key: AWS_SECRET_ACCESS_KEY
+        - name: BUCKET_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: $(params.obcName)
+              key: BUCKET_HOST
+        - name: BUCKET_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: $(params.obcName)
+              key: BUCKET_PORT
+        - name: BUCKET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: $(params.obcName)
+              key: BUCKET_NAME
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        CLUSTER_NAME="$(params.hostedClusterName)"
+        CLUSTER_NS="$(params.hostedClusterNamespace)"
+        HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
+        SKIP_WEBHOOK="$(params.skipWebhook)"
+        S3_PREFIX="$(params.s3Prefix)"
+
+        echo "=========================================="
+        echo "OSSM3 Download & Apply RBAC Task"
+        echo "=========================================="
+        echo "Hosted Cluster: ${CLUSTER_NAME}"
+        echo "Cluster Namespace: ${CLUSTER_NS}"
+        echo "S3 Bucket: ${BUCKET_NAME}"
+        echo "S3 Prefix: ${S3_PREFIX}"
+        echo "Skip Webhook: ${SKIP_WEBHOOK}"
+        echo "=========================================="
+
+        # Install required tools
+        echo "📦 Installing required packages..."
+        dnf install -y unzip > /dev/null 2>&1
+
+        echo "📦 Installing OpenShift CLI..."
+        curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o /tmp/oc.tar.gz
+        tar xzf /tmp/oc.tar.gz -C /tmp
+        mv /tmp/oc /usr/local/bin/
+        cp /usr/local/bin/oc /usr/local/bin/kubectl
+        rm -f /tmp/oc.tar.gz
+        oc version --client
+
+        echo "📦 Installing AWS CLI..."
+        curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+        rm -rf /tmp/awscliv2.zip /tmp/aws
+        aws --version
+
+        # ========================================
+        # Step 1: Download zip files from S3
+        # ========================================
+        echo ""
+        echo "📥 Downloading restricted-resources from S3..."
+
+        S3_ENDPOINT="https://${BUCKET_HOST}:${BUCKET_PORT}"
+        DOWNLOAD_DIR="/tmp/restricted-resources"
+        mkdir -p "${DOWNLOAD_DIR}"
+
+        aws s3 cp "s3://${BUCKET_NAME}/${S3_PREFIX}" "${DOWNLOAD_DIR}/" \
+          --endpoint-url "${S3_ENDPOINT}" \
+          --no-verify-ssl \
+          --recursive
+
+        echo "✅ Downloaded files:"
+        ls -la "${DOWNLOAD_DIR}/"
+
+        # ========================================
+        # Step 2: Select latest version of each resource type and extract
+        # ========================================
+        # Naming convention: restricted-resources-<ResourceType>-<version>.zip
+        # e.g. restricted-resources-Edge_Integration_Cell-8.41.1.zip
+        #      restricted-resources-Edge_Lifecycle_Management-1.57.0.zip
+        #      restricted-resources-IstioGateways-1.7.0.zip
+        # When multiple versions exist, only the latest of each type is used.
+
+        echo ""
+        echo "📦 Selecting latest version of each resource type..."
+
+        RBAC_DIR="/tmp/rbac-resources"
+        mkdir -p "${RBAC_DIR}"
+
+        # Group zip files by resource type and pick the latest version
+        declare -A LATEST_FILES
+        for ZIP_FILE in "${DOWNLOAD_DIR}"/*.zip; do
+          [[ -f "${ZIP_FILE}" ]] || continue
+          BASENAME=$(basename "${ZIP_FILE}" .zip)
+          # Extract resource type by stripping the version suffix (last hyphen-separated segment with dots)
+          RESOURCE_TYPE=$(echo "${BASENAME}" | sed 's/-[0-9][0-9.]*$//')
+          VERSION=$(echo "${BASENAME}" | grep -oP '[0-9][0-9.]*$' || echo "0")
+
+          if [[ -z "${LATEST_FILES[${RESOURCE_TYPE}]+_}" ]]; then
+            LATEST_FILES["${RESOURCE_TYPE}"]="${ZIP_FILE}"
+          else
+            CURRENT_LATEST=$(basename "${LATEST_FILES[${RESOURCE_TYPE}]}" .zip | grep -oP '[0-9][0-9.]*$' || echo "0")
+            # Use sort -V for version comparison
+            HIGHER=$(printf '%s\n%s' "${CURRENT_LATEST}" "${VERSION}" | sort -V | tail -1)
+            if [[ "${HIGHER}" == "${VERSION}" && "${VERSION}" != "${CURRENT_LATEST}" ]]; then
+              LATEST_FILES["${RESOURCE_TYPE}"]="${ZIP_FILE}"
+            fi
+          fi
+        done
+
+        echo "✅ Latest versions selected:"
+        for RESOURCE_TYPE in "${!LATEST_FILES[@]}"; do
+          echo "   ${RESOURCE_TYPE} → $(basename "${LATEST_FILES[${RESOURCE_TYPE}]}")"
+        done
+
+        echo ""
+        echo "📦 Extracting selected zip files..."
+        for ZIP_FILE in "${LATEST_FILES[@]}"; do
+          echo "   Extracting $(basename "${ZIP_FILE}")..."
+          unzip -o "${ZIP_FILE}" -d "${RBAC_DIR}"
+        done
+
+        echo "✅ Extracted files:"
+        find "${RBAC_DIR}" -name "*.yaml" -type f | sort
+
+        # ========================================
+        # Step 3: Connect to hosted cluster
+        # ========================================
+
+        # Configure hub cluster kubeconfig if provided
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          echo "🔐 Extracting hub cluster kubeconfig from secret: ${HUB_KUBECONFIG_SECRET}..."
+          HUB_KUBECONFIG="/tmp/hub-kubeconfig"
+          if kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: kubeconfig)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: config)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.value}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: value)"
+          else
+            echo "❌ Failed to extract kubeconfig from secret '${HUB_KUBECONFIG_SECRET}'"
+            exit 1
+          fi
+          chmod 600 "${HUB_KUBECONFIG}"
+          export KUBECONFIG="${HUB_KUBECONFIG}"
+          echo "✅ Using hub kubeconfig for cluster operations"
+          oc whoami
+        else
+          echo "ℹ️  No hub kubeconfig secret provided, using in-cluster service account"
+        fi
+
+        # Extract kubeconfig for hosted cluster
+        echo "🔐 Extracting kubeconfig for hosted cluster..."
+        KUBECONFIG_SECRET="${CLUSTER_NAME}-admin-kubeconfig"
+
+        if ! oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" > /dev/null 2>&1; then
+          echo "❌ Kubeconfig secret '${KUBECONFIG_SECRET}' not found in namespace '${CLUSTER_NS}'"
+          exit 1
+        fi
+
+        HOSTED_KUBECONFIG="/tmp/hosted-kubeconfig"
+        oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" \
+          -o jsonpath='{.data.kubeconfig}' | base64 -d > "${HOSTED_KUBECONFIG}"
+        chmod 600 "${HOSTED_KUBECONFIG}"
+
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+
+        echo "🔍 Verifying access to hosted cluster..."
+        oc get nodes
+        echo "✅ Successfully connected to hosted cluster"
+
+        # ========================================
+        # Step 4: Apply RBAC resources
+        # ========================================
+
+        # Find the actual directory containing YAML files (may be nested)
+        YAML_DIR=$(find "${RBAC_DIR}" -name "*.yaml" -type f -print -quit | xargs dirname 2>/dev/null || echo "${RBAC_DIR}")
+        if [[ -z "${YAML_DIR}" ]]; then
+          echo "❌ No YAML files found in extracted resources"
+          exit 1
+        fi
+        echo ""
+        echo "📂 Using RBAC resources from: ${YAML_DIR}"
+
+        YAML_COUNT=$(find "${RBAC_DIR}" -name "*.yaml" -type f | wc -l | tr -d ' ')
+        echo "✅ Found ${YAML_COUNT} YAML files"
+
+        # Helper function to apply a file if it exists
+        apply_if_exists() {
+          local file="$1"
+          local namespace="${2:-}"
+          if [[ -f "${file}" ]]; then
+            if [[ -n "${namespace}" ]]; then
+              echo "   Applying $(basename "${file}") in namespace ${namespace}"
+              oc apply -f "${file}" -n "${namespace}"
+            else
+              echo "   Applying $(basename "${file}") (cluster-scoped)"
+              oc apply -f "${file}"
+            fi
+          else
+            echo "   ⚠️ File not found: $(basename "${file}") - skipping"
+          fi
+        }
+
+        # --- Step 4.1: Apply Custom Resource Definitions (CRDs) first ---
+        echo ""
+        echo "📦 Applying Custom Resource Definitions (CRDs)..."
+        for CRD_FILE in "${YAML_DIR}"/crd-*.yaml; do
+          if [[ -f "${CRD_FILE}" ]]; then
+            apply_if_exists "${CRD_FILE}"
+          fi
+        done
+        echo "✅ CRDs applied"
+
+        # --- Step 4.2: Apply ClusterRoles ---
+        echo ""
+        echo "📦 Applying ClusterRoles..."
+        for CR_FILE in "${YAML_DIR}"/cr-*.yaml; do
+          if [[ -f "${CR_FILE}" ]]; then
+            apply_if_exists "${CR_FILE}"
+          fi
+        done
+        echo "✅ ClusterRoles applied"
+
+        # --- Apply ClusterRoleBindings ---
+        echo "📦 Applying ClusterRoleBindings..."
+        for CRB_FILE in "${YAML_DIR}"/crb-*.yaml; do
+          if [[ -f "${CRB_FILE}" ]]; then
+            apply_if_exists "${CRB_FILE}"
+          fi
+        done
+        echo "✅ ClusterRoleBindings applied"
+
+        # --- Step 4.3: Apply admission webhook (optional) ---
+        if [[ "${SKIP_WEBHOOK}" != "true" ]]; then
+          echo ""
+          echo "📦 Applying admission webhook..."
+          for WH_FILE in "${YAML_DIR}"/webhook-*.yaml; do
+            if [[ -f "${WH_FILE}" ]]; then
+              apply_if_exists "${WH_FILE}"
+            fi
+          done
+          echo "✅ Admission webhook applied"
+        else
+          echo ""
+          echo "⏭️ Skipping admission webhook installation (skipWebhook=true)"
+        fi
+
+        # --- Namespace-Specific Permissions ---
+        echo ""
+        echo "📦 Applying namespace-specific permissions..."
+
+        # --- Permissions for 'edgelm' namespace ---
+        echo ""
+        echo "🔧 Namespace: edgelm"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edgelm"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edgelm"
+        apply_if_exists "${YAML_DIR}/role-edgelm-admin.yaml" "edgelm"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-admin.yaml" "edgelm"
+
+        # --- Permissions for 'istio-gateways' namespace ---
+        echo ""
+        echo "🔧 Namespace: istio-gateways"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "istio-gateways"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "istio-gateways"
+        apply_if_exists "${YAML_DIR}/role-istio-gateways-admin.yaml" "istio-gateways"
+        apply_if_exists "${YAML_DIR}/rb-istio-gateways-admin.yaml" "istio-gateways"
+
+        # --- Permissions for 'edge-icell' namespace ---
+        echo ""
+        echo "🔧 Namespace: edge-icell"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell"
+        apply_if_exists "${YAML_DIR}/role-edge-icell.yaml" "edge-icell"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell.yaml" "edge-icell"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-admin.yaml" "edge-icell"
+
+        # --- Permissions for 'edge-icell-ela' namespace ---
+        echo ""
+        echo "🔧 Namespace: edge-icell-ela"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-ela"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-ela"
+        apply_if_exists "${YAML_DIR}/role-edge-icell-ela.yaml" "edge-icell-ela"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-ela.yaml" "edge-icell-ela"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-ela-admin.yaml" "edge-icell-ela"
+
+        # --- Permissions for 'edge-icell-secrets' namespace ---
+        echo ""
+        echo "🔧 Namespace: edge-icell-secrets"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-secrets"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-secrets"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-secrets-admin.yaml" "edge-icell-secrets"
+
+        # --- Permissions for 'edge-icell-services' namespace ---
+        echo ""
+        echo "🔧 Namespace: edge-icell-services"
+        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-services"
+        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-services"
+        apply_if_exists "${YAML_DIR}/role-edge-icell-services.yaml" "edge-icell-services"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-services.yaml" "edge-icell-services"
+        apply_if_exists "${YAML_DIR}/rb-edge-icell-services-admin.yaml" "edge-icell-services"
+
+        echo ""
+        echo "=========================================="
+        echo "✅ RBAC permissions downloaded and applied successfully"
+        echo "=========================================="
