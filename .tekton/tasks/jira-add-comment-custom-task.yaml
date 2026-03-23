@@ -32,6 +32,11 @@ spec:
             secretKeyRef:
               name: $(params.jiraSecretName)
               key: serverURL
+        - name: JIRA_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: $(params.jiraSecretName)
+              key: email
         - name: JIRA_API_TOKEN
           valueFrom:
             secretKeyRef:
@@ -44,7 +49,8 @@ spec:
         echo "Installing jq..."
         microdnf install -y jq > /dev/null
 
-        AUTH_HEADER="Authorization: Bearer $JIRA_API_TOKEN"
+        # Jira Cloud uses Basic auth with email:apiToken
+        AUTH_HEADER="Authorization: Basic $(echo -n "${JIRA_EMAIL}:${JIRA_API_TOKEN}" | base64 -w 0)"
         
         # Check for duplicate success messages
         echo "🔍 Checking for duplicate success messages..."
