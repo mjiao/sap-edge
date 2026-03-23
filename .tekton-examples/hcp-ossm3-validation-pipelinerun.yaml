@@ -67,8 +67,6 @@ spec:
       value: "sap-eic-restricted-cluster-config-resources"
     - name: s3Prefix
       value: "restricted-resources/"
-    - name: skipWebhook
-      value: "true"
 
     # --- EIC services parameters ---
     - name: postgresVersion
