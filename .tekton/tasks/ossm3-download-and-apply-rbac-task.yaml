@@ -33,10 +33,6 @@ spec:
       type: string
       description: "S3 key prefix for the restricted-resources zip files"
       default: "restricted-resources/"
-    - name: skipWebhook
-      type: string
-      description: "Skip optional admission webhook installation"
-      default: "false"
   workspaces:
     - name: source
   steps:
@@ -77,7 +73,6 @@ spec:
         CLUSTER_NAME="$(params.hostedClusterName)"
         CLUSTER_NS="$(params.hostedClusterNamespace)"
         HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
-        SKIP_WEBHOOK="$(params.skipWebhook)"
         S3_PREFIX="$(params.s3Prefix)"
 
         echo "=========================================="
@@ -87,7 +82,6 @@ spec:
         echo "Cluster Namespace: ${CLUSTER_NS}"
         echo "S3 Bucket: ${BUCKET_NAME}"
         echo "S3 Prefix: ${S3_PREFIX}"
-        echo "Skip Webhook: ${SKIP_WEBHOOK}"
         echo "=========================================="
 
         # Install required tools
@@ -169,10 +163,13 @@ spec:
         done
 
         echo ""
-        echo "📦 Extracting selected zip files..."
-        for ZIP_FILE in "${LATEST_FILES[@]}"; do
-          echo "   Extracting $(basename "${ZIP_FILE}")..."
-          unzip -o "${ZIP_FILE}" -d "${RBAC_DIR}"
+        echo "📦 Extracting selected zip files into separate directories..."
+        for RESOURCE_TYPE in "${!LATEST_FILES[@]}"; do
+          ZIP_FILE="${LATEST_FILES[${RESOURCE_TYPE}]}"
+          EXTRACT_DIR="${RBAC_DIR}/${RESOURCE_TYPE}"
+          mkdir -p "${EXTRACT_DIR}"
+          echo "   Extracting $(basename "${ZIP_FILE}") → ${RESOURCE_TYPE}/"
+          unzip -o "${ZIP_FILE}" -d "${EXTRACT_DIR}"
         done
 
         echo "✅ Extracted files:"
@@ -228,132 +225,26 @@ spec:
         # Step 4: Apply RBAC resources
         # ========================================
 
-        # Find the actual directory containing YAML files (may be nested)
-        YAML_DIR=$(find "${RBAC_DIR}" -name "*.yaml" -type f -print -quit | xargs dirname 2>/dev/null || echo "${RBAC_DIR}")
-        if [[ -z "${YAML_DIR}" ]]; then
+        YAML_COUNT=$(find "${RBAC_DIR}" -name "*.yaml" -type f | wc -l | tr -d ' ')
+        if [[ "${YAML_COUNT}" -eq 0 ]]; then
           echo "❌ No YAML files found in extracted resources"
           exit 1
         fi
         echo ""
-        echo "📂 Using RBAC resources from: ${YAML_DIR}"
-
-        YAML_COUNT=$(find "${RBAC_DIR}" -name "*.yaml" -type f | wc -l | tr -d ' ')
-        echo "✅ Found ${YAML_COUNT} YAML files"
-
-        # Helper function to apply a file if it exists
-        apply_if_exists() {
-          local file="$1"
-          local namespace="${2:-}"
-          if [[ -f "${file}" ]]; then
-            if [[ -n "${namespace}" ]]; then
-              echo "   Applying $(basename "${file}") in namespace ${namespace}"
-              oc apply -f "${file}" -n "${namespace}"
-            else
-              echo "   Applying $(basename "${file}") (cluster-scoped)"
-              oc apply -f "${file}"
-            fi
-          else
-            echo "   ⚠️ File not found: $(basename "${file}") - skipping"
-          fi
-        }
-
-        # --- Step 4.1: Apply Custom Resource Definitions (CRDs) first ---
+        echo "✅ Found ${YAML_COUNT} YAML files across all resource types"
         echo ""
-        echo "📦 Applying Custom Resource Definitions (CRDs)..."
-        for CRD_FILE in "${YAML_DIR}"/crd-*.yaml; do
-          if [[ -f "${CRD_FILE}" ]]; then
-            apply_if_exists "${CRD_FILE}"
-          fi
-        done
-        echo "✅ CRDs applied"
 
-        # --- Step 4.2: Apply ClusterRoles ---
-        echo ""
-        echo "📦 Applying ClusterRoles..."
-        for CR_FILE in "${YAML_DIR}"/cr-*.yaml; do
-          if [[ -f "${CR_FILE}" ]]; then
-            apply_if_exists "${CR_FILE}"
-          fi
-        done
-        echo "✅ ClusterRoles applied"
-
-        # --- Apply ClusterRoleBindings ---
-        echo "📦 Applying ClusterRoleBindings..."
-        for CRB_FILE in "${YAML_DIR}"/crb-*.yaml; do
-          if [[ -f "${CRB_FILE}" ]]; then
-            apply_if_exists "${CRB_FILE}"
-          fi
-        done
-        echo "✅ ClusterRoleBindings applied"
-
-        # --- Step 4.3: Apply admission webhook (optional) ---
-        if [[ "${SKIP_WEBHOOK}" != "true" ]]; then
+        # Apply all YAML files from each resource type directory
+        for RESOURCE_TYPE in "${!LATEST_FILES[@]}"; do
+          EXTRACT_DIR="${RBAC_DIR}/${RESOURCE_TYPE}"
+          echo "📦 Applying resources from: ${RESOURCE_TYPE}"
+          while IFS= read -r YAML_FILE; do
+            echo "   Applying $(basename "${YAML_FILE}")..."
+            oc apply -f "${YAML_FILE}"
+          done < <(find "${EXTRACT_DIR}" -name "*.yaml" -type f | sort)
+          echo "✅ ${RESOURCE_TYPE} applied"
           echo ""
-          echo "📦 Applying admission webhook..."
-          for WH_FILE in "${YAML_DIR}"/webhook-*.yaml; do
-            if [[ -f "${WH_FILE}" ]]; then
-              apply_if_exists "${WH_FILE}"
-            fi
-          done
-          echo "✅ Admission webhook applied"
-        else
-          echo ""
-          echo "⏭️ Skipping admission webhook installation (skipWebhook=true)"
-        fi
-
-        # --- Namespace-Specific Permissions ---
-        echo ""
-        echo "📦 Applying namespace-specific permissions..."
-
-        # --- Permissions for 'edgelm' namespace ---
-        echo ""
-        echo "🔧 Namespace: edgelm"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edgelm"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edgelm"
-        apply_if_exists "${YAML_DIR}/role-edgelm-admin.yaml" "edgelm"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-admin.yaml" "edgelm"
-
-        # --- Permissions for 'istio-gateways' namespace ---
-        echo ""
-        echo "🔧 Namespace: istio-gateways"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "istio-gateways"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "istio-gateways"
-        apply_if_exists "${YAML_DIR}/role-istio-gateways-admin.yaml" "istio-gateways"
-        apply_if_exists "${YAML_DIR}/rb-istio-gateways-admin.yaml" "istio-gateways"
-
-        # --- Permissions for 'edge-icell' namespace ---
-        echo ""
-        echo "🔧 Namespace: edge-icell"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell"
-        apply_if_exists "${YAML_DIR}/role-edge-icell.yaml" "edge-icell"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell.yaml" "edge-icell"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-admin.yaml" "edge-icell"
-
-        # --- Permissions for 'edge-icell-ela' namespace ---
-        echo ""
-        echo "🔧 Namespace: edge-icell-ela"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-ela"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-ela"
-        apply_if_exists "${YAML_DIR}/role-edge-icell-ela.yaml" "edge-icell-ela"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-ela.yaml" "edge-icell-ela"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-ela-admin.yaml" "edge-icell-ela"
-
-        # --- Permissions for 'edge-icell-secrets' namespace ---
-        echo ""
-        echo "🔧 Namespace: edge-icell-secrets"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-secrets"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-secrets"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-secrets-admin.yaml" "edge-icell-secrets"
-
-        # --- Permissions for 'edge-icell-services' namespace ---
-        echo ""
-        echo "🔧 Namespace: edge-icell-services"
-        apply_if_exists "${YAML_DIR}/role-edgelm-manage.yaml" "edge-icell-services"
-        apply_if_exists "${YAML_DIR}/rb-edgelm-manage.yaml" "edge-icell-services"
-        apply_if_exists "${YAML_DIR}/role-edge-icell-services.yaml" "edge-icell-services"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-services.yaml" "edge-icell-services"
-        apply_if_exists "${YAML_DIR}/rb-edge-icell-services-admin.yaml" "edge-icell-services"
+        done
 
         echo ""
         echo "=========================================="

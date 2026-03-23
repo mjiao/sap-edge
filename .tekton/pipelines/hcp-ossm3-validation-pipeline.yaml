@@ -79,11 +79,6 @@ spec:
       type: string
       description: "S3 key prefix for the restricted-resources zip files"
       default: "restricted-resources/"
-    - name: skipWebhook
-      type: string
-      description: "Skip optional admission webhook installation"
-      default: "false"
-
     # --- EIC services parameters ---
     - name: postgresVersion
       type: string
@@ -269,8 +264,6 @@ spec:
           value: $(params.obcName)
         - name: s3Prefix
           value: $(params.s3Prefix)
-        - name: skipWebhook
-          value: $(params.skipWebhook)
       workspaces:
         - name: source
           workspace: source
