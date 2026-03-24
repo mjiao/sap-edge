@@ -33,7 +33,7 @@ spec:
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
-      value: "quay.io/openshift-release-dev/ocp-release:4.20.9-x86_64"
+      value: "quay.io/openshift-release-dev/ocp-release:4.20.16-x86_64"
     - name: nodePoolReplicas
       value: "3"
     - name: nodePoolCpuCores
