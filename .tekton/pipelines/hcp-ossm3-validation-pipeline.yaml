@@ -426,9 +426,26 @@ spec:
         - name: source
           workspace: source
 
-    # Step 14: Endpoint Tests (run in parallel after ConfigMap creation)
-    - name: test-httpbinipfilter
+    # Step 14: Fix EndpointSlice for Hypershift KubeVirt OCP 4.21 bug
+    #          The service-sync controller may fail to create EndpointSlice
+    #          objects for LoadBalancer services, breaking MetalLB routing.
+    - name: fix-endpointslice
       runAfter: [validate-and-create-configmap]
+      taskRef: { name: hcp-fix-endpointslice }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 15: Endpoint Tests (run in parallel after EndpointSlice fix)
+    - name: test-httpbinipfilter
+      runAfter: [fix-endpointslice]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -444,7 +461,7 @@ spec:
           workspace: source
 
     - name: test-http-test1
-      runAfter: [validate-and-create-configmap]
+      runAfter: [fix-endpointslice]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -460,7 +477,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster
-      runAfter: [validate-and-create-configmap]
+      runAfter: [fix-endpointslice]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -476,7 +493,7 @@ spec:
           workspace: source
 
     - name: test-slvredis
-      runAfter: [validate-and-create-configmap]
+      runAfter: [fix-endpointslice]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
