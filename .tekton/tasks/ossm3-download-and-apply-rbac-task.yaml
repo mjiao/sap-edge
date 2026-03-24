@@ -173,7 +173,7 @@ spec:
         done
 
         echo "✅ Extracted files:"
-        find "${RBAC_DIR}" -name "*.yaml" -type f | sort
+        find "${RBAC_DIR}" \( -name "*.yaml" -o -name "*.yml" \) -type f | sort
 
         # ========================================
         # Step 3: Connect to hosted cluster
@@ -225,9 +225,9 @@ spec:
         # Step 4: Apply RBAC resources
         # ========================================
 
-        YAML_COUNT=$(find "${RBAC_DIR}" -name "*.yaml" -type f | wc -l | tr -d ' ')
+        YAML_COUNT=$(find "${RBAC_DIR}" \( -name "*.yaml" -o -name "*.yml" \) -type f | wc -l | tr -d ' ')
         if [[ "${YAML_COUNT}" -eq 0 ]]; then
-          echo "❌ No YAML files found in extracted resources"
+          echo "❌ No YAML/YML files found in extracted resources"
           exit 1
         fi
         echo ""
@@ -241,7 +241,7 @@ spec:
           while IFS= read -r YAML_FILE; do
             echo "   Applying $(basename "${YAML_FILE}")..."
             oc apply -f "${YAML_FILE}"
-          done < <(find "${EXTRACT_DIR}" -name "*.yaml" -type f | sort)
+          done < <(find "${EXTRACT_DIR}" \( -name "*.yaml" -o -name "*.yml" \) -type f | sort)
           echo "✅ ${RESOURCE_TYPE} applied"
           echo ""
         done
