@@ -1,0 +1,650 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: hcp-cloud-connector-validation-pipeline
+  annotations:
+    description: "SAP External Cloud Connector validation pipeline for HCP KubeVirt: creates hosted cluster with MCE/HyperShift on KubeVirt, deploys PostgreSQL and Redis, generates Cloud Connector configuration (kubeconfig, certificates, setup instructions), runs comprehensive endpoint tests, and tears down infrastructure"
+spec:
+  params:
+    - name: repoUrl
+      type: string
+      description: "Git repository URL"
+    - name: revision
+      type: string
+      description: "Git revision (branch/tag/commit)"
+      default: "main"
+    - name: pullRequestNumber
+      type: string
+      description: "Pull request number"
+      default: ""
+    - name: hostedClusterName
+      type: string
+      description: "Name of the hosted cluster"
+    - name: hostedClusterNamespace
+      type: string
+      description: "Namespace for HostedCluster resources"
+      default: "clusters"
+    - name: releaseImage
+      type: string
+      description: "OCP release image for the hosted cluster"
+      default: "quay.io/openshift-release-dev/ocp-release:4.15.0-x86_64"
+    - name: nodePoolReplicas
+      type: string
+      description: "Number of worker nodes"
+      default: "3"
+    - name: nodePoolCpuCores
+      type: string
+      description: "vCPU cores per worker node"
+      default: "16"
+    - name: nodePoolMemoryGB
+      type: string
+      description: "RAM in GB per worker node"
+      default: "32"
+    - name: rootDiskSizeGB
+      type: string
+      description: "Root disk size in GB per worker node"
+      default: "120"
+    - name: pullSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Red Hat pull secret"
+      default: "redhat-pull-secret"
+    - name: etcdStorageClass
+      type: string
+      description: "Storage class for etcd PVCs (leave empty for default)"
+      default: ""
+    - name: postgresVersion
+      type: string
+      description: "PostgreSQL version (v15/v16/v17)"
+      default: "v15"
+    - name: postgresHA
+      type: string
+      description: "Deploy PostgreSQL in HA mode (3 replicas with anti-affinity)"
+      default: "false"
+    - name: datastoreType
+      type: string
+      description: "Datastore type: redis, valkey-standalone, or valkey-cluster"
+      default: "redis"
+    - name: redisClusterType
+      type: string
+      description: "Redis cluster type (standard/ha) - only used when datastoreType=redis"
+      default: "standard"
+    - name: eicAuthSecretName
+      type: string
+      description: "EIC authentication secret name for endpoint tests"
+    - name: publicDNS
+      type: string
+      description: "Use public DNS for endpoint tests"
+      default: "false"
+    - name: jiraSecretName
+      type: string
+      description: "Name of the Kubernetes Secret containing Jira credentials"
+      default: ""
+    - name: jiraIssueKey
+      type: string
+      description: "Jira issue key to update with deployment results"
+      default: ""
+    - name: skipTeardown
+      type: string
+      description: "Skip the teardown step at the end"
+      default: "false"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
+  workspaces:
+    - name: source
+
+  tasks:
+    # Step 1: Clone repository
+    - name: fetch-repository
+      taskRef: { name: git-clone }
+      params:
+        - name: url
+          value: $(params.repoUrl)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: output
+          workspace: source
+
+    # Step 2: Create HostedCluster and NodePool
+    - name: create-hosted-cluster
+      runAfter: [fetch-repository]
+      taskRef: { name: hcp-create-hosted-cluster }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: releaseImage
+          value: $(params.releaseImage)
+        - name: nodePoolReplicas
+          value: $(params.nodePoolReplicas)
+        - name: nodePoolCpuCores
+          value: $(params.nodePoolCpuCores)
+        - name: nodePoolMemoryGB
+          value: $(params.nodePoolMemoryGB)
+        - name: rootDiskSizeGB
+          value: $(params.rootDiskSizeGB)
+        - name: pullSecretName
+          value: $(params.pullSecretName)
+        - name: etcdStorageClass
+          value: $(params.etcdStorageClass)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 3: Wait for cluster to be ready
+    - name: wait-cluster-ready
+      runAfter: [create-hosted-cluster]
+      taskRef: { name: hcp-wait-cluster-ready }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: timeoutMinutes
+          value: "90"
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 4: Deploy PostgreSQL on hosted cluster (parallel with Redis)
+    - name: deploy-postgres
+      runAfter: [wait-cluster-ready]
+      taskRef: { name: hcp-deploy-postgres }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: postgresVersion
+          value: $(params.postgresVersion)
+        - name: postgresHA
+          value: $(params.postgresHA)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 5a: Deploy Redis on hosted cluster (parallel with PostgreSQL, when datastoreType=redis)
+    - name: deploy-redis
+      runAfter: [wait-cluster-ready]
+      when:
+        - input: "$(params.datastoreType)"
+          operator: in
+          values: ["redis"]
+      taskRef: { name: hcp-deploy-redis }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: redisClusterType
+          value: $(params.redisClusterType)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 5b: Deploy Valkey on hosted cluster (parallel with PostgreSQL, when datastoreType=valkey-*)
+    - name: deploy-valkey
+      runAfter: [wait-cluster-ready]
+      when:
+        - input: "$(params.datastoreType)"
+          operator: in
+          values: ["valkey-standalone", "valkey-cluster"]
+      taskRef: { name: hcp-deploy-valkey }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: datastoreType
+          value: $(params.datastoreType)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 6: Get all credentials and display them
+    - name: get-all-accesses
+      runAfter: [deploy-postgres, deploy-redis, deploy-valkey]
+      taskRef: { name: hcp-get-all-accesses }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: datastoreType
+          value: $(params.datastoreType)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 7: Prepare SAP Cloud Connector configuration
+    - name: prepare-cloud-connector
+      runAfter: [get-all-accesses]
+      taskRef: { name: hcp-prepare-cloud-connector }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 8: Manual approval after Cloud Connector setup, ELM/EIC and iFlow deployment
+    - name: approval-elm-eic-iflow-deployed
+      runAfter: [prepare-cloud-connector]
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+            - kubeadmin
+            - kube:admin
+            - system:admin
+        - name: description
+          value: |
+            PostgreSQL and Redis deployed successfully. Credentials and Cloud Connector
+            configuration have been displayed.
+
+            Cluster: $(params.hostedClusterName)
+            Namespace: $(params.hostedClusterNamespace)
+            Workers: $(params.nodePoolReplicas) x ($(params.nodePoolCpuCores) vCPU, $(params.nodePoolMemoryGB)GB RAM)
+
+            🔧 Please complete the following manually:
+            1. Configure SAP Cloud Connector using the generated instructions
+               - Upload API Root CA certificate to Backend Trust Store
+               - Create API Server system mapping
+               - Upload TLS certificate to Trust Store
+            2. Deploy Edge Lifecycle Management (ELM)
+            3. Deploy Edge Integration Cell (EIC)
+            4. Deploy iFlows for testing
+            5. Configure Cloud Connector for EIC (system mapping + resources)
+
+            After deployment is complete and istio-ingressgateway has a LoadBalancer IP:
+            ✅ APPROVE: Continue with ConfigMap creation and endpoint tests
+            ❌ REJECT: Skip tests and proceed to teardown
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '336h'
+
+    # Step 9: Validate and create ConfigMap for endpoint tests (after ELM/EIC/iFlow deployment)
+    - name: validate-and-create-configmap
+      runAfter: [approval-elm-eic-iflow-deployed]
+      taskRef: { name: hcp-validate-and-create-configmap }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 10: Fix EndpointSlice for Hypershift KubeVirt OCP 4.21 bug
+    - name: fix-endpointslice
+      runAfter: [validate-and-create-configmap]
+      taskRef: { name: hcp-fix-endpointslice }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 11: Endpoint Tests (run in parallel after EndpointSlice fix)
+    - name: test-httpbinipfilter
+      runAfter: [fix-endpointslice]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /httpbinipfilter
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-test1
+      runAfter: [fix-endpointslice]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/test1
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-testelster
+      runAfter: [fix-endpointslice]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/testelster
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-slvredis
+      runAfter: [fix-endpointslice]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-ratelimit-slvredis
+      runAfter: [test-slvredis]
+      taskRef: { name: rate-limit-test }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 12: Manual approval before second round of tests
+    - name: approval-second-test-round
+      runAfter:
+        - test-httpbinipfilter
+        - test-http-test1
+        - test-http-testelster
+        - test-slvredis
+        - test-ratelimit-slvredis
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+            - kubeadmin
+            - kube:admin
+            - system:admin
+        - name: description
+          value: |
+            First round of endpoint tests completed successfully.
+
+            Cluster: $(params.hostedClusterName)
+
+            ✅ APPROVE: Run second round of endpoint tests
+            ❌ REJECT: Skip second round and proceed
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '336h'
+
+    # Step 13: Second round of endpoint tests
+    - name: test-httpbinipfilter-round2
+      runAfter: [approval-second-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /httpbinipfilter
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-test1-round2
+      runAfter: [approval-second-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/test1
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-testelster-round2
+      runAfter: [approval-second-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/testelster
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-slvredis-round2
+      runAfter: [approval-second-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-ratelimit-slvredis-round2
+      runAfter: [test-slvredis-round2]
+      taskRef: { name: rate-limit-test }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "cluster-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: $(params.publicDNS)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 14: Update Jira with test results
+    - name: update-jira-test-results
+      runAfter:
+        - test-httpbinipfilter-round2
+        - test-http-test1-round2
+        - test-http-testelster-round2
+        - test-slvredis-round2
+        - test-ratelimit-slvredis-round2
+      when:
+        - input: "$(params.jiraIssueKey)"
+          operator: notin
+          values: [""]
+      taskRef:
+        name: jira-add-comment-custom
+      params:
+        - name: jiraSecretName
+          value: $(params.jiraSecretName)
+        - name: jiraIssueKey
+          value: $(params.jiraIssueKey)
+        - name: comment
+          value: |
+            h2. ✅ Complete EIC Validation Pipeline Completed (HCP KubeVirt + Cloud Connector)
+
+            HCP KubeVirt cluster with full EIC infrastructure, SAP Cloud Connector configuration, and all automated endpoint tests completed successfully.
+
+            *Infrastructure Configuration:*
+            * *Cluster Name:* $(params.hostedClusterName)
+            * *Namespace:* $(params.hostedClusterNamespace)
+            * *Release Image:* $(params.releaseImage)
+            * *Worker Nodes:* $(params.nodePoolReplicas) x ($(params.nodePoolCpuCores) vCPU, $(params.nodePoolMemoryGB)GB RAM)
+            * *PostgreSQL:* $(params.postgresVersion) (Crunchy Operator)
+            * *Datastore:* $(params.datastoreType)
+
+            *Pipeline Status:*
+            * Repository cloned: ✅
+            * HostedCluster deployment: ✅ Completed
+            * PostgreSQL deployment: ✅ Completed
+            * Redis deployment: ✅ Completed
+            * Cloud Connector preparation: ✅ Completed
+            * Validation and ConfigMap setup: ✅ Completed
+            * Endpoint tests (2 rounds): ✅ All Passed
+
+            *Pipeline Details:*
+            * *Repository:* $(params.repoUrl)
+            * *Pull Request:* $(params.repoUrl)/pull/$(params.pullRequestNumber)
+            * *Revision:* $(params.revision)
+            * *Public DNS:* $(params.publicDNS)
+
+            *Executed Tests (Round 1):*
+            * test-httpbinipfilter ✅
+            * test-http-test1 ✅
+            * test-http-testelster ✅
+            * test-slvredis ✅
+            * test-ratelimit-slvredis ✅
+
+            *Executed Tests (Round 2):*
+            * test-httpbinipfilter-round2 ✅
+            * test-http-test1-round2 ✅
+            * test-http-testelster-round2 ✅
+            * test-slvredis-round2 ✅
+            * test-ratelimit-slvredis-round2 ✅
+
+            *Infrastructure Components:*
+            * MCE Hosted Control Plane with KubeVirt ✅
+            * $(params.nodePoolReplicas) KubeVirt worker VMs ✅
+            * Crunchy PostgreSQL Operator ✅
+            * Redis Enterprise Operator ✅
+            * SAP Cloud Connector Configuration ✅
+            * All EIC endpoints validated ✅
+
+            *Security:*
+            * PostgreSQL: In-cluster with operator-managed credentials
+            * Redis: In-cluster with operator-managed credentials
+            * Hosted cluster: Isolated control plane on hub cluster
+            * Cloud Connector: Long-lived SA kubeconfig with TLS certificates
+
+            Ready for manual teardown approval. The complete HCP infrastructure will be destroyed once approved.
+
+    # Step 15: Manual approval before teardown
+    - name: approval-teardown
+      runAfter:
+        - update-jira-test-results
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+            - kubeadmin
+            - kube:admin
+            - system:admin
+        - name: description
+          value: |
+            All endpoint tests completed. Please review results.
+
+            Cluster: $(params.hostedClusterName)
+
+            ✅ APPROVE: Tear down HCP cluster and all resources
+            ❌ REJECT: Keep cluster running (will timeout after 336h and teardown anyway)
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '336h'
+
+    # Step 16: Teardown hosted cluster
+    - name: teardown-hosted-cluster
+      runAfter: [approval-teardown]
+      when:
+        - input: "$(params.skipTeardown)"
+          operator: in
+          values: ["false"]
+      taskRef: { name: hcp-teardown }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: waitForDeletion
+          value: "true"
+        - name: timeoutMinutes
+          value: "30"
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source

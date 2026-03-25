@@ -1,0 +1,449 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: hcp-prepare-cloud-connector
+spec:
+  description: >-
+    Prepares SAP Cloud Connector configuration for a hosted cluster: generates a
+    long-lived kubeconfig with ServiceAccount token, extracts API server CA certificate,
+    generates TLS certificates with proper SANs, creates PKCS12 bundle, and displays
+    step-by-step instructions for Cloud Connector and SAP Integration Suite setup.
+  params:
+    - name: hostedClusterName
+      type: string
+      description: "Name of the hosted cluster"
+    - name: hostedClusterNamespace
+      type: string
+      description: "Namespace for HostedCluster resources"
+      default: "clusters"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
+  workspaces:
+    - name: source
+  steps:
+    - name: prepare-cloud-connector
+      image: registry.access.redhat.com/ubi9/ubi
+      workingDir: $(workspaces.source.path)
+      timeout: "336h"
+      env:
+        - name: HOSTED_CLUSTER_NAME
+          value: "$(params.hostedClusterName)"
+        - name: HOSTED_CLUSTER_NAMESPACE
+          value: "$(params.hostedClusterNamespace)"
+        - name: HUB_KUBECONFIG_SECRET
+          value: "$(params.hubKubeconfigSecretName)"
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=============================================="
+        echo "🔧 Preparing SAP Cloud Connector Configuration"
+        echo "=============================================="
+        echo ""
+
+        # Install required packages
+        echo "📦 Installing required packages..."
+        dnf install -y jq openssl > /dev/null 2>&1
+
+        # Install OpenShift CLI
+        echo "📦 Installing OpenShift CLI..."
+        curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o /tmp/oc.tar.gz
+        tar xzf /tmp/oc.tar.gz -C /tmp
+        mv /tmp/oc /usr/local/bin/
+        cp /usr/local/bin/oc /usr/local/bin/kubectl
+        rm -f /tmp/oc.tar.gz
+        oc version --client
+
+        # ============================================
+        # Phase 1: Connect to Hub and Hosted Clusters
+        # ============================================
+
+        # Configure hub cluster kubeconfig if provided
+        HUB_KUBECONFIG="/tmp/hub-kubeconfig"
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          echo "🔐 Extracting hub cluster kubeconfig from secret: ${HUB_KUBECONFIG_SECRET}..."
+          if kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: kubeconfig)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: config)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.value}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: value)"
+          else
+            echo "❌ Failed to extract kubeconfig from secret '${HUB_KUBECONFIG_SECRET}'"
+            exit 1
+          fi
+          chmod 600 "${HUB_KUBECONFIG}"
+          export KUBECONFIG="${HUB_KUBECONFIG}"
+          echo "✅ Using hub kubeconfig for cluster operations"
+          oc whoami
+        else
+          echo "ℹ️  No hub kubeconfig secret provided, using in-cluster service account"
+          HUB_KUBECONFIG=""
+        fi
+
+        # ============================================
+        # Phase 2: Discover API Server LoadBalancer IP
+        # ============================================
+
+        echo ""
+        echo "📋 Discovering API server LoadBalancer IP..."
+        CONTROL_PLANE_NS="${HOSTED_CLUSTER_NAMESPACE}-${HOSTED_CLUSTER_NAME}"
+
+        API_SERVER_LB_IP=""
+        if oc get svc kube-apiserver -n "${CONTROL_PLANE_NS}" &>/dev/null; then
+          API_SERVER_LB_IP=$(oc get svc kube-apiserver -n "${CONTROL_PLANE_NS}" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          if [[ -z "${API_SERVER_LB_IP}" ]]; then
+            API_SERVER_LB_IP=$(oc get svc kube-apiserver -n "${CONTROL_PLANE_NS}" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+          fi
+        fi
+
+        if [[ -z "${API_SERVER_LB_IP}" ]]; then
+          echo "⚠️  Could not find kube-apiserver LB in namespace ${CONTROL_PLANE_NS}"
+          echo "   Searching all services..."
+          oc get svc -n "${CONTROL_PLANE_NS}" | grep -i kube-apiserver || echo "   No kube-apiserver service found"
+        else
+          echo "✅ API Server LoadBalancer IP: ${API_SERVER_LB_IP}"
+        fi
+
+        # ============================================
+        # Phase 3: Extract Hosted Cluster Kubeconfig
+        # ============================================
+
+        echo ""
+        echo "🔐 Extracting hosted cluster admin kubeconfig..."
+        KUBECONFIG_SECRET="${HOSTED_CLUSTER_NAME}-admin-kubeconfig"
+
+        if ! oc get secret "${KUBECONFIG_SECRET}" -n "${HOSTED_CLUSTER_NAMESPACE}" > /dev/null 2>&1; then
+          echo "❌ Kubeconfig secret '${KUBECONFIG_SECRET}' not found in namespace '${HOSTED_CLUSTER_NAMESPACE}'"
+          exit 1
+        fi
+
+        HOSTED_KUBECONFIG="/tmp/hosted-kubeconfig"
+        oc get secret "${KUBECONFIG_SECRET}" -n "${HOSTED_CLUSTER_NAMESPACE}" \
+          -o jsonpath='{.data.kubeconfig}' | base64 -d > "${HOSTED_KUBECONFIG}"
+        chmod 600 "${HOSTED_KUBECONFIG}"
+        echo "✅ Hosted cluster kubeconfig extracted"
+
+        # Switch to hosted cluster
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+        echo "🔍 Verifying access to hosted cluster..."
+        oc get nodes
+        echo "✅ Connected to hosted cluster"
+
+        # ============================================
+        # Phase 4: Generate Long-lived Kubeconfig
+        # ============================================
+
+        echo ""
+        echo "🔑 Generating long-lived kubeconfig using ServiceAccount..."
+
+        SERVICE_ACCOUNT_NAME="cluster-admin-sa"
+        SA_NAMESPACE="default"
+        OUTPUT_KUBECONFIG="$(workspaces.source.path)/kubeconfig-cloud-connector.yaml"
+
+        # Create Service Account
+        echo "1. Creating Service Account '${SERVICE_ACCOUNT_NAME}'..."
+        if ! oc get sa "${SERVICE_ACCOUNT_NAME}" -n "${SA_NAMESPACE}" &>/dev/null; then
+          oc create sa "${SERVICE_ACCOUNT_NAME}" -n "${SA_NAMESPACE}"
+          echo "   ✅ Service Account created"
+        else
+          echo "   ℹ️  Service Account already exists"
+        fi
+
+        # Grant cluster-admin
+        echo "2. Granting cluster-admin role..."
+        oc adm policy add-cluster-role-to-user cluster-admin -z "${SERVICE_ACCOUNT_NAME}" -n "${SA_NAMESPACE}"
+        echo "   ✅ Cluster-admin role granted"
+
+        # Create permanent token Secret
+        echo "3. Creating permanent token Secret..."
+        TOKEN_SECRET_NAME="${SERVICE_ACCOUNT_NAME}-token"
+        if ! oc get secret "${TOKEN_SECRET_NAME}" -n "${SA_NAMESPACE}" &>/dev/null; then
+          {
+            echo "apiVersion: v1"
+            echo "kind: Secret"
+            echo "metadata:"
+            echo "  name: ${TOKEN_SECRET_NAME}"
+            echo "  annotations:"
+            echo "    kubernetes.io/service-account.name: ${SERVICE_ACCOUNT_NAME}"
+            echo "type: kubernetes.io/service-account-token"
+          } | oc apply -n "${SA_NAMESPACE}" -f -
+          echo "   ✅ Secret created"
+        else
+          echo "   ℹ️  Secret already exists"
+        fi
+
+        # Wait for token
+        echo "4. Waiting for token to be populated..."
+        TOKEN=""
+        for i in $(seq 1 30); do
+          TOKEN=$(oc get secret "${TOKEN_SECRET_NAME}" -n "${SA_NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
+          if [[ -n "${TOKEN}" ]]; then
+            echo "   ✅ Token populated (length: ${#TOKEN} characters)"
+            break
+          fi
+          echo "   Waiting... (attempt ${i}/30)"
+          sleep 2
+        done
+        if [[ -z "${TOKEN}" ]]; then
+          echo "   ❌ Token was not populated after 60 seconds"
+          exit 1
+        fi
+
+        # Extract CA certificate
+        echo "5. Extracting CA certificate..."
+        CA_DATA=$(oc get secret "${TOKEN_SECRET_NAME}" -n "${SA_NAMESPACE}" -o jsonpath='{.data.ca\.crt}')
+        if [[ -n "${CA_DATA}" ]]; then
+          CLUSTER_SECTION="    certificate-authority-data: ${CA_DATA}"
+          echo "   ✅ CA certificate extracted"
+        else
+          CLUSTER_SECTION="    insecure-skip-tls-verify: true"
+          echo "   ⚠️  No CA certificate, using insecure mode"
+        fi
+
+        # Get original API server URL
+        ORIGINAL_API_URL=$(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+        echo "   Original API Server: ${ORIGINAL_API_URL}"
+
+        # Replace with hypershift.local domain
+        API_DOMAIN="api.${HOSTED_CLUSTER_NAME}.hypershift.local"
+        echo "   Cloud Connector API Domain: ${API_DOMAIN}"
+
+        # Build kubeconfig with hypershift.local domain
+        echo "6. Building kubeconfig..."
+        {
+          echo "apiVersion: v1"
+          echo "kind: Config"
+          echo "clusters:"
+          echo "- name: ${API_DOMAIN}"
+          echo "  cluster:"
+          echo "${CLUSTER_SECTION}"
+          echo "    server: https://${API_DOMAIN}:6443"
+          echo ""
+          echo "users:"
+          echo "- name: ${SERVICE_ACCOUNT_NAME}"
+          echo "  user:"
+          echo "    token: ${TOKEN}"
+          echo ""
+          echo "contexts:"
+          echo "- name: ${SA_NAMESPACE}/${API_DOMAIN}/${SERVICE_ACCOUNT_NAME}"
+          echo "  context:"
+          echo "    cluster: ${API_DOMAIN}"
+          echo "    namespace: ${SA_NAMESPACE}"
+          echo "    user: ${SERVICE_ACCOUNT_NAME}"
+          echo ""
+          echo "current-context: ${SA_NAMESPACE}/${API_DOMAIN}/${SERVICE_ACCOUNT_NAME}"
+        } > "${OUTPUT_KUBECONFIG}"
+        echo "   ✅ Kubeconfig created: ${OUTPUT_KUBECONFIG}"
+
+        # ============================================
+        # Phase 5: Extract API Root CA Certificate
+        # ============================================
+
+        echo ""
+        echo "🔐 Extracting API Root CA Certificate..."
+        API_CA_FILE="$(workspaces.source.path)/api-root-ca.crt"
+        if [[ -n "${CA_DATA}" ]]; then
+          echo "${CA_DATA}" | base64 -d > "${API_CA_FILE}"
+          echo "✅ API Root CA saved to: ${API_CA_FILE}"
+        else
+          echo "⚠️  No CA data available, extracting from cluster..."
+          oc get secret "${TOKEN_SECRET_NAME}" -n "${SA_NAMESPACE}" \
+            -o jsonpath='{.data.ca\.crt}' | base64 -d > "${API_CA_FILE}" 2>/dev/null || echo "❌ Failed"
+        fi
+
+        # ============================================
+        # Phase 6: Get Ingress Domain from Hosted Cluster
+        # ============================================
+
+        echo ""
+        echo "📋 Getting ingress domain from hosted cluster..."
+        INGRESS_DOMAIN=""
+        if oc get ingresscontroller default -n openshift-ingress-operator -o json &>/dev/null; then
+          INGRESS_DOMAIN=$(oc get ingresscontroller default -n openshift-ingress-operator \
+            -o jsonpath='{.status.domain}' 2>/dev/null || echo "")
+        fi
+        if [[ -z "${INGRESS_DOMAIN}" ]]; then
+          INGRESS_DOMAIN=$(oc get dns cluster -o jsonpath='{.spec.baseDomain}' 2>/dev/null || echo "")
+          if [[ -n "${INGRESS_DOMAIN}" ]]; then
+            INGRESS_DOMAIN="apps.${INGRESS_DOMAIN}"
+          fi
+        fi
+        echo "✅ Ingress Domain: ${INGRESS_DOMAIN:-unknown}"
+
+        # ============================================
+        # Phase 7: Generate TLS Certificates
+        # ============================================
+
+        echo ""
+        echo "🔐 Generating TLS certificates with SANs..."
+        CERT_PREFIX="${HOSTED_CLUSTER_NAME}"
+        CERT_CNF="$(workspaces.source.path)/${CERT_PREFIX}.cnf"
+        CERT_KEY="$(workspaces.source.path)/${CERT_PREFIX}.key"
+        CERT_CRT="$(workspaces.source.path)/${CERT_PREFIX}.crt"
+        CERT_P12="$(workspaces.source.path)/${CERT_PREFIX}.p12"
+
+        # Create OpenSSL config
+        {
+          echo "[req]"
+          echo "default_bits  = 2048"
+          echo "distinguished_name = req_distinguished_name"
+          echo "req_extensions = req_ext"
+          echo "x509_extensions = v3_req"
+          echo "prompt = no"
+          echo "[req_distinguished_name]"
+          echo "CN = *.${INGRESS_DOMAIN}"
+          echo "[req_ext]"
+          echo "subjectAltName = @alt_names"
+          echo "[v3_req]"
+          echo "subjectAltName = @alt_names"
+          echo "[alt_names]"
+          echo "DNS.1 = *.${INGRESS_DOMAIN}"
+        } > "${CERT_CNF}"
+        echo "✅ OpenSSL config created: ${CERT_CNF}"
+        cat "${CERT_CNF}"
+        echo ""
+
+        # Generate certificate
+        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+          -keyout "${CERT_KEY}" -out "${CERT_CRT}" -config "${CERT_CNF}" 2>/dev/null
+        echo "✅ Certificate generated:"
+        echo "   Key: ${CERT_KEY}"
+        echo "   Cert: ${CERT_CRT}"
+
+        # Create PKCS12 bundle
+        KEY_ALIAS="rh-ocp-${HOSTED_CLUSTER_NAME}"
+        openssl pkcs12 -export \
+          -out "${CERT_P12}" \
+          -inkey "${CERT_KEY}" \
+          -in "${CERT_CRT}" \
+          -name "${KEY_ALIAS}" \
+          -passout pass:changeit 2>/dev/null
+        echo "✅ PKCS12 bundle created: ${CERT_P12}"
+        echo "   Alias: ${KEY_ALIAS}"
+        echo "   Export Password: changeit"
+
+        # ============================================
+        # Phase 8: Display All Instructions
+        # ============================================
+
+        echo ""
+        echo "=============================================="
+        echo "📋 GENERATED KUBECONFIG"
+        echo "=============================================="
+        cat "${OUTPUT_KUBECONFIG}"
+
+        echo ""
+        echo "=============================================="
+        echo "📋 API ROOT CA CERTIFICATE"
+        echo "=============================================="
+        cat "${API_CA_FILE}"
+
+        echo ""
+        echo "=============================================="
+        echo "📋 TLS CERTIFICATE (for SAP Integration Suite)"
+        echo "=============================================="
+        cat "${CERT_CRT}"
+
+        echo ""
+        echo "=============================================="
+        echo "=============================================="
+        echo "📋 CLOUD CONNECTOR SETUP INSTRUCTIONS"
+        echo "=============================================="
+        echo "=============================================="
+
+        echo ""
+        echo "=== Phase 1: DNS and Kubeconfig Setup ==="
+        echo ""
+        echo "1. On your jumphost, add the following to /etc/hosts:"
+        echo "   ${API_SERVER_LB_IP:-<API_SERVER_LB_IP>}  ${API_DOMAIN}"
+        echo ""
+        echo "2. Copy the kubeconfig displayed above to your jumphost"
+        echo "   and verify connectivity:"
+        echo "   KUBECONFIG=kubeconfig-cloud-connector.yaml oc whoami"
+        echo ""
+
+        echo "=== Phase 2: Cloud Connector - API Server Trust Store ==="
+        echo ""
+        echo "Upload the API Root CA certificate to Cloud Connector:"
+        echo "1. In Cloud Connector, go to: Configuration > ON PREMISE > Backend Trust Store"
+        echo "2. Press '+' in the Allowlist section"
+        echo "3. Upload the API Root CA certificate (api-root-ca.crt) displayed above"
+        echo "   Save it locally with: grep 'certificate-authority-data' kubeconfig-cloud-connector.yaml | awk '{print \$2}' | base64 -d > api-root-ca.crt"
+        echo ""
+
+        echo "=== Phase 3: Cloud Connector - API Server System Mapping ==="
+        echo ""
+        echo "Create a system mapping for the Kubernetes API server:"
+        echo "  Back-end Type:  Non-SAP System"
+        echo "  Protocol:       HTTPS"
+        echo "  Internal Host:  ${API_DOMAIN}"
+        echo "  Internal Port:  6443"
+        echo "  Virtual Host:   (use same FQDN or custom one for BTP)"
+        echo ""
+        echo "Then define Access Resources:"
+        echo "  URL Path:       /"
+        echo "  Access Policy:  Path and all sub-paths"
+        echo ""
+        echo "Verify: Click 'Check Connection' - status should be 'Reachable' (Green)"
+        echo "If 'Not Correct', verify Internal Host matches a SAN in the certificate:"
+        echo "  openssl s_client -connect ${API_SERVER_LB_IP:-<IP>}:6443 -showcerts"
+        echo ""
+
+        echo "=== Phase 4: TLS Certificate Upload to SAP Integration Suite ==="
+        echo ""
+        echo "1. Save the generated .p12 file locally"
+        echo "2. Navigate to: SAP Integration Suite > Settings > Integrations > Edge Integration Cell"
+        echo "3. Go to: Add > Key Pair"
+        echo "4. Select the ${CERT_PREFIX}.p12 file"
+        echo "5. Enter Export Password: changeit"
+        echo "6. Provide alias: ${KEY_ALIAS}"
+        echo "   IMPORTANT: The alias must match the -name used in the PKCS12 bundle"
+        echo ""
+
+        echo "=== Phase 5: Cloud Connector - TLS Trust Store ==="
+        echo ""
+        echo "Upload the generated TLS certificate to Cloud Connector:"
+        echo "1. Go to: Configuration > On-Premise > Trust Store"
+        echo "2. Delete any old/dummy test certificates"
+        echo "3. Upload the certificate: ${CERT_PREFIX}.crt"
+        echo ""
+
+        echo "=== Phase 6: After EIC Deployment ==="
+        echo ""
+        echo "After deploying ELM, EIC, and iFlows:"
+        echo ""
+        echo "1. Get the LoadBalancer IP for istio-ingressgateway:"
+        echo "   oc get svc istio-ingressgateway -n istio-system"
+        echo ""
+        echo "2. Add DNS record on jumphost /etc/hosts:"
+        echo "   <LOADBALANCER_IP>  eic.${INGRESS_DOMAIN:-apps.${HOSTED_CLUSTER_NAME}.<hub_domain>}"
+        echo ""
+        echo "3. Create SCC System Mapping for EIC API:"
+        echo "   Virtual Host:        rh-ocp-${HOSTED_CLUSTER_NAME}-api"
+        echo "   Virtual Port:        443"
+        echo "   Internal Host:       edge-api-eic.${INGRESS_DOMAIN:-apps.${HOSTED_CLUSTER_NAME}.<hub_domain>}"
+        echo "   Internal Port:       443"
+        echo "   Protocol:            HTTPS"
+        echo "   Principal Type:      None"
+        echo "   Host in Request Header: Use Internal Host"
+        echo ""
+        echo "4. Expose API Resources:"
+        echo "   Select the mapping above, then add:"
+        echo "   URL Path:       /"
+        echo "   Access Policy:  Path and all sub-paths"
+        echo "   State:          Active"
+        echo ""
+        echo "=============================================="
+        echo "✅ Cloud Connector preparation complete!"
+        echo "=============================================="
