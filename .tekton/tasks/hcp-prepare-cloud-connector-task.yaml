@@ -286,52 +286,88 @@ spec:
         # ============================================
 
         echo ""
-        echo "🔐 Generating TLS certificates with SANs..."
+        echo "🔐 TLS Certificate Generation..."
         CERT_PREFIX="${HOSTED_CLUSTER_NAME}"
         CERT_CNF="$(workspaces.source.path)/${CERT_PREFIX}.cnf"
         CERT_KEY="$(workspaces.source.path)/${CERT_PREFIX}.key"
         CERT_CRT="$(workspaces.source.path)/${CERT_PREFIX}.crt"
         CERT_P12="$(workspaces.source.path)/${CERT_PREFIX}.p12"
-
-        # Create OpenSSL config
-        {
-          echo "[req]"
-          echo "default_bits  = 2048"
-          echo "distinguished_name = req_distinguished_name"
-          echo "req_extensions = req_ext"
-          echo "x509_extensions = v3_req"
-          echo "prompt = no"
-          echo "[req_distinguished_name]"
-          echo "CN = *.${INGRESS_DOMAIN}"
-          echo "[req_ext]"
-          echo "subjectAltName = @alt_names"
-          echo "[v3_req]"
-          echo "subjectAltName = @alt_names"
-          echo "[alt_names]"
-          echo "DNS.1 = *.${INGRESS_DOMAIN}"
-        } > "${CERT_CNF}"
-        echo "✅ OpenSSL config created: ${CERT_CNF}"
-        cat "${CERT_CNF}"
-        echo ""
-
-        # Generate certificate
-        openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-          -keyout "${CERT_KEY}" -out "${CERT_CRT}" -config "${CERT_CNF}" 2>/dev/null
-        echo "✅ Certificate generated:"
-        echo "   Key: ${CERT_KEY}"
-        echo "   Cert: ${CERT_CRT}"
-
-        # Create PKCS12 bundle
         KEY_ALIAS="rh-ocp-${HOSTED_CLUSTER_NAME}"
-        openssl pkcs12 -export \
-          -out "${CERT_P12}" \
-          -inkey "${CERT_KEY}" \
-          -in "${CERT_CRT}" \
-          -name "${KEY_ALIAS}" \
-          -passout pass:changeit 2>/dev/null
-        echo "✅ PKCS12 bundle created: ${CERT_P12}"
-        echo "   Alias: ${KEY_ALIAS}"
-        echo "   Export Password: changeit"
+
+        # Switch to management cluster to check for existing Secret
+        if [[ -n "${HUB_KUBECONFIG}" ]]; then
+          MGMT_KUBECONFIG="${HUB_KUBECONFIG}"
+        else
+          MGMT_KUBECONFIG=""
+        fi
+        SCC_SECRET_NAME="cloud-connector-${HOSTED_CLUSTER_NAME}"
+
+        # Check if the Secret already exists (from a previous run)
+        CERT_ALREADY_EXISTS=false
+        if KUBECONFIG="${MGMT_KUBECONFIG}" oc get secret "${SCC_SECRET_NAME}" &>/dev/null; then
+          echo "ℹ️  Secret '${SCC_SECRET_NAME}' already exists from a previous run"
+          echo "   Reusing existing certificates to avoid invalidating uploaded keypair in Integration Suite"
+
+          # Extract existing artifacts from the Secret
+          KUBECONFIG="${MGMT_KUBECONFIG}" oc get secret "${SCC_SECRET_NAME}" \
+            -o jsonpath="{.data.${CERT_PREFIX}\.key}" 2>/dev/null | base64 -d > "${CERT_KEY}" 2>/dev/null || true
+          KUBECONFIG="${MGMT_KUBECONFIG}" oc get secret "${SCC_SECRET_NAME}" \
+            -o jsonpath="{.data.${CERT_PREFIX}\.crt}" 2>/dev/null | base64 -d > "${CERT_CRT}" 2>/dev/null || true
+          KUBECONFIG="${MGMT_KUBECONFIG}" oc get secret "${SCC_SECRET_NAME}" \
+            -o jsonpath="{.data.${CERT_PREFIX}\.p12}" 2>/dev/null | base64 -d > "${CERT_P12}" 2>/dev/null || true
+
+          if [[ -s "${CERT_KEY}" ]] && [[ -s "${CERT_CRT}" ]] && [[ -s "${CERT_P12}" ]]; then
+            CERT_ALREADY_EXISTS=true
+            echo "✅ Existing certificates restored from Secret"
+            echo "   Cert fingerprint:"
+            openssl x509 -in "${CERT_CRT}" -fingerprint -sha256 -noout
+          else
+            echo "⚠️  Secret exists but certificates are incomplete, regenerating..."
+          fi
+        fi
+
+        if [[ "${CERT_ALREADY_EXISTS}" != "true" ]]; then
+          echo "🔐 Generating new TLS certificates with SANs..."
+
+          # Create OpenSSL config
+          {
+            echo "[req]"
+            echo "default_bits  = 2048"
+            echo "distinguished_name = req_distinguished_name"
+            echo "req_extensions = req_ext"
+            echo "x509_extensions = v3_req"
+            echo "prompt = no"
+            echo "[req_distinguished_name]"
+            echo "CN = *.${INGRESS_DOMAIN}"
+            echo "[req_ext]"
+            echo "subjectAltName = @alt_names"
+            echo "[v3_req]"
+            echo "subjectAltName = @alt_names"
+            echo "[alt_names]"
+            echo "DNS.1 = *.${INGRESS_DOMAIN}"
+          } > "${CERT_CNF}"
+          echo "✅ OpenSSL config created: ${CERT_CNF}"
+          cat "${CERT_CNF}"
+          echo ""
+
+          # Generate certificate
+          openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "${CERT_KEY}" -out "${CERT_CRT}" -config "${CERT_CNF}" 2>/dev/null
+          echo "✅ Certificate generated:"
+          echo "   Key: ${CERT_KEY}"
+          echo "   Cert: ${CERT_CRT}"
+
+          # Create PKCS12 bundle
+          openssl pkcs12 -export \
+            -out "${CERT_P12}" \
+            -inkey "${CERT_KEY}" \
+            -in "${CERT_CRT}" \
+            -name "${KEY_ALIAS}" \
+            -passout pass:changeit 2>/dev/null
+          echo "✅ PKCS12 bundle created: ${CERT_P12}"
+          echo "   Alias: ${KEY_ALIAS}"
+          echo "   Export Password: changeit"
+        fi
 
         # ============================================
         # Phase 8: Store artifacts in a Secret on management cluster
@@ -339,16 +375,8 @@ spec:
 
         echo ""
         echo "📦 Storing Cloud Connector artifacts in a Kubernetes Secret..."
-        SCC_SECRET_NAME="cloud-connector-${HOSTED_CLUSTER_NAME}"
 
-        # Switch to management cluster (unset KUBECONFIG to use in-cluster SA)
-        if [[ -n "${HUB_KUBECONFIG}" ]]; then
-          MGMT_KUBECONFIG="${HUB_KUBECONFIG}"
-        else
-          MGMT_KUBECONFIG=""
-        fi
-
-        # Delete existing secret if present
+        # Delete existing secret and recreate with current artifacts
         KUBECONFIG="${MGMT_KUBECONFIG}" oc delete secret "${SCC_SECRET_NAME}" --ignore-not-found=true
 
         # Create secret with all artifacts
