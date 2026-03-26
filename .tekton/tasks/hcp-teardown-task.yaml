@@ -225,8 +225,10 @@ spec:
         echo "🧹 Cleaning up pipeline artifacts (ConfigMap and Cloud Connector secret)..."
         CONFIGMAP_NAME="cluster-info-hcp-${CLUSTER_NAME}"
         SCC_SECRET_NAME="cloud-connector-${CLUSTER_NAME}"
+        CREDS_SECRET_NAME="eic-credentials-hcp-${CLUSTER_NAME}"
         oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true && echo "   Deleted configmap: ${CONFIGMAP_NAME}" || true
         oc delete secret "${SCC_SECRET_NAME}" --ignore-not-found=true && echo "   Deleted secret: ${SCC_SECRET_NAME}" || true
+        oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true && echo "   Deleted secret: ${CREDS_SECRET_NAME}" || true
 
         # Optionally cleanup namespace
         if [[ "${CLEANUP_NAMESPACE}" == "true" ]]; then

@@ -406,6 +406,60 @@ spec:
         echo "   2. Save to a .crt or .pem file on your machine"
         
         # Write a brief summary to results (under 4KB for testing)
+        # ================== Store credentials in Secret ==================
+        echo ""
+        echo "📦 Storing credentials in a Kubernetes Secret on management cluster..."
+        CREDS_SECRET_NAME="eic-credentials-aro-${ARO_CLUSTER_NAME}"
+
+        SECRET_ARGS=()
+        SECRET_ARGS+=(--from-literal=cluster-name="${ARO_CLUSTER_NAME}")
+        SECRET_ARGS+=(--from-literal=cluster-url="${CLUSTER_URL}")
+        SECRET_ARGS+=(--from-literal=admin-username="${USERNAME}")
+        SECRET_ARGS+=(--from-literal=admin-password="${PASSWORD}")
+
+        if [[ -f "kubeconfig" ]]; then
+          SECRET_ARGS+=(--from-file=kubeconfig=kubeconfig)
+        fi
+
+        if [[ -n "$POSTGRES_SERVER_NAME" ]]; then
+          SECRET_ARGS+=(--from-literal=postgres-server="${POSTGRES_SERVER_NAME}")
+          SECRET_ARGS+=(--from-literal=postgres-fqdn="${POSTGRES_SERVER_FQDN}")
+          SECRET_ARGS+=(--from-literal=postgres-user="${POSTGRES_ADMIN_USERNAME}")
+          SECRET_ARGS+=(--from-literal=postgres-dbname="${POSTGRES_DATABASE_NAME}")
+          SECRET_ARGS+=(--from-literal=postgres-password="${POSTGRES_ADMIN_PASSWORD:-}")
+          if [[ -n "$POSTGRES_CONNECTION_STRING" ]]; then
+            SECRET_ARGS+=(--from-literal=postgres-connection-string="${POSTGRES_CONNECTION_STRING}")
+          fi
+          if [[ -f "$POSTGRES_TLS_CERT_FILE" ]]; then
+            SECRET_ARGS+=(--from-file=postgres-tls-root-cert="${POSTGRES_TLS_CERT_FILE}")
+          fi
+        fi
+
+        if [[ -n "$REDIS_CACHE_NAME" ]]; then
+          SECRET_ARGS+=(--from-literal=redis-cache-name="${REDIS_CACHE_NAME}")
+          SECRET_ARGS+=(--from-literal=redis-host="${REDIS_HOST_NAME}")
+          SECRET_ARGS+=(--from-literal=redis-port="${REDIS_PORT}")
+          SECRET_ARGS+=(--from-literal=redis-ssl-port="${REDIS_SSL_PORT}")
+          SECRET_ARGS+=(--from-literal=redis-access-key="${REDIS_ACCESS_KEY:-}")
+          if [[ -n "$REDIS_CONNECTION_STRING" ]]; then
+            SECRET_ARGS+=(--from-literal=redis-connection-string="${REDIS_CONNECTION_STRING}")
+          fi
+          if [[ -f "${REDIS_TLS_CERT_FILE:-}" ]]; then
+            SECRET_ARGS+=(--from-file=redis-tls-cert="${REDIS_TLS_CERT_FILE}")
+          fi
+        fi
+
+        oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true
+        oc create secret generic "${CREDS_SECRET_NAME}" "${SECRET_ARGS[@]}"
+        echo "✅ Secret '${CREDS_SECRET_NAME}' created on management cluster"
+
+        echo ""
+        echo "📋 To retrieve credentials:"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.admin-password}' | base64 -d"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > kubeconfig.yaml"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.postgres-password}' | base64 -d"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.redis-access-key}' | base64 -d"
+
         echo "📤 Writing result summary..."
         {
           echo "ARO CLUSTER VALIDATION SUMMARY"
