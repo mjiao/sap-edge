@@ -86,5 +86,10 @@ spec:
         # Clean up ARO-related resources only (keeping resource group)
         make aro-cleanup-all-services
         
+        # Clean up ConfigMap from management cluster
+        echo "🧹 Cleaning up pipeline artifacts (ConfigMap)..."
+        CONFIGMAP_NAME="cluster-info-aro-${ARO_CLUSTER_NAME}"
+        oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true && echo "   Deleted configmap: ${CONFIGMAP_NAME}" || true
+
         echo "✅ ARO cluster teardown completed successfully!"
-        echo "ℹ️ Resource group '$ARO_RESOURCE_GROUP' has been preserved" 
+        echo "ℹ️ Resource group '$ARO_RESOURCE_GROUP' has been preserved"
