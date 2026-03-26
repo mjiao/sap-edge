@@ -588,6 +588,47 @@ spec:
         # Note: cluster-info ConfigMap is pre-created in the cluster
         # The pipeline references it via clusterConfigMapName parameter
 
+        # ================== Store credentials in Secret ==================
+        echo ""
+        echo "📦 Storing credentials in a Kubernetes Secret on management cluster..."
+        CREDS_SECRET_NAME="eic-credentials-rosa-${CLUSTER_NAME}"
+
+        SECRET_ARGS=()
+        SECRET_ARGS+=(--from-literal=cluster-name="${CLUSTER_NAME}")
+        SECRET_ARGS+=(--from-literal=api-url="${API_URL}")
+        SECRET_ARGS+=(--from-literal=console-url="${CONSOLE_URL}")
+        SECRET_ARGS+=(--from-literal=admin-username="${ADMIN_USERNAME:-cluster-admin}")
+        SECRET_ARGS+=(--from-literal=admin-password="${ADMIN_PASSWORD:-}")
+
+        if [[ -f "kubeconfig" ]]; then
+          SECRET_ARGS+=(--from-file=kubeconfig=kubeconfig)
+        fi
+
+        if [[ -n "${POSTGRES_ENDPOINT:-}" ]]; then
+          SECRET_ARGS+=(--from-literal=postgres-host="${POSTGRES_ENDPOINT}")
+          SECRET_ARGS+=(--from-literal=postgres-port="${POSTGRES_PORT:-5432}")
+          SECRET_ARGS+=(--from-literal=postgres-dbname="${POSTGRES_DB:-eic}")
+          SECRET_ARGS+=(--from-literal=postgres-user="${POSTGRES_USER:-eicadmin}")
+          SECRET_ARGS+=(--from-literal=postgres-password="${POSTGRES_ADMIN_PASSWORD:-}")
+          SECRET_ARGS+=(--from-literal=postgres-connection-string="${POSTGRES_CONNECTION_STRING:-}")
+        fi
+
+        if [[ -n "${REDIS_ENDPOINT:-}" ]]; then
+          SECRET_ARGS+=(--from-literal=redis-host="${REDIS_ENDPOINT}")
+          SECRET_ARGS+=(--from-literal=redis-port="${REDIS_PORT:-6379}")
+          SECRET_ARGS+=(--from-literal=redis-auth-token="${REDIS_AUTH_TOKEN:-}")
+        fi
+
+        KUBECONFIG="" oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true
+        KUBECONFIG="" oc create secret generic "${CREDS_SECRET_NAME}" "${SECRET_ARGS[@]}"
+        echo "✅ Secret '${CREDS_SECRET_NAME}' created on management cluster"
+
+        echo ""
+        echo "📋 To retrieve credentials:"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.admin-password}' | base64 -d"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > kubeconfig.yaml"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.postgres-password}' | base64 -d"
+
         echo ""
         echo "✅ ROSA cluster validation completed!"
         echo "📋 Summary:"
@@ -596,6 +637,7 @@ spec:
         echo "  Cluster State: ready"
         echo "  API URL: ${API_URL}"
         echo "  Console URL: ${CONSOLE_URL}"
+        echo "  Credentials Secret: ${CREDS_SECRET_NAME}"
         if [[ "${CLUSTER_LOGIN_AVAILABLE}" == "true" ]]; then
           echo "  Cluster Access: ✅ Available"
         else

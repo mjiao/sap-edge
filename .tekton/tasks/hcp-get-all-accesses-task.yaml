@@ -299,7 +299,61 @@ spec:
             fi
           fi
 
+        # ================== Store credentials in Secret ==================
+        echo ""
+        echo "📦 Storing credentials in a Kubernetes Secret on management cluster..."
+        CREDS_SECRET_NAME="eic-credentials-hcp-${HOSTED_CLUSTER_NAME}"
+
+        # Switch to management cluster
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          MGMT_KUBECONFIG="/tmp/hub-kubeconfig"
+        else
+          MGMT_KUBECONFIG=""
+        fi
+
+        # Build secret arguments
+        SECRET_ARGS=()
+        SECRET_ARGS+=(--from-literal=postgres-host="${PG_HOST:-N/A}")
+        SECRET_ARGS+=(--from-literal=postgres-port="${PG_PORT:-N/A}")
+        SECRET_ARGS+=(--from-literal=postgres-dbname="${PG_DBNAME:-N/A}")
+        SECRET_ARGS+=(--from-literal=postgres-user="${PG_USER:-N/A}")
+        SECRET_ARGS+=(--from-literal=postgres-password="${PG_PASSWORD:-N/A}")
+
+        if [[ -f "external_postgres_db_tls_root_cert.crt" ]]; then
+          SECRET_ARGS+=(--from-file=postgres-tls-root-cert=external_postgres_db_tls_root_cert.crt)
+        fi
+
+        if [[ "${DATASTORE_TYPE}" == "redis" ]]; then
+          SECRET_ARGS+=(--from-literal=redis-address="${REDIS_SERVICE_FQDN:-N/A}:${REDIS_PORT:-N/A}")
+          SECRET_ARGS+=(--from-literal=redis-password="${REDIS_PASSWORD:-N/A}")
+          SECRET_ARGS+=(--from-literal=redis-server-name="${REDIS_SERVER_NAME:-N/A}")
+          if [[ -f "external_redis_tls_certificate.pem" ]]; then
+            SECRET_ARGS+=(--from-file=redis-tls-cert=external_redis_tls_certificate.pem)
+          fi
+        elif [[ "${DATASTORE_TYPE}" == "valkey-standalone" ]] || [[ "${DATASTORE_TYPE}" == "valkey-cluster" ]]; then
+          SECRET_ARGS+=(--from-literal=valkey-address="${VALKEY_HOST:-N/A}")
+          SECRET_ARGS+=(--from-literal=valkey-password="${VALKEY_PASSWORD:-N/A}")
+          SECRET_ARGS+=(--from-literal=valkey-mode="${VALKEY_MODE:-N/A}")
+          SECRET_ARGS+=(--from-literal=valkey-server-name="${VALKEY_SERVER_NAME:-N/A}")
+          if [[ -f "external_valkey_tls_certificate.pem" ]]; then
+            SECRET_ARGS+=(--from-file=valkey-tls-cert=external_valkey_tls_certificate.pem)
+          fi
+        fi
+
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc create secret generic "${CREDS_SECRET_NAME}" "${SECRET_ARGS[@]}"
+        echo "✅ Secret '${CREDS_SECRET_NAME}' created on management cluster"
+
+        echo ""
+        echo "📋 To retrieve credentials:"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.postgres-password}' | base64 -d"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.redis-password}' | base64 -d"
+        echo "   oc get secret ${CREDS_SECRET_NAME} -o jsonpath='{.data.postgres-tls-root-cert}' | base64 -d > postgres-tls-root-cert.crt"
+
+        # Switch back to hosted cluster
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+
         echo ""
         echo "=============================================="
-        echo "✅ All credentials retrieved successfully!"
+        echo "✅ All credentials retrieved and stored!"
         echo "=============================================="
