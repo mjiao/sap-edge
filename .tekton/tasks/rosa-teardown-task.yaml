@@ -361,13 +361,18 @@ spec:
         
         cd ../..
         
+        # Clean up ConfigMap from management cluster
+        echo "🧹 Cleaning up pipeline artifacts (ConfigMap)..."
+        CONFIGMAP_NAME="cluster-info-rosa-${CLUSTER_NAME}"
+        KUBECONFIG="" oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true && echo "   Deleted configmap: ${CONFIGMAP_NAME}" || true
+
         # Clean up workspace files
         echo "🧹 Cleaning up workspace files..."
         rm -f rosa-deployment-info.txt
         rm -f cluster-info.json
         rm -f admin-creds.json
         rm -f kubeconfig
-        
+
         echo ""
         echo "✅ ROSA teardown completed!"
         echo "📝 Note: It may take a few minutes for all AWS resources to be fully deleted"

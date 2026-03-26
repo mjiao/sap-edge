@@ -220,6 +220,14 @@ spec:
           fi
         done
 
+        # Clean up ConfigMap and Cloud Connector secret from management cluster default namespace
+        echo ""
+        echo "🧹 Cleaning up pipeline artifacts (ConfigMap and Cloud Connector secret)..."
+        CONFIGMAP_NAME="cluster-info-hcp-${CLUSTER_NAME}"
+        SCC_SECRET_NAME="cloud-connector-${CLUSTER_NAME}"
+        oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true && echo "   Deleted configmap: ${CONFIGMAP_NAME}" || true
+        oc delete secret "${SCC_SECRET_NAME}" --ignore-not-found=true && echo "   Deleted secret: ${SCC_SECRET_NAME}" || true
+
         # Optionally cleanup namespace
         if [[ "${CLEANUP_NAMESPACE}" == "true" ]]; then
           echo ""
