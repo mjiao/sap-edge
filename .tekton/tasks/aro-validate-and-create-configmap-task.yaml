@@ -76,6 +76,7 @@ spec:
         PASSWORD=$(echo "$CREDENTIALS_JSON" | jq -r '.kubeadminPassword')
 
         echo "🔐 Logging into ARO cluster..."
+        export KUBECONFIG="/tmp/aro-kubeconfig"
         oc login "$CLUSTER_URL" -u "$USERNAME" -p "$PASSWORD" --insecure-skip-tls-verify=true
 
         echo "🔍 Verifying access to ARO cluster..."
@@ -170,21 +171,23 @@ spec:
 
         echo "  EIC Host: ${EIC_HOST:-'Not configured'}"
 
-        # Create ConfigMap for endpoint tests
+        # Create ConfigMap for endpoint tests on the MANAGEMENT cluster
+        # (where Tekton runs and where test task pods will be scheduled).
+        # Unset KUBECONFIG so oc falls back to the in-cluster config.
         CONFIGMAP_NAME="cluster-info-aro-${ARO_CLUSTER_NAME}"
         echo ""
-        echo "📝 Creating ConfigMap '${CONFIGMAP_NAME}' for endpoint tests..."
+        echo "📝 Creating ConfigMap '${CONFIGMAP_NAME}' on the management cluster for endpoint tests..."
 
         # Delete existing ConfigMap if present
-        oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true
+        KUBECONFIG="" oc delete configmap "${CONFIGMAP_NAME}" --ignore-not-found=true
 
         # Create the ConfigMap (matching expected format: host + ingressIP only)
-        oc create configmap "${CONFIGMAP_NAME}" \
+        KUBECONFIG="" oc create configmap "${CONFIGMAP_NAME}" \
           --from-literal=host="${EIC_HOST:-eic.apps.${ARO_CLUSTER_NAME}.local}" \
           --from-literal=ingressIP="${INGRESS_IP:-127.0.0.1}"
 
-        echo "✅ ConfigMap created successfully"
-        oc get configmap "${CONFIGMAP_NAME}" -o yaml
+        echo "✅ ConfigMap created successfully on management cluster"
+        KUBECONFIG="" oc get configmap "${CONFIGMAP_NAME}" -o yaml
 
         # Generate summary
         SUMMARY="ARO Cluster: ${ARO_CLUSTER_NAME} | Domain: ${INGRESS_DOMAIN:-N/A} | Ingress: ${INGRESS_IP:-N/A}"
