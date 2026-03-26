@@ -148,3 +148,7 @@ approvaltask
 approvaltasks
 clusterversion
 ingresscontroller
+Hypershift
+endpointslice
+MGMT
+EOSLICE
