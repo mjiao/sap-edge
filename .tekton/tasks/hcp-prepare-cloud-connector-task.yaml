@@ -334,7 +334,45 @@ spec:
         echo "   Export Password: changeit"
 
         # ============================================
-        # Phase 8: Display All Instructions
+        # Phase 8: Store artifacts in a Secret on management cluster
+        # ============================================
+
+        echo ""
+        echo "📦 Storing Cloud Connector artifacts in a Kubernetes Secret..."
+        SCC_SECRET_NAME="cloud-connector-${HOSTED_CLUSTER_NAME}"
+
+        # Switch to management cluster (unset KUBECONFIG to use in-cluster SA)
+        if [[ -n "${HUB_KUBECONFIG}" ]]; then
+          MGMT_KUBECONFIG="${HUB_KUBECONFIG}"
+        else
+          MGMT_KUBECONFIG=""
+        fi
+
+        # Delete existing secret if present
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc delete secret "${SCC_SECRET_NAME}" --ignore-not-found=true
+
+        # Create secret with all artifacts
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc create secret generic "${SCC_SECRET_NAME}" \
+          --from-file=kubeconfig="${OUTPUT_KUBECONFIG}" \
+          --from-file=api-root-ca.crt="${API_CA_FILE}" \
+          --from-file="${CERT_PREFIX}.p12"="${CERT_P12}" \
+          --from-file="${CERT_PREFIX}.crt"="${CERT_CRT}" \
+          --from-file="${CERT_PREFIX}.key"="${CERT_KEY}"
+
+        echo "✅ Secret '${SCC_SECRET_NAME}' created on management cluster"
+        echo ""
+        echo "📋 To extract files locally:"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > kubeconfig-cloud-connector.yaml"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.api-root-ca\\.crt}' | base64 -d > api-root-ca.crt"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.${CERT_PREFIX}\\.p12}' | base64 -d > ${CERT_PREFIX}.p12"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.${CERT_PREFIX}\\.crt}' | base64 -d > ${CERT_PREFIX}.crt"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.${CERT_PREFIX}\\.key}' | base64 -d > ${CERT_PREFIX}.key"
+
+        # Switch back to hosted cluster kubeconfig
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+
+        # ============================================
+        # Phase 9: Display All Instructions
         # ============================================
 
         echo ""
@@ -368,8 +406,13 @@ spec:
         echo "1. On your jumphost, add the following to /etc/hosts:"
         echo "   ${API_SERVER_LB_IP:-<API_SERVER_LB_IP>}  ${API_DOMAIN}"
         echo ""
-        echo "2. Copy the kubeconfig displayed above to your jumphost"
-        echo "   and verify connectivity:"
+        echo "2. Download all artifacts from the management cluster Secret:"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.kubeconfig}' | base64 -d > kubeconfig-cloud-connector.yaml"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.api-root-ca\\.crt}' | base64 -d > api-root-ca.crt"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.${CERT_PREFIX}\\.p12}' | base64 -d > ${CERT_PREFIX}.p12"
+        echo "   oc get secret ${SCC_SECRET_NAME} -o jsonpath='{.data.${CERT_PREFIX}\\.crt}' | base64 -d > ${CERT_PREFIX}.crt"
+        echo ""
+        echo "3. Verify kubeconfig connectivity:"
         echo "   KUBECONFIG=kubeconfig-cloud-connector.yaml oc whoami"
         echo ""
 
@@ -378,8 +421,7 @@ spec:
         echo "Upload the API Root CA certificate to Cloud Connector:"
         echo "1. In Cloud Connector, go to: Configuration > ON PREMISE > Backend Trust Store"
         echo "2. Press '+' in the Allowlist section"
-        echo "3. Upload the API Root CA certificate (api-root-ca.crt) displayed above"
-        echo "   Save it locally with: grep 'certificate-authority-data' kubeconfig-cloud-connector.yaml | awk '{print \$2}' | base64 -d > api-root-ca.crt"
+        echo "3. Upload the API Root CA certificate (api-root-ca.crt) downloaded from the Secret"
         echo ""
 
         echo "=== Phase 3: Cloud Connector - API Server System Mapping ==="
