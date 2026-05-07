@@ -1,0 +1,311 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ossm3-configure-dedicated-mesh
+spec:
+  description: >-
+    Deploy a dedicated SAP service mesh on the hosted cluster using Red Hat
+    OpenShift Service Mesh 3.x. Creates the Istio CNI (cluster-wide) and a
+    separate control plane in the istio-system-sap-edge namespace with
+    revision-based sidecar injection, providing full isolation from any
+    shared mesh on the same cluster.
+  params:
+    - name: hostedClusterName
+      type: string
+      description: "Name of the hosted cluster"
+    - name: hostedClusterNamespace
+      type: string
+      description: "Namespace for HostedCluster resources"
+      default: "clusters"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional, uses in-cluster config if empty)"
+      default: ""
+    - name: proxyHost
+      type: string
+      description: "Corporate proxy hostname (leave empty to skip proxy configuration)"
+      default: ""
+    - name: proxyPort
+      type: string
+      description: "Corporate proxy port"
+      default: "3128"
+    - name: proxyIP
+      type: string
+      description: "Corporate proxy IP address(es), comma-separated for multiple"
+      default: ""
+  workspaces:
+    - name: source
+  steps:
+    - name: configure-dedicated-mesh
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "336h"
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        CLUSTER_NAME="$(params.hostedClusterName)"
+        CLUSTER_NS="$(params.hostedClusterNamespace)"
+        HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
+        PROXY_HOST="$(params.proxyHost)"
+        PROXY_PORT="$(params.proxyPort)"
+        PROXY_IP="$(params.proxyIP)"
+
+        MESH_NS="istio-system-sap-edge"
+        MESH_NAME="sap-mesh-istio"
+        DISCOVERY_LABEL="sap-edge-mesh"
+
+        echo "=========================================="
+        echo "OSSM3 Configure Dedicated SAP Service Mesh"
+        echo "=========================================="
+        echo "Hosted Cluster: ${CLUSTER_NAME}"
+        echo "Cluster Namespace: ${CLUSTER_NS}"
+        echo "Mesh Namespace: ${MESH_NS}"
+        echo "Mesh Name: ${MESH_NAME}"
+        echo "Discovery Label: istio-discovery=${DISCOVERY_LABEL}"
+        if [[ -n "${PROXY_HOST}" ]]; then
+          echo "Corporate Proxy: ${PROXY_HOST}:${PROXY_PORT} (${PROXY_IP})"
+        else
+          echo "Corporate Proxy: disabled"
+        fi
+        echo "=========================================="
+
+        # Install required tools
+        echo "📦 Installing OpenShift CLI..."
+        curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o /tmp/oc.tar.gz
+        tar xzf /tmp/oc.tar.gz -C /tmp
+        mv /tmp/oc /usr/local/bin/
+        cp /usr/local/bin/oc /usr/local/bin/kubectl
+        rm -f /tmp/oc.tar.gz
+        oc version --client
+
+        # Configure hub cluster kubeconfig if provided
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          echo "🔐 Extracting hub cluster kubeconfig from secret: ${HUB_KUBECONFIG_SECRET}..."
+          HUB_KUBECONFIG="/tmp/hub-kubeconfig"
+          if kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: kubeconfig)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: config)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.value}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: value)"
+          else
+            echo "❌ Failed to extract kubeconfig from secret '${HUB_KUBECONFIG_SECRET}'"
+            echo "   Secret should have kubeconfig data under key 'kubeconfig', 'config', or 'value'"
+            exit 1
+          fi
+          chmod 600 "${HUB_KUBECONFIG}"
+          export KUBECONFIG="${HUB_KUBECONFIG}"
+          echo "✅ Using hub kubeconfig for cluster operations"
+          oc whoami
+        else
+          echo "ℹ️  No hub kubeconfig secret provided, using in-cluster service account"
+        fi
+
+        # Extract kubeconfig for hosted cluster
+        echo "🔐 Extracting kubeconfig for hosted cluster..."
+        KUBECONFIG_SECRET="${CLUSTER_NAME}-admin-kubeconfig"
+
+        if ! oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" > /dev/null 2>&1; then
+          echo "❌ Kubeconfig secret '${KUBECONFIG_SECRET}' not found in namespace '${CLUSTER_NS}'"
+          exit 1
+        fi
+
+        HOSTED_KUBECONFIG="/tmp/hosted-kubeconfig"
+        oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" \
+          -o jsonpath='{.data.kubeconfig}' | base64 -d > "${HOSTED_KUBECONFIG}"
+        chmod 600 "${HOSTED_KUBECONFIG}"
+
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+
+        echo "🔍 Verifying access to hosted cluster..."
+        oc get nodes
+        echo "✅ Successfully connected to hosted cluster"
+
+        # --- Wait for OSSM3 CRDs to be available ---
+        echo ""
+        echo "⏳ Waiting for OSSM3 CRDs to be registered..."
+        MAX_RETRIES=30
+        RETRY_INTERVAL=30
+        for CRD in "istiocnis.sailoperator.io" "istios.sailoperator.io"; do
+          for i in $(seq 1 ${MAX_RETRIES}); do
+            if oc get crd "${CRD}" > /dev/null 2>&1; then
+              echo "   ✅ CRD ${CRD} is available"
+              break
+            fi
+            if [[ ${i} -eq ${MAX_RETRIES} ]]; then
+              echo "   ❌ CRD ${CRD} not found after $((MAX_RETRIES * RETRY_INTERVAL)) seconds"
+              exit 1
+            fi
+            echo "   Attempt ${i}/${MAX_RETRIES}: CRD ${CRD} not ready, retrying in ${RETRY_INTERVAL}s..."
+            sleep ${RETRY_INTERVAL}
+          done
+        done
+        echo "✅ All OSSM3 CRDs are available"
+
+        # --- Create CNI namespace and resource (cluster-wide, reused by all meshes) ---
+        echo ""
+        echo "📦 Creating istio-cni namespace..."
+        oc create namespace istio-cni --dry-run=client -o yaml | oc apply -f -
+
+        echo ""
+        echo "🔧 Creating IstioCNI resource..."
+        cat <<EOF | oc apply -f -
+        apiVersion: sailoperator.io/v1
+        kind: IstioCNI
+        metadata:
+          name: default
+          namespace: istio-cni
+        spec:
+          namespace: istio-cni
+        EOF
+        echo "✅ IstioCNI resource created"
+
+        # --- Create dedicated SAP mesh namespace ---
+        echo ""
+        echo "📦 Creating dedicated mesh namespace: ${MESH_NS}..."
+        oc create namespace "${MESH_NS}" --dry-run=client -o yaml | oc apply -f -
+
+        # --- Create the dedicated Istio control plane ---
+        echo ""
+        if [[ -n "${PROXY_HOST}" ]]; then
+          echo "🔧 Creating dedicated Istio control plane '${MESH_NAME}' in ${MESH_NS} (with corporate proxy support)..."
+          cat <<EOF | oc apply -f -
+        apiVersion: sailoperator.io/v1
+        kind: Istio
+        metadata:
+          name: ${MESH_NAME}
+          namespace: ${MESH_NS}
+        spec:
+          namespace: ${MESH_NS}
+          values:
+            meshConfig:
+              discoverySelectors:
+                - matchLabels:
+                    istio-discovery: ${DISCOVERY_LABEL}
+              defaultConfig:
+                proxyMetadata:
+                  ISTIO_META_DNS_CAPTURE: "true"
+                  ISTIO_META_DNS_AUTO_ALLOCATE: "true"
+        EOF
+        else
+          echo "🔧 Creating dedicated Istio control plane '${MESH_NAME}' in ${MESH_NS} (standard)..."
+          cat <<EOF | oc apply -f -
+        apiVersion: sailoperator.io/v1
+        kind: Istio
+        metadata:
+          name: ${MESH_NAME}
+          namespace: ${MESH_NS}
+        spec:
+          namespace: ${MESH_NS}
+          values:
+            meshConfig:
+              discoverySelectors:
+                - matchLabels:
+                    istio-discovery: ${DISCOVERY_LABEL}
+        EOF
+        fi
+        echo "✅ Dedicated Istio control plane resource created"
+
+        # --- Label the dedicated control plane namespace for discovery ---
+        echo ""
+        echo "🏷️ Labeling ${MESH_NS} for mesh discovery..."
+        oc label namespace "${MESH_NS}" istio-discovery="${DISCOVERY_LABEL}" --overwrite
+
+        # --- Label application namespaces to join the dedicated mesh ---
+        echo "🏷️ Labeling application namespaces for dedicated mesh..."
+        APP_NAMESPACES=(edgelm edge-icell edge-icell-services edge-icell-secrets edge-icell-ela istio-gateways)
+        for NS in "${APP_NAMESPACES[@]}"; do
+          echo "   Labeling ${NS} with istio-discovery=${DISCOVERY_LABEL} and istio.io/rev=${MESH_NAME}"
+          oc label namespace "${NS}" \
+            istio-discovery="${DISCOVERY_LABEL}" \
+            istio.io/rev="${MESH_NAME}" \
+            --overwrite
+        done
+
+        # --- Remove conflicting istio-injection label ---
+        echo ""
+        echo "🏷️ Removing istio-injection label to avoid conflicts with revision-based injection..."
+        for NS in "${APP_NAMESPACES[@]}"; do
+          oc label namespace "${NS}" istio-injection- 2>/dev/null || true
+        done
+        echo "✅ Namespace labels applied"
+
+        # --- Create ServiceEntry for corporate proxy (if configured) ---
+        if [[ -n "${PROXY_HOST}" ]]; then
+          echo ""
+          echo "🌐 Creating ServiceEntry for corporate proxy..."
+          # Build addresses array from comma-separated IPs
+          ADDRESSES=""
+          IFS=',' read -ra IP_ARRAY <<< "${PROXY_IP}"
+          for ip in "${IP_ARRAY[@]}"; do
+            ADDRESSES="${ADDRESSES}
+            - $(echo "${ip}" | xargs)"
+          done
+          cat <<EOF | oc apply -f -
+        apiVersion: networking.istio.io/v1alpha3
+        kind: ServiceEntry
+        metadata:
+          name: allow-http-proxy
+          namespace: edgelm
+        spec:
+          hosts:
+            - ${PROXY_HOST}
+          addresses:${ADDRESSES}
+          ports:
+            - number: ${PROXY_PORT}
+              name: tcp-proxy-tunnel
+              protocol: TCP
+          location: MESH_EXTERNAL
+          resolution: NONE
+        EOF
+          echo "✅ ServiceEntry for proxy created in edgelm namespace"
+        fi
+
+        # --- Wait for dedicated Service Mesh control plane to be ready ---
+        echo ""
+        echo "⏳ Waiting for dedicated Istio control plane to become ready (timeout: 600s)..."
+        if oc wait --for=condition=Ready "istio/${MESH_NAME}" -n "${MESH_NS}" --timeout=600s; then
+          echo "✅ Dedicated Istio control plane is ready"
+        else
+          echo "❌ Dedicated Istio control plane did not become ready within 600s"
+          echo ""
+          echo "   Istio status:"
+          oc get "istio/${MESH_NAME}" -n "${MESH_NS}" -o yaml || true
+          echo ""
+          echo "   Pods in ${MESH_NS}:"
+          oc get pods -n "${MESH_NS}" || true
+          exit 1
+        fi
+
+        # --- Verify IstioRevision ---
+        echo ""
+        echo "🔍 Verifying IstioRevision..."
+        oc get istiorevisions -n "${MESH_NS}" || true
+
+        # --- Verify all components are running ---
+        echo ""
+        echo "🔍 Verifying Service Mesh components..."
+
+        echo ""
+        echo "   Pods in ${MESH_NS}:"
+        oc get pods -n "${MESH_NS}"
+
+        echo ""
+        echo "   Pods in istio-cni:"
+        oc get pods -n istio-cni
+
+        echo ""
+        echo "=========================================="
+        echo "✅ Dedicated SAP Service Mesh configuration completed"
+        echo "   Mesh namespace: ${MESH_NS}"
+        echo "   Mesh name: ${MESH_NAME}"
+        echo "   Discovery selector: istio-discovery=${DISCOVERY_LABEL}"
+        echo "   Sidecar injection via: istio.io/rev=${MESH_NAME}"
+        echo "=========================================="

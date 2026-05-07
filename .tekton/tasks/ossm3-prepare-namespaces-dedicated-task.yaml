@@ -1,0 +1,187 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ossm3-prepare-namespaces-dedicated
+spec:
+  description: >-
+    Create and configure the required namespaces for SAP Edge Lifecycle
+    Management with restricted-access RBAC model and dedicated service mesh.
+    Uses revision-based sidecar injection (istio.io/rev) instead of the
+    default istio-injection label to target the dedicated SAP mesh control
+    plane. Applies SCC security annotations.
+  params:
+    - name: hostedClusterName
+      type: string
+      description: "Name of the hosted cluster"
+    - name: hostedClusterNamespace
+      type: string
+      description: "Namespace for HostedCluster resources"
+      default: "clusters"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional, uses in-cluster config if empty)"
+      default: ""
+  workspaces:
+    - name: source
+  steps:
+    - name: prepare-namespaces
+      image: registry.access.redhat.com/ubi9/ubi
+      timeout: "336h"
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        CLUSTER_NAME="$(params.hostedClusterName)"
+        CLUSTER_NS="$(params.hostedClusterNamespace)"
+        HUB_KUBECONFIG_SECRET="$(params.hubKubeconfigSecretName)"
+
+        MESH_NAME="sap-mesh-istio"
+        DISCOVERY_LABEL="sap-edge-mesh"
+
+        echo "=========================================="
+        echo "OSSM3 Prepare Namespaces (Dedicated Mesh)"
+        echo "=========================================="
+        echo "Hosted Cluster: ${CLUSTER_NAME}"
+        echo "Cluster Namespace: ${CLUSTER_NS}"
+        echo "Mesh revision: ${MESH_NAME}"
+        echo "Discovery label: istio-discovery=${DISCOVERY_LABEL}"
+        echo "=========================================="
+
+        # Install required tools
+        echo "📦 Installing OpenShift CLI..."
+        curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o /tmp/oc.tar.gz
+        tar xzf /tmp/oc.tar.gz -C /tmp
+        mv /tmp/oc /usr/local/bin/
+        cp /usr/local/bin/oc /usr/local/bin/kubectl
+        rm -f /tmp/oc.tar.gz
+        oc version --client
+
+        # Configure hub cluster kubeconfig if provided
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          echo "🔐 Extracting hub cluster kubeconfig from secret: ${HUB_KUBECONFIG_SECRET}..."
+          HUB_KUBECONFIG="/tmp/hub-kubeconfig"
+          if kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: kubeconfig)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: config)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.value}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: value)"
+          else
+            echo "❌ Failed to extract kubeconfig from secret '${HUB_KUBECONFIG_SECRET}'"
+            echo "   Secret should have kubeconfig data under key 'kubeconfig', 'config', or 'value'"
+            exit 1
+          fi
+          chmod 600 "${HUB_KUBECONFIG}"
+          export KUBECONFIG="${HUB_KUBECONFIG}"
+          echo "✅ Using hub kubeconfig for cluster operations"
+          oc whoami
+        else
+          echo "ℹ️  No hub kubeconfig secret provided, using in-cluster service account"
+        fi
+
+        # Extract kubeconfig for hosted cluster
+        echo "🔐 Extracting kubeconfig for hosted cluster..."
+        KUBECONFIG_SECRET="${CLUSTER_NAME}-admin-kubeconfig"
+
+        if ! oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" > /dev/null 2>&1; then
+          echo "❌ Kubeconfig secret '${KUBECONFIG_SECRET}' not found in namespace '${CLUSTER_NS}'"
+          exit 1
+        fi
+
+        HOSTED_KUBECONFIG="/tmp/hosted-kubeconfig"
+        oc get secret "${KUBECONFIG_SECRET}" -n "${CLUSTER_NS}" \
+          -o jsonpath='{.data.kubeconfig}' | base64 -d > "${HOSTED_KUBECONFIG}"
+        chmod 600 "${HOSTED_KUBECONFIG}"
+
+        export KUBECONFIG="${HOSTED_KUBECONFIG}"
+
+        echo "🔍 Verifying access to hosted cluster..."
+        oc get nodes
+        echo "✅ Successfully connected to hosted cluster"
+
+        # --- Create all required namespaces ---
+        echo ""
+        echo "📦 Creating required namespaces..."
+        NAMESPACES=(edgelm istio-gateways edge-icell edge-icell-secrets edge-icell-ela edge-icell-services)
+
+        for NS in "${NAMESPACES[@]}"; do
+          echo "   Creating namespace: ${NS}"
+          oc create namespace "${NS}" --dry-run=client -o yaml | oc apply -f -
+        done
+        echo "✅ All namespaces created"
+
+        # --- Label namespaces for dedicated mesh (revision-based injection) ---
+        echo ""
+        echo "🏷️ Labeling namespaces for dedicated mesh (revision-based injection)..."
+
+        MESH_NAMESPACES=(edgelm edge-icell edge-icell-ela edge-icell-services istio-gateways)
+        for NS in "${MESH_NAMESPACES[@]}"; do
+          echo "   Labeling ${NS} with istio.io/rev=${MESH_NAME} and edgelm.sap.com/product=edgelm"
+          oc label namespace "${NS}" \
+            istio.io/rev="${MESH_NAME}" \
+            edgelm.sap.com/product=edgelm \
+            --overwrite
+          # Remove istio-injection label to avoid conflicts with revision-based injection
+          oc label namespace "${NS}" istio-injection- 2>/dev/null || true
+        done
+
+        # edge-icell-secrets gets only the product label (no sidecar injection)
+        echo "   Labeling edge-icell-secrets with edgelm.sap.com/product=edgelm (no sidecar injection)"
+        oc label namespace edge-icell-secrets edgelm.sap.com/product=edgelm --overwrite
+        oc label namespace edge-icell-secrets istio-injection- 2>/dev/null || true
+
+        echo "✅ Namespace labels applied"
+
+        # --- Apply the necessary security annotations for SCCs ---
+        echo ""
+        echo "🔐 Applying SCC security annotations..."
+
+        echo "   edgelm: supplemental-groups=67000/1000"
+        oc annotate namespace edgelm openshift.io/sa.scc.supplemental-groups="67000/1000" --overwrite
+
+        echo "   edge-icell: uid-range=10000/100, supplemental-groups=1000/100"
+        oc annotate namespace edge-icell openshift.io/sa.scc.uid-range="10000/100" --overwrite
+        oc annotate namespace edge-icell openshift.io/sa.scc.supplemental-groups="1000/100" --overwrite
+
+        echo "   edge-icell-ela: uid-range=100000/1000, supplemental-groups=100002/1000"
+        oc annotate namespace edge-icell-ela openshift.io/sa.scc.uid-range="100000/1000" --overwrite
+        oc annotate namespace edge-icell-ela openshift.io/sa.scc.supplemental-groups="100002/1000" --overwrite
+
+        echo "   edge-icell-services: uid-range=1000000/1000, supplemental-groups=1000002/1000"
+        oc annotate namespace edge-icell-services openshift.io/sa.scc.uid-range="1000000/1000" --overwrite
+        oc annotate namespace edge-icell-services openshift.io/sa.scc.supplemental-groups="1000002/1000" --overwrite
+
+        echo "✅ SCC annotations applied"
+
+        # --- Verify all namespaces are Active ---
+        echo ""
+        echo "🔍 Verifying namespace status..."
+        ALL_ACTIVE=true
+        for NS in "${NAMESPACES[@]}"; do
+          STATUS=$(oc get namespace "${NS}" -o jsonpath='{.status.phase}')
+          if [[ "${STATUS}" == "Active" ]]; then
+            echo "   ✅ ${NS}: ${STATUS}"
+          else
+            echo "   ❌ ${NS}: ${STATUS}"
+            ALL_ACTIVE=false
+          fi
+        done
+
+        if [[ "${ALL_ACTIVE}" != "true" ]]; then
+          echo "❌ Not all namespaces are in Active state"
+          exit 1
+        fi
+
+        echo ""
+        echo "=========================================="
+        echo "✅ Namespace preparation completed (dedicated mesh)"
+        echo "   Created and configured ${#NAMESPACES[@]} namespaces"
+        echo "   Sidecar injection via: istio.io/rev=${MESH_NAME}"
+        echo "=========================================="
