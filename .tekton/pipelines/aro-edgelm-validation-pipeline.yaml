@@ -55,6 +55,10 @@ spec:
       type: string
       description: "Skip edgelm validation and Jira updates (true/false). Use 'true' for generic ARO testing."
       default: "false"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
   workspaces:
     - name: source
   tasks:
@@ -105,6 +109,8 @@ spec:
           value: $(params.azureSecretName)
         - name: postgresAdminPasswordSecretName
           value: "azure-postgres-admin-password"
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
       workspaces:
         - name: source
           workspace: source

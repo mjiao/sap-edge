@@ -63,6 +63,10 @@ spec:
       type: string
       description: "DynamoDB table for Terraform state locking"
       default: "eic-test-rosa-terraform-state-lock"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
   workspaces:
     - name: source
   tasks:
@@ -127,6 +131,8 @@ spec:
           value: $(params.terraformStateS3Key)
         - name: terraformStateDynamoDBTable
           value: $(params.terraformStateDynamoDBTable)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
       workspaces:
         - name: source
           workspace: source

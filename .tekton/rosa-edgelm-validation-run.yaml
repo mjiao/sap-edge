@@ -46,6 +46,8 @@ spec:
       value: "SAPOCP-1963"
     - name: skipEdgelmValidation
       value: "false"
+    - name: hubKubeconfigSecretName
+      value: ""
     - name: terraformStateS3Bucket
       value: "eic-test-rosa-terraform-state"
     - name: terraformStateS3Key

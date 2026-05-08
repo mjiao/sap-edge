@@ -21,6 +21,10 @@ spec:
       type: string
       description: "Name of the Kubernetes Secret containing PostgreSQL admin password"
       default: "azure-postgres-admin-password"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
   results:
     - name: cluster-summary
       description: "Brief cluster and services summary (under 4KB)"
@@ -34,6 +38,8 @@ spec:
       env:
         - name: ARO_CLUSTER_NAME
           value: "$(params.aroClusterName)"
+        - name: HUB_KUBECONFIG_SECRET
+          value: "$(params.hubKubeconfigSecretName)"
       envFrom:
         - secretRef:
             name: $(params.azureSecretName)
@@ -61,7 +67,29 @@ spec:
         curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz | tar -xz -C /usr/local/bin oc
         
         # Environment variables are now directly available from secrets (no conversion needed)
-        
+
+        # Configure hub cluster kubeconfig if provided
+        HUB_KUBECONFIG=""
+        if [[ -n "${HUB_KUBECONFIG_SECRET}" ]]; then
+          echo "🔐 Extracting hub cluster kubeconfig from secret: ${HUB_KUBECONFIG_SECRET}..."
+          HUB_KUBECONFIG="/tmp/hub-kubeconfig"
+          if kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: kubeconfig)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: config)"
+          elif kubectl get secret "${HUB_KUBECONFIG_SECRET}" -o jsonpath='{.data.value}' 2>/dev/null | base64 -d > "${HUB_KUBECONFIG}" 2>/dev/null && [[ -s "${HUB_KUBECONFIG}" ]]; then
+            echo "✅ Kubeconfig extracted (key: value)"
+          else
+            echo "❌ Failed to extract kubeconfig from secret '${HUB_KUBECONFIG_SECRET}'"
+            echo "   Secret should have kubeconfig data under key 'kubeconfig', 'config', or 'value'"
+            exit 1
+          fi
+          chmod 600 "${HUB_KUBECONFIG}"
+          echo "✅ Hub kubeconfig saved for later use"
+        else
+          echo "ℹ️  No hub kubeconfig secret provided, using in-cluster service account"
+        fi
+
         echo "🔐 Logging into Azure..."
         make azure-login
         
@@ -449,8 +477,15 @@ spec:
           fi
         fi
 
-        oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true
-        oc create secret generic "${CREDS_SECRET_NAME}" "${SECRET_ARGS[@]}"
+        # Switch back to hub cluster for secret creation
+        if [[ -n "${HUB_KUBECONFIG}" ]]; then
+          MGMT_KUBECONFIG="${HUB_KUBECONFIG}"
+        else
+          MGMT_KUBECONFIG=""
+        fi
+
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc delete secret "${CREDS_SECRET_NAME}" --ignore-not-found=true
+        KUBECONFIG="${MGMT_KUBECONFIG}" oc create secret generic "${CREDS_SECRET_NAME}" "${SECRET_ARGS[@]}"
         echo "✅ Secret '${CREDS_SECRET_NAME}' created on management cluster"
 
         echo ""
