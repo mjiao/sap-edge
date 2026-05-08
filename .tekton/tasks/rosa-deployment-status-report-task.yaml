@@ -77,14 +77,26 @@ spec:
 
         # Install ROSA CLI
         echo "📦 Installing ROSA CLI..."
-        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz | tar xz
-        mv rosa /usr/local/bin/
+        if ! command -v rosa &> /dev/null; then
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz -o /tmp/rosa-linux.tar.gz
+          tar xzf /tmp/rosa-linux.tar.gz -C /tmp
+          mv /tmp/rosa /usr/local/bin/
+          rm -f /tmp/rosa-linux.tar.gz
+        else
+          echo "✅ ROSA CLI already installed"
+        fi
         rosa version
 
         # Install OpenShift CLI
         echo "📦 Installing OpenShift CLI..."
-        curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz
-        mv oc kubectl /usr/local/bin/
+        if ! command -v oc &> /dev/null; then
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz -o /tmp/oc.tar.gz
+          tar xzf /tmp/oc.tar.gz -C /tmp
+          mv /tmp/oc /tmp/kubectl /usr/local/bin/
+          rm -f /tmp/oc.tar.gz
+        else
+          echo "✅ OpenShift CLI already installed"
+        fi
 
         # Login to ROSA
         echo "🔐 Logging into ROSA..."

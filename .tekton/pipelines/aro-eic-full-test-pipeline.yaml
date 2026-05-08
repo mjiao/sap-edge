@@ -72,6 +72,10 @@ spec:
     - name: jiraIssueKey
       type: string
       description: "Jira issue key to update with test results"
+    - name: hubKubeconfigSecretName
+      type: string
+      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
+      default: ""
   results:
     - name: cluster-summary
       description: "Brief cluster and services validation summary"
@@ -128,6 +132,8 @@ spec:
           value: $(params.azureSecretName)
         - name: postgresAdminPasswordSecretName
           value: $(params.postgresAdminPasswordSecretName)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
       workspaces:
         - name: source
           workspace: source
