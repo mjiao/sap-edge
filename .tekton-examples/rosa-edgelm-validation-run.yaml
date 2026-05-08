@@ -33,7 +33,7 @@ spec:
     - name: awsRegion
       value: "eu-north-1"
     - name: rosaVersion
-      value: "4.20.12"
+      value: "4.21.14"
     - name: awsSecretName
       value: "aws-credentials-secret"
     - name: redhatTokenSecretName
@@ -43,9 +43,11 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: "SAPOCP-1659"
+      value: "SAPOCP-1963"
     - name: skipEdgelmValidation
       value: "false"
+    - name: hubKubeconfigSecretName
+      value: ""
     - name: terraformStateS3Bucket
       value: "eic-test-rosa-terraform-state"
     - name: terraformStateS3Key
