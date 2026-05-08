@@ -9,7 +9,7 @@
 #
 # For more information, see the OpenShift Pipelines documentation:
 # https://docs.redhat.com/en/documentation/red_hat_openshift_pipelines/1.15/html/creating_cicd_pipelines/using-manual-approval
----
+
 apiVersion: operator.tekton.dev/v1alpha1
 kind: ManualApprovalGate
 metadata:
