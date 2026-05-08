@@ -121,22 +121,29 @@ spec:
         echo "  Console URL: ${CONSOLE_URL}"
         echo ""
 
-        # Login to cluster
+        # Login to cluster using kubeconfig from shared workspace
         echo "🔐 Logging into OpenShift cluster..."
-        ADMIN_CREDS=$(rosa describe admin -c "${CLUSTER_NAME}" -o json 2>/dev/null || echo '{}')
-        ADMIN_USER=$(echo "$ADMIN_CREDS" | jq -r '.username // empty')
-        ADMIN_PASS=$(echo "$ADMIN_CREDS" | jq -r '.password // empty')
+        if [[ -f "kubeconfig" ]]; then
+          export KUBECONFIG="$(pwd)/kubeconfig"
+          echo "✅ Using kubeconfig from shared workspace"
+          oc whoami
+        else
+          echo "⚠️ No kubeconfig found in workspace, attempting admin login..."
+          ADMIN_OUTPUT=$(rosa describe admin -c "${CLUSTER_NAME}" 2>/dev/null || echo "")
+          ADMIN_USER=$(echo "$ADMIN_OUTPUT" | grep -i "username" | awk '{print $NF}' || echo "")
+          ADMIN_PASS=$(echo "$ADMIN_OUTPUT" | grep -i "password" | awk '{print $NF}' || echo "")
 
-        if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
-          echo "⚠️ No admin credentials found, creating admin user..."
-          rosa create admin -c "${CLUSTER_NAME}" --yes 2>/dev/null || true
-          sleep 30
-          ADMIN_CREDS=$(rosa describe admin -c "${CLUSTER_NAME}" -o json)
-          ADMIN_USER=$(echo "$ADMIN_CREDS" | jq -r '.username')
-          ADMIN_PASS=$(echo "$ADMIN_CREDS" | jq -r '.password')
+          if [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
+            echo "⚠️ No admin credentials found, creating admin user..."
+            rosa create admin -c "${CLUSTER_NAME}" --yes 2>/dev/null || true
+            sleep 30
+            ADMIN_OUTPUT=$(rosa describe admin -c "${CLUSTER_NAME}" 2>/dev/null || echo "")
+            ADMIN_USER=$(echo "$ADMIN_OUTPUT" | grep -i "username" | awk '{print $NF}' || echo "")
+            ADMIN_PASS=$(echo "$ADMIN_OUTPUT" | grep -i "password" | awk '{print $NF}' || echo "")
+          fi
+
+          oc login "${API_URL}" --username="${ADMIN_USER}" --password="${ADMIN_PASS}" --insecure-skip-tls-verify=true
         fi
-
-        oc login "${API_URL}" --username="${ADMIN_USER}" --password="${ADMIN_PASS}" --insecure-skip-tls-verify=true
 
         echo "🖥️ Node Status:"
         oc get nodes -o wide
