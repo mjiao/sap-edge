@@ -27,5 +27,9 @@ jobs:
           bindep -l newline dev | xargs brew install
           echo "$(brew --prefix)/bin" >> $GITHUB_PATH
 
+      - name: Install tflint
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
       - name: Run lint
         run: make lint
