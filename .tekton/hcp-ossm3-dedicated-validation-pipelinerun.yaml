@@ -93,7 +93,7 @@ spec:
     - name: jiraSecretName
       value: "jira-secret-mj"
     - name: jiraIssueKey
-      value: ""
+      value: "SAPOCP-1970"
 
     # --- Pipeline control ---
     - name: skipTeardown
