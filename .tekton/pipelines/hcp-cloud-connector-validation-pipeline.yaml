@@ -573,10 +573,12 @@ spec:
     # Step 16: Endpoint Tests - Round 3 (OpenShift Route)
     - name: test-httpbinipfilter-route
       runAfter: [approval-route-test-round]
-      taskRef: { name: endpoint-tests }
+      taskRef: { name: endpoint-tests-expected-status }
       params:
         - name: endpointPath
           value: /httpbinipfilter
+        - name: expectedStatus
+          value: "403"
         - name: clusterConfigMapName
           value: "route-info-hcp-$(params.hostedClusterName)"
         - name: eicAuthSecretName
@@ -714,7 +716,7 @@ spec:
             * test-ratelimit-slvredis-round2 ✅
 
             *Executed Tests - Round 3 (OpenShift Route):*
-            * test-httpbinipfilter-route ✅
+            * test-httpbinipfilter-route (expects 403 - source IP not preserved via Route) ✅
             * test-http-test1-route ✅
             * test-http-testelster-route ✅
             * test-slvredis-route ✅
