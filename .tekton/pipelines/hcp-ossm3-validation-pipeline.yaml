@@ -442,9 +442,24 @@ spec:
         - name: source
           workspace: source
 
-    # Step 15: Endpoint Tests (run in parallel after EndpointSlice fix)
-    - name: test-httpbinipfilter
+    # Step 15: Create OpenShift Route for EIC (passthrough TLS)
+    - name: create-eic-route
       runAfter: [fix-endpointslice]
+      taskRef: { name: hcp-create-eic-route }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 16: Endpoint Tests (run in parallel after EndpointSlice fix and Route creation)
+    - name: test-httpbinipfilter
+      runAfter: [fix-endpointslice, create-eic-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -460,7 +475,7 @@ spec:
           workspace: source
 
     - name: test-http-test1
-      runAfter: [fix-endpointslice]
+      runAfter: [fix-endpointslice, create-eic-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -476,7 +491,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster
-      runAfter: [fix-endpointslice]
+      runAfter: [fix-endpointslice, create-eic-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -492,7 +507,7 @@ spec:
           workspace: source
 
     - name: test-slvredis
-      runAfter: [fix-endpointslice]
+      runAfter: [fix-endpointslice, create-eic-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -523,7 +538,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 15: Manual approval before second round of tests
+    # Step 17: Manual approval before second round of tests
     - name: approval-second-test-round
       runAfter:
         - test-httpbinipfilter
@@ -556,7 +571,7 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 16: Second round of endpoint tests
+    # Step 18: Second round of endpoint tests (LoadBalancer)
     - name: test-httpbinipfilter-round2
       runAfter: [approval-second-test-round]
       taskRef: { name: endpoint-tests }
@@ -637,14 +652,132 @@ spec:
         - name: source
           workspace: source
 
-    # Step 17: Update Jira with test results
-    - name: update-jira-test-results
+    # Step 19: Manual approval before Route-based tests (round 3)
+    - name: approval-route-test-round
       runAfter:
         - test-httpbinipfilter-round2
         - test-http-test1-round2
         - test-http-testelster-round2
         - test-slvredis-round2
         - test-ratelimit-slvredis-round2
+      taskRef:
+        apiVersion: openshift-pipelines.org/v1alpha1
+        kind: ApprovalTask
+      params:
+        - name: approvers
+          value:
+            - mjiao
+            - rbhandar
+            - ksatarin
+            - kubeadmin
+            - kube:admin
+            - system:admin
+        - name: description
+          value: |
+            Second round of endpoint tests completed successfully.
+            Now ready to run Route-based endpoint tests (round 3).
+
+            Route-based tests will send traffic through the OpenShift Router
+            (HAProxy passthrough) instead of directly to the LoadBalancer IP.
+
+            Cluster: $(params.hostedClusterName)
+
+            ✅ APPROVE: Run Route-based endpoint tests
+            ❌ REJECT: Skip Route tests and proceed
+        - name: numberOfApprovalsRequired
+          value: '1'
+        - name: timeout
+          value: '336h'
+
+    # Step 20: Route-based Endpoint Tests (round 3, via OpenShift Route)
+    - name: test-httpbinipfilter-route
+      runAfter: [approval-route-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /httpbinipfilter
+        - name: clusterConfigMapName
+          value: "route-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-test1-route
+      runAfter: [approval-route-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/test1
+        - name: clusterConfigMapName
+          value: "route-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-http-testelster-route
+      runAfter: [approval-route-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /http/testelster
+        - name: clusterConfigMapName
+          value: "route-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-slvredis-route
+      runAfter: [approval-route-test-round]
+      taskRef: { name: endpoint-tests }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "route-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    - name: test-ratelimit-slvredis-route
+      runAfter: [test-slvredis-route]
+      taskRef: { name: rate-limit-test }
+      params:
+        - name: endpointPath
+          value: /slvredis
+        - name: clusterConfigMapName
+          value: "route-info-hcp-$(params.hostedClusterName)"
+        - name: eicAuthSecretName
+          value: $(params.eicAuthSecretName)
+        - name: publicDNS
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 21: Update Jira with test results
+    - name: update-jira-test-results
+      runAfter:
+        - test-httpbinipfilter-route
+        - test-http-test1-route
+        - test-http-testelster-route
+        - test-slvredis-route
+        - test-ratelimit-slvredis-route
       when:
         - input: "$(params.jiraIssueKey)"
           operator: notin
@@ -681,21 +814,28 @@ spec:
             * PostgreSQL deployment: Completed
             * Redis deployment: Completed
             * Validation and ConfigMap setup: Completed
-            * Endpoint tests (2 rounds): All Passed
+            * Endpoint tests (3 rounds): All Passed
 
-            *Executed Tests (Round 1):*
+            *Executed Tests (Round 1 - LoadBalancer):*
             * test-httpbinipfilter
             * test-http-test1
             * test-http-testelster
             * test-slvredis
             * test-ratelimit-slvredis
 
-            *Executed Tests (Round 2):*
+            *Executed Tests (Round 2 - LoadBalancer):*
             * test-httpbinipfilter-round2
             * test-http-test1-round2
             * test-http-testelster-round2
             * test-slvredis-round2
             * test-ratelimit-slvredis-round2
+
+            *Executed Tests (Round 3 - OpenShift Route):*
+            * test-httpbinipfilter-route
+            * test-http-test1-route
+            * test-http-testelster-route
+            * test-slvredis-route
+            * test-ratelimit-slvredis-route
 
             *Pipeline Details:*
             * *Repository:* $(params.repoUrl)
@@ -709,7 +849,7 @@ spec:
     # Phase 5: Teardown
     # =============================================
 
-    # Step 18: Manual approval before teardown
+    # Step 22: Manual approval before teardown
     - name: approval-teardown
       runAfter:
         - update-jira-test-results
@@ -738,7 +878,7 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 19: Teardown hosted cluster
+    # Step 23: Teardown hosted cluster
     - name: teardown-hosted-cluster
       runAfter: [approval-teardown]
       when:
