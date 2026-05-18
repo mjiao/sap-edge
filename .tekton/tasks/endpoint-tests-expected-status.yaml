@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2025 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: endpoint-tests-expected-status
+spec:
+  description: >-
+    Tests a single EIC endpoint and validates against an expected HTTP status
+    code. Use this instead of endpoint-tests when the expected response is not
+    200 (e.g., 403 for IP-filtered endpoints accessed via OpenShift Routes
+    where source IP is not preserved).
+  params:
+    - name: clusterConfigMapName
+      type: string
+    - name: eicAuthSecretName
+      type: string
+    - name: publicDNS
+      type: string
+      default: "false"
+    - name: endpointPath
+      type: string
+      description: The single endpoint path to test (e.g. /http/test1)
+    - name: expectedStatus
+      type: string
+      description: The expected HTTP status code (e.g. "403")
+  workspaces:
+    - name: source
+  steps:
+    - name: run-single-test
+      image: registry.access.redhat.com/ubi9/ubi-minimal
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: HOST
+          valueFrom: { configMapKeyRef: { name: $(params.clusterConfigMapName), key: host } }
+        - name: INGRESS_IP
+          valueFrom: { configMapKeyRef: { name: $(params.clusterConfigMapName), key: ingressIP } }
+        - name: AUTH_KEY
+          valueFrom: { secretKeyRef: { name: $(params.eicAuthSecretName), key: authKey } }
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        EXPECTED_STATUS="$(params.expectedStatus)"
+
+        CURL_OPTS=("-k" "-s" "-o" "/dev/null" "-w" "%{http_code}")
+
+        if [[ "$(params.publicDNS)" == "true" ]]; then
+          echo "Resolution: Public DNS"
+        else
+          if [[ "$INGRESS_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            CURL_OPTS+=("--resolve" "${HOST}:443:${INGRESS_IP}")
+          else
+            CURL_OPTS+=("--connect-to" "${HOST}:443:${INGRESS_IP}:443")
+          fi
+        fi
+
+        echo "======== Testing https://${HOST}$(params.endpointPath) ========"
+        echo "Expected HTTP status: ${EXPECTED_STATUS}"
+
+        ACTUAL_STATUS=$(curl "${CURL_OPTS[@]}" \
+          -H "Authorization: Basic ${AUTH_KEY}" \
+          --url "https://${HOST}$(params.endpointPath)")
+
+        echo "Actual HTTP status: ${ACTUAL_STATUS}"
+
+        if [[ "${ACTUAL_STATUS}" == "${EXPECTED_STATUS}" ]]; then
+          echo "✅ Endpoint returned expected status ${EXPECTED_STATUS}: $(params.endpointPath)"
+          exit 0
+        else
+          echo "❌ Endpoint returned ${ACTUAL_STATUS}, expected ${EXPECTED_STATUS}: $(params.endpointPath)"
+          exit 1
+        fi
