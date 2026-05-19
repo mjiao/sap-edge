@@ -312,7 +312,22 @@ spec:
     # Phase 3: Deploy EIC Services
     # =============================================
 
-    # Step 9: Deploy PostgreSQL on hosted cluster (parallel with Redis)
+    # Step 9: Enable User Workload Monitoring and NetworkPolicies (parallel with DB deployment)
+    - name: enable-monitoring
+      runAfter: [generate-sa-based-kubeconfig]
+      taskRef: { name: hcp-enable-monitoring }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 10: Deploy PostgreSQL on hosted cluster (parallel with Redis and monitoring)
     - name: deploy-postgres
       runAfter: [generate-sa-based-kubeconfig]
       taskRef: { name: hcp-deploy-postgres }
@@ -438,7 +453,22 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 13: Validate and create ConfigMap for endpoint tests
+    # Step 13: Verify monitoring (ServiceMonitors and Prometheus targets)
+    - name: verify-monitoring
+      runAfter: [approval-elm-eic-iflow-deployed]
+      taskRef: { name: hcp-verify-monitoring }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 14: Validate and create ConfigMap for endpoint tests
     - name: validate-and-create-configmap
       runAfter: [approval-elm-eic-iflow-deployed]
       taskRef: { name: hcp-validate-and-create-configmap }

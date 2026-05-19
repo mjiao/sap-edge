@@ -158,7 +158,22 @@ spec:
         - name: source
           workspace: source
 
-    # Step 4: Deploy PostgreSQL on hosted cluster (parallel with Redis)
+    # Step 4: Enable User Workload Monitoring and NetworkPolicies (parallel with DB deployment)
+    - name: enable-monitoring
+      runAfter: [wait-cluster-ready]
+      taskRef: { name: hcp-enable-monitoring }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 5: Deploy PostgreSQL on hosted cluster (parallel with Redis)
     - name: deploy-postgres
       runAfter: [wait-cluster-ready]
       taskRef: { name: hcp-deploy-postgres }
@@ -177,7 +192,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 5a: Deploy Redis on hosted cluster (parallel with PostgreSQL, when datastoreType=redis)
+    # Step 6a: Deploy Redis on hosted cluster (parallel with PostgreSQL, when datastoreType=redis)
     - name: deploy-redis
       runAfter: [wait-cluster-ready]
       when:
@@ -198,7 +213,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 5b: Deploy Valkey on hosted cluster (parallel with PostgreSQL, when datastoreType=valkey-*)
+    # Step 6b: Deploy Valkey on hosted cluster (parallel with PostgreSQL, when datastoreType=valkey-*)
     - name: deploy-valkey
       runAfter: [wait-cluster-ready]
       when:
@@ -219,7 +234,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 6: Get all credentials and display them
+    # Step 7: Get all credentials and display them
     - name: get-all-accesses
       runAfter: [deploy-postgres, deploy-redis, deploy-valkey]
       taskRef: { name: hcp-get-all-accesses }
@@ -236,7 +251,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 7: Prepare SAP Cloud Connector configuration
+    # Step 8: Prepare SAP Cloud Connector configuration
     - name: prepare-cloud-connector
       runAfter: [get-all-accesses]
       taskRef: { name: hcp-prepare-cloud-connector }
@@ -251,7 +266,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 8: Manual approval after Cloud Connector setup, ELM/EIC and iFlow deployment
+    # Step 9: Manual approval after Cloud Connector setup, ELM/EIC and iFlow deployment
     - name: approval-elm-eic-iflow-deployed
       runAfter: [prepare-cloud-connector]
       taskRef:
@@ -293,7 +308,22 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 9: Validate and create ConfigMap for endpoint tests (after ELM/EIC/iFlow deployment)
+    # Step 10: Verify monitoring (ServiceMonitors and Prometheus targets)
+    - name: verify-monitoring
+      runAfter: [approval-elm-eic-iflow-deployed]
+      taskRef: { name: hcp-verify-monitoring }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubKubeconfigSecretName)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 11: Validate and create ConfigMap for endpoint tests (after ELM/EIC/iFlow deployment)
     - name: validate-and-create-configmap
       runAfter: [approval-elm-eic-iflow-deployed]
       taskRef: { name: hcp-validate-and-create-configmap }
@@ -308,7 +338,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 10: Fix EndpointSlice for Hypershift KubeVirt OCP 4.21 bug
+    # Step 12: Fix EndpointSlice for Hypershift KubeVirt OCP 4.21 bug
     - name: fix-endpointslice
       runAfter: [validate-and-create-configmap]
       taskRef: { name: hcp-fix-endpointslice }
@@ -323,7 +353,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 11: Create OpenShift Route for EIC (passthrough TLS)
+    # Step 13: Create OpenShift Route for EIC (passthrough TLS)
     - name: create-eic-route
       runAfter: [fix-endpointslice]
       taskRef: { name: hcp-create-eic-route }
@@ -338,7 +368,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 12: Endpoint Tests - Round 1 (LoadBalancer) (run in parallel after EndpointSlice fix and Route creation)
+    # Step 14: Endpoint Tests - Round 1 (LoadBalancer) (run in parallel after EndpointSlice fix and Route creation)
     - name: test-httpbinipfilter
       runAfter: [fix-endpointslice, create-eic-route]
       taskRef: { name: endpoint-tests }
@@ -419,7 +449,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 13: Manual approval before second round of tests
+    # Step 15: Manual approval before second round of tests
     - name: approval-second-test-round
       runAfter:
         - test-httpbinipfilter
@@ -452,7 +482,7 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 14: Endpoint Tests - Round 2 (LoadBalancer)
+    # Step 16: Endpoint Tests - Round 2 (LoadBalancer)
     - name: test-httpbinipfilter-round2
       runAfter: [approval-second-test-round]
       taskRef: { name: endpoint-tests }
@@ -533,7 +563,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 15: Manual approval before Route-based tests (round 3)
+    # Step 17: Manual approval before Route-based tests (round 3)
     - name: approval-route-test-round
       runAfter:
         - test-httpbinipfilter-round2
@@ -570,7 +600,7 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 16: Endpoint Tests - Round 3 (OpenShift Route)
+    # Step 18: Endpoint Tests - Round 3 (OpenShift Route)
     - name: test-httpbinipfilter-route
       runAfter: [approval-route-test-round]
       taskRef: { name: endpoint-tests-expected-status }
@@ -653,7 +683,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 17: Update Jira with test results
+    # Step 19: Update Jira with test results
     - name: update-jira-test-results
       runAfter:
         - test-httpbinipfilter-route
@@ -738,7 +768,7 @@ spec:
 
             Ready for manual teardown approval. The complete HCP infrastructure will be destroyed once approved.
 
-    # Step 18: Manual approval before teardown
+    # Step 20: Manual approval before teardown
     - name: approval-teardown
       runAfter:
         - update-jira-test-results
@@ -767,7 +797,7 @@ spec:
         - name: timeout
           value: '336h'
 
-    # Step 19: Teardown hosted cluster
+    # Step 21: Teardown hosted cluster
     - name: teardown-hosted-cluster
       runAfter: [approval-teardown]
       when:
