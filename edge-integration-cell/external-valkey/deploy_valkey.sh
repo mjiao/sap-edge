@@ -215,8 +215,8 @@ wait_for_valkey() {
     local attempt=0
 
     while [[ $attempt -lt $max_attempts ]]; do
-        if oc get pods -l name=valkey -n "$NAMESPACE" 2>/dev/null | grep -q "Running"; then
-            log_info "Valkey pod is running"
+        if oc get pods -l name=valkey -n "$NAMESPACE" 2>/dev/null | grep -q "1/1.*Running"; then
+            log_info "Valkey pod is ready"
             return 0
         fi
         attempt=$((attempt + 1))
