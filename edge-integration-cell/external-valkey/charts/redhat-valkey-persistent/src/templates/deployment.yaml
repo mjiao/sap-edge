@@ -38,6 +38,8 @@ spec:
         {{- if .Values.tls.enabled }}
         args:
           - valkey-server
+          - --dir
+          - /var/lib/valkey/data
           - --requirepass
           - $(VALKEY_PASSWORD)
           - --tls-port
