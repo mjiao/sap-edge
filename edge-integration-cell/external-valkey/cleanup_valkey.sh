@@ -92,6 +92,13 @@ check_prerequisites() {
         exit 1
     fi
 
+    local helm_major
+    helm_major=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+' | head -1 | tr -d 'v')
+    if [[ -z "$helm_major" || "$helm_major" -lt 3 ]]; then
+        log_error "Helm v3+ is required. Current version: $(helm version --short 2>/dev/null || echo 'unknown')"
+        exit 1
+    fi
+
     if ! oc whoami &> /dev/null; then
         log_error "Not logged into OpenShift cluster"
         exit 1
