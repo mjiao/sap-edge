@@ -60,10 +60,9 @@ spec:
       type: string
       description: "Storage class for etcd PVCs (leave empty for default)"
       default: ""
-    - name: hubKubeconfigSecretName
+    - name: hubClusterName
       type: string
-      description: "Name of the Secret containing kubeconfig for hub cluster (optional)"
-      default: ""
+      description: "Name of the hub cluster (used to derive kubeconfig secret name: {hubClusterName}-kubeconfig)"
 
     # --- OSSM3 parameters ---
     - name: ossm3Channel
@@ -151,7 +150,7 @@ spec:
         - name: pullSecretName
           value: $(params.pullSecretName)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
 
     # Step 1: Clone repository
     - name: fetch-repository
@@ -189,7 +188,7 @@ spec:
         - name: etcdStorageClass
           value: $(params.etcdStorageClass)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -206,7 +205,7 @@ spec:
         - name: timeoutMinutes
           value: "90"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -225,7 +224,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
         - name: ossm3Channel
           value: $(params.ossm3Channel)
       workspaces:
@@ -243,7 +242,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
         - name: obcName
           value: $(params.obcName)
         - name: s3Prefix
@@ -265,7 +264,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -282,7 +281,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
         - name: proxyHost
           value: $(params.proxyHost)
         - name: proxyPort
@@ -303,7 +302,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -322,7 +321,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -341,7 +340,7 @@ spec:
         - name: postgresHA
           value: $(params.postgresHA)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -362,7 +361,7 @@ spec:
         - name: redisClusterType
           value: $(params.redisClusterType)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -383,7 +382,7 @@ spec:
         - name: datastoreType
           value: $(params.datastoreType)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -400,7 +399,7 @@ spec:
         - name: datastoreType
           value: $(params.datastoreType)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -463,7 +462,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -478,7 +477,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -495,7 +494,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -510,7 +509,7 @@ spec:
         - name: hostedClusterNamespace
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -529,7 +528,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -547,7 +546,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -565,7 +564,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -583,7 +582,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -601,7 +600,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -654,7 +653,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -672,7 +671,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -690,7 +689,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -708,7 +707,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -726,7 +725,7 @@ spec:
         - name: publicDNS
           value: $(params.publicDNS)
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -785,7 +784,7 @@ spec:
         - name: publicDNS
           value: "true"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -803,7 +802,7 @@ spec:
         - name: publicDNS
           value: "true"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -821,7 +820,7 @@ spec:
         - name: publicDNS
           value: "true"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -839,7 +838,7 @@ spec:
         - name: publicDNS
           value: "true"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -857,7 +856,7 @@ spec:
         - name: publicDNS
           value: "true"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
@@ -991,7 +990,7 @@ spec:
         - name: timeoutMinutes
           value: "30"
         - name: hubKubeconfigSecretName
-          value: $(params.hubKubeconfigSecretName)
+          value: $(params.hubClusterName)-kubeconfig
       workspaces:
         - name: source
           workspace: source
