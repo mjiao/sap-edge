@@ -28,8 +28,12 @@ spec:
       value: "{{ revision }}"
     - name: pullRequestNumber
       value: "{{ pull_request_number }}"
+    # hostedClusterName: include hubClusterName to avoid collisions across hubs
+    # Pattern: {prefix}-{hubClusterName}-pr{number}
     - name: hostedClusterName
       value: "hcp-kv-eli-pr{{ pull_request_number }}"
+    # hostedClusterName: include hubClusterName to avoid collisions across hubs
+    # Pattern: {prefix}-{hubClusterName}-pr{number}
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage

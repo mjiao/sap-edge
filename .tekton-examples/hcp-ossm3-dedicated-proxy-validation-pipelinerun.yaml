@@ -48,8 +48,12 @@ spec:
       value: "{{ pull_request_number }}"
 
     # --- HCP cluster parameters ---
+    # hostedClusterName: include hubClusterName to avoid collisions across hubs
+    # Pattern: {prefix}-{hubClusterName}-pr{number}
     - name: hostedClusterName
       value: "hcp-proxy-eli-pr{{ pull_request_number }}"
+    # hostedClusterName: include hubClusterName to avoid collisions across hubs
+    # Pattern: {prefix}-{hubClusterName}-pr{number}
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
