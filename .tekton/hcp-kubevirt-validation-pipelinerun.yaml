@@ -65,7 +65,7 @@ spec:
     - name: skipTeardown
       value: "false"
     - name: hubKubeconfigSecretName
-      value: ""
+      value: "hub-admin-kubeconfig"
   workspaces:
     - name: source
       volumeClaimTemplate:
