@@ -40,7 +40,7 @@ spec:
 
     # --- HCP cluster parameters ---
     - name: hostedClusterName
-      value: "hcp-ossm-pr{{ pull_request_number }}"
+      value: "hcp-ossm-eli-pr{{ pull_request_number }}"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
