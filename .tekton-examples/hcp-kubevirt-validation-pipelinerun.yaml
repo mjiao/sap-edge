@@ -64,8 +64,11 @@ spec:
       value: ""
     - name: skipTeardown
       value: "false"
-    - name: hubKubeconfigSecretName
-      value: "eic-cluster-kubeconfig"
+    # hubClusterName: name of the target hub cluster
+    # The pipeline derives the kubeconfig secret as: {hubClusterName}-kubeconfig
+    # Ensure a Secret named "{hubClusterName}-kubeconfig" exists with the hub's kubeconfig
+    - name: hubClusterName
+      value: "eic-cluster"
   workspaces:
     - name: source
       volumeClaimTemplate:
