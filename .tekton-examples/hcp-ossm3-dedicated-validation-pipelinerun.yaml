@@ -45,7 +45,7 @@ spec:
 
     # --- HCP cluster parameters ---
     - name: hostedClusterName
-      value: "hcp-dedicated-pr{{ pull_request_number }}"
+      value: "hcp-dedicated-eli-pr{{ pull_request_number }}"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage

@@ -29,7 +29,7 @@ spec:
     - name: pullRequestNumber
       value: "{{ pull_request_number }}"
     - name: hostedClusterName
-      value: "hcp-scc-pr{{ pull_request_number }}"
+      value: "hcp-scc-eli-pr{{ pull_request_number }}"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
