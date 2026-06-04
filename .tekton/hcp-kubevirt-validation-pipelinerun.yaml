@@ -29,7 +29,7 @@ spec:
     - name: pullRequestNumber
       value: "{{ pull_request_number }}"
     - name: hostedClusterName
-      value: "hcp-kv-pr{{ pull_request_number }}"
+      value: "hcp-kv-eli-pr{{ pull_request_number }}"
     - name: hostedClusterNamespace
       value: "clusters"
     - name: releaseImage
@@ -64,8 +64,11 @@ spec:
       value: ""
     - name: skipTeardown
       value: "false"
-    - name: hubKubeconfigSecretName
-      value: "eic-cluster-kubeconfig"
+    # hubClusterName: name of the target hub cluster
+    # The pipeline derives the kubeconfig secret as: {hubClusterName}-kubeconfig
+    # Ensure a Secret named "{hubClusterName}-kubeconfig" exists with the hub's kubeconfig
+    - name: hubClusterName
+      value: "eli"
   workspaces:
     - name: source
       volumeClaimTemplate:
