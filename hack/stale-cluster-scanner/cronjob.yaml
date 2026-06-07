@@ -1,0 +1,376 @@
+# SPDX-FileCopyrightText: 2024 SAP edge team
+# SPDX-FileContributor: Manjun Jiao (@mjiao)
+# SPDX-License-Identifier: Apache-2.0
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stale-cluster-scanner-script
+  namespace: aro-rosa-checks
+  labels:
+    app: stale-cluster-scanner
+data:
+  scan.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    THRESHOLD_HOURS="${THRESHOLD_HOURS:-24}"
+    now_epoch=$(date +%s)
+    threshold_seconds=$((THRESHOLD_HOURS * 3600))
+
+    stale_clusters=""
+
+    # --- ARO scan ---
+    echo "Scanning ARO clusters..."
+    az login --service-principal \
+      -u "${AZURE_CLIENT_ID}" \
+      -p "${AZURE_CLIENT_SECRET}" \
+      --tenant "${AZURE_TENANT_ID}" \
+      --output none
+
+    az account set --subscription "${AZURE_SUBSCRIPTION_ID}"
+
+    aro_clusters=$(az aro list --output json 2>/dev/null || echo "[]")
+    aro_count=$(echo "${aro_clusters}" | jq '. | length')
+    echo "Found ${aro_count} ARO cluster(s)"
+
+    while read -r cluster; do
+      [ -z "${cluster}" ] && continue
+      name=$(echo "${cluster}" | jq -r '.name')
+      created_at=$(echo "${cluster}" | jq -r '.createdAt // .systemData.createdAt // empty')
+      resource_group=$(echo "${cluster}" | jq -r '.resourceGroup // "unknown"')
+      [ -z "${created_at}" ] && continue
+
+      created_epoch=$(date -d "${created_at}" +%s 2>/dev/null || echo "0")
+      [ "${created_epoch}" -eq 0 ] && continue
+
+      age=$((now_epoch - created_epoch))
+      if [ ${age} -ge ${threshold_seconds} ]; then
+        age_hours=$((age / 3600))
+        stale_clusters+="| ARO | ${name} | ${resource_group} | ${age_hours}h |"$'\n'
+      fi
+    done < <(echo "${aro_clusters}" | jq -c '.[]')
+
+    # --- ROSA scan ---
+    echo "Scanning ROSA clusters..."
+    rosa login --token="${ROSA_TOKEN}"
+
+    rosa_clusters=$(rosa list clusters --output json 2>/dev/null || echo "[]")
+    rosa_count=$(echo "${rosa_clusters}" | jq '. | length')
+    echo "Found ${rosa_count} ROSA cluster(s)"
+
+    while read -r cluster; do
+      [ -z "${cluster}" ] && continue
+      name=$(echo "${cluster}" | jq -r '.name')
+      created_at=$(echo "${cluster}" | jq -r '.creation_timestamp // empty')
+      state=$(echo "${cluster}" | jq -r '.state // "unknown"')
+      [ -z "${created_at}" ] && continue
+
+      created_epoch=$(date -d "${created_at}" +%s 2>/dev/null || echo "0")
+      [ "${created_epoch}" -eq 0 ] && continue
+
+      age=$((now_epoch - created_epoch))
+      if [ ${age} -ge ${threshold_seconds} ]; then
+        age_hours=$((age / 3600))
+        stale_clusters+="| ROSA | ${name} | ${state} | ${age_hours}h |"$'\n'
+      fi
+    done < <(echo "${rosa_clusters}" | jq -c '.[]')
+
+    # --- Send Slack notification ---
+    stale_clusters=$(echo -n "${stale_clusters}" | sed '/^$/d')
+    if [ -z "${stale_clusters}" ]; then
+      echo "No stale clusters found, skipping notification."
+      exit 0
+    else
+      count=$(printf '%b' "${stale_clusters}" | grep -c '|' || true)
+      body=":warning: *Stale Cluster Report* -- ${count} cluster(s) older than ${THRESHOLD_HOURS} hours"
+      body+=$'\n\n'"| Type | Name | Account/RG | Age |"
+      body+=$'\n'"|------|------|-----------|-----|"
+      body+=$'\n'"$(printf '%b' "${stale_clusters}")"
+      if [ "${WEEKEND_REMINDER:-false}" = "true" ]; then
+        body+=$'\n\n'":rotating_light: *WEEKEND ALERT* -- These clusters are running over the weekend! If you're not actively testing, please deprovision them now to save costs."
+      elif [ "${FRIDAY_REMINDER:-false}" = "true" ]; then
+        body+=$'\n\n'":rotating_light: *FRIDAY REMINDER* -- Please deprovision your clusters before the end of the day if you don't have any plans for testing over the weekend."
+      else
+        body+=$'\n\n'"Please clean up unused clusters to avoid unnecessary costs. Remember to deprovision clusters before the weekend if they are not needed."
+      fi
+      payload=$(jq -n --arg text "${body}" '{"text": $text}')
+    fi
+
+    response=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -d "${payload}" \
+      "${SLACK_WEBHOOK_URL}")
+
+    if [ "${response}" -eq 200 ]; then
+      echo "Slack notification sent successfully"
+    else
+      echo "Failed to send Slack notification (HTTP ${response})"
+      exit 1
+    fi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stale-cluster-scanner
+  namespace: aro-rosa-checks
+  labels:
+    app: stale-cluster-scanner
+spec:
+  schedule: "0 8 * * 1-5"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: stale-cluster-scanner
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+            - name: script
+              configMap:
+                name: stale-cluster-scanner-script
+                defaultMode: 0755
+          containers:
+            - name: scanner
+              image: quay.io/redhat-sap-cop/stale-cluster-scanner:latest
+              command: ["/bin/bash", "/scripts/scan.sh"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+              env:
+                - name: THRESHOLD_HOURS
+                  value: "24"
+                - name: AZURE_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-id
+                - name: AZURE_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-secret
+                - name: AZURE_TENANT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: tenant-id
+                - name: AZURE_SUBSCRIPTION_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: subscription-id
+                - name: AWS_DEFAULT_REGION
+                  value: "eu-north-1"
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+                - name: ROSA_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: rosa-token
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: webhook-url
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stale-cluster-scanner-friday
+  namespace: aro-rosa-checks
+  labels:
+    app: stale-cluster-scanner
+spec:
+  schedule: "0 12 * * 5"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: stale-cluster-scanner
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+            - name: script
+              configMap:
+                name: stale-cluster-scanner-script
+                defaultMode: 0755
+          containers:
+            - name: scanner
+              image: quay.io/redhat-sap-cop/stale-cluster-scanner:latest
+              command: ["/bin/bash", "/scripts/scan.sh"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+              env:
+                - name: THRESHOLD_HOURS
+                  value: "24"
+                - name: FRIDAY_REMINDER
+                  value: "true"
+                - name: AZURE_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-id
+                - name: AZURE_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-secret
+                - name: AZURE_TENANT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: tenant-id
+                - name: AZURE_SUBSCRIPTION_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: subscription-id
+                - name: AWS_DEFAULT_REGION
+                  value: "eu-north-1"
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+                - name: ROSA_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: rosa-token
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: webhook-url
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: stale-cluster-scanner-weekend
+  namespace: aro-rosa-checks
+  labels:
+    app: stale-cluster-scanner
+spec:
+  schedule: "0 9 * * 6,0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: stale-cluster-scanner
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+            - name: script
+              configMap:
+                name: stale-cluster-scanner-script
+                defaultMode: 0755
+          containers:
+            - name: scanner
+              image: quay.io/redhat-sap-cop/stale-cluster-scanner:latest
+              command: ["/bin/bash", "/scripts/scan.sh"]
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+              env:
+                - name: THRESHOLD_HOURS
+                  value: "12"
+                - name: WEEKEND_REMINDER
+                  value: "true"
+                - name: AZURE_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-id
+                - name: AZURE_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: client-secret
+                - name: AZURE_TENANT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: tenant-id
+                - name: AZURE_SUBSCRIPTION_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: azure-credentials
+                      key: subscription-id
+                - name: AWS_DEFAULT_REGION
+                  value: "eu-north-1"
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+                - name: ROSA_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: rosa-token
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: webhook-url
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
