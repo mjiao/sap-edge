@@ -171,6 +171,10 @@ wait_for_imagestream() {
         return
     fi
 
+    # Force a fresh import attempt rather than relying on the passive controller,
+    # which may not retry aggressively after a transient registry timeout.
+    oc import-image valkey:8-el10 -n "$NAMESPACE" --confirm 2>/dev/null || true
+
     local max_attempts=30
     local attempt=0
 
@@ -186,6 +190,7 @@ wait_for_imagestream() {
 
     echo ""
     log_error "Timeout waiting for ImageStream import"
+    log_error "Try manually: oc import-image valkey:8-el10 -n $NAMESPACE --confirm"
     exit 1
 }
 
