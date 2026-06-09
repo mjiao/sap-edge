@@ -47,7 +47,7 @@ spec:
     - name: skipEdgelmValidation
       value: "false"
     - name: hubKubeconfigSecretName
-      value: ""
+      value: "eli-kubeconfig"
     - name: terraformStateS3Bucket
       value: "eic-test-rosa-terraform-state"
     - name: terraformStateS3Key
