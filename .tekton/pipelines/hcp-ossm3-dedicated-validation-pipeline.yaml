@@ -78,18 +78,8 @@ spec:
       description: "S3 key prefix for the restricted-resources zip files"
       default: "restricted-resources/"
     # --- Corporate proxy parameters ---
-    - name: proxyHost
-      type: string
-      description: "Corporate proxy hostname (leave empty to skip proxy configuration)"
-      default: ""
-    - name: proxyPort
-      type: string
-      description: "Corporate proxy port"
-      default: "3128"
-    - name: proxyIP
-      type: string
-      description: "Corporate proxy IP address(es), comma-separated for multiple"
-      default: ""
+    # Proxy config is read from a Secret named {hubClusterName}-proxy-config
+    # containing keys: PROXY_HOST, PROXY_PORT, PROXY_IP
 
     # --- EIC services parameters ---
     - name: postgresVersion
@@ -282,12 +272,8 @@ spec:
           value: $(params.hostedClusterNamespace)
         - name: hubKubeconfigSecretName
           value: $(params.hubClusterName)-kubeconfig
-        - name: proxyHost
-          value: $(params.proxyHost)
-        - name: proxyPort
-          value: $(params.proxyPort)
-        - name: proxyIP
-          value: $(params.proxyIP)
+        - name: proxySecretName
+          value: $(params.hubClusterName)-proxy-config
       workspaces:
         - name: source
           workspace: source
