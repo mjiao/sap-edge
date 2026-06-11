@@ -418,13 +418,13 @@ spec:
             Namespace: $(params.hostedClusterNamespace)
             Workers: $(params.nodePoolReplicas) x ($(params.nodePoolCpuCores) vCPU, $(params.nodePoolMemoryGB)GB RAM)
             Mesh: Dedicated SAP mesh (istio-system-sap-edge / sap-mesh-istio)
-            Proxy: $(params.proxyHost)
+            Proxy: see $(params.hubClusterName)-proxy-config secret
 
             Restricted kubeconfig stored as Secret 'edgelm-kubeconfig-generated-$(params.hostedClusterName)'.
 
             Please complete the following manually:
             1. Register the cluster in ELM (use restricted kubeconfig, check "Restricted Access")
-               - If proxy is configured, select "Enable HTTP Proxy" and set proxy to $(params.proxyHost):$(params.proxyPort)
+               - If proxy is configured, select "Enable HTTP Proxy" and set proxy from $(params.hubClusterName)-proxy-config secret
             2. Deploy Edge Integration Cell (EIC)
             3. Deploy iFlows for testing
             4. After each resource download, re-run label cleanup:
@@ -878,7 +878,7 @@ spec:
             * *Release Image:* $(params.releaseImage)
             * *Worker Nodes:* $(params.nodePoolReplicas) x ($(params.nodePoolCpuCores) vCPU, $(params.nodePoolMemoryGB)GB RAM)
             * *Service Mesh:* Dedicated SAP mesh (istio-system-sap-edge / sap-mesh-istio)
-            * *Corporate Proxy:* $(params.proxyHost)
+            * *Corporate Proxy:* see $(params.hubClusterName)-proxy-config secret
             * *PostgreSQL:* $(params.postgresVersion) (Crunchy Operator)
             * *Datastore:* $(params.datastoreType)
 
