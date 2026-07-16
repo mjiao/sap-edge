@@ -133,16 +133,39 @@ spec:
         echo "🔐 Extracting S3 credentials from OBC..."
         S3_ACCESS_KEY=$(oc get secret "${OBC_NAME}" -n "${OBC_NAMESPACE}" -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
         S3_SECRET_KEY=$(oc get secret "${OBC_NAME}" -n "${OBC_NAMESPACE}" -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
-        S3_BUCKET_HOST=$(oc get configmap "${OBC_NAME}" -n "${OBC_NAMESPACE}" -o jsonpath='{.data.BUCKET_HOST}')
-        S3_BUCKET_PORT=$(oc get configmap "${OBC_NAME}" -n "${OBC_NAMESPACE}" -o jsonpath='{.data.BUCKET_PORT}')
         S3_BUCKET_NAME=$(oc get configmap "${OBC_NAME}" -n "${OBC_NAMESPACE}" -o jsonpath='{.data.BUCKET_NAME}')
 
-        S3_ENDPOINT="https://${S3_BUCKET_HOST}:${S3_BUCKET_PORT}"
+        # Use the external S3 route (not the internal svc) since LokiStack
+        # runs on the hosted cluster and can't reach hub-internal services
+        S3_ROUTE_HOST=$(oc get route s3 -n openshift-storage -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+        if [[ -z "${S3_ROUTE_HOST}" ]]; then
+          echo "❌ Could not find S3 route in openshift-storage namespace"
+          echo "   Available routes:"
+          oc get route -n openshift-storage 2>/dev/null || echo "   None found"
+          exit 1
+        fi
+        S3_ENDPOINT="https://${S3_ROUTE_HOST}"
 
         echo "✅ S3 credentials extracted"
-        echo "   Endpoint: ${S3_ENDPOINT}"
+        echo "   Endpoint: ${S3_ENDPOINT} (external route)"
         echo "   Bucket: ${S3_BUCKET_NAME}"
         echo "   Access Key: ${S3_ACCESS_KEY:0:4}****"
+
+        # Extract hub ingress CA so the hosted cluster can trust the S3 route TLS cert
+        echo "🔐 Extracting hub ingress CA certificate..."
+        HUB_CA_CERT="/tmp/hub-ingress-ca.crt"
+        oc get secret router-certs-default -n openshift-ingress \
+          -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d > "${HUB_CA_CERT}" || true
+        if [[ ! -s "${HUB_CA_CERT}" ]]; then
+          # Fall back to the default ingress controller CA
+          oc get configmap default-ingress-cert -n openshift-config-managed \
+            -o jsonpath='{.data.ca-bundle\.crt}' > "${HUB_CA_CERT}" 2>/dev/null || true
+        fi
+        if [[ -s "${HUB_CA_CERT}" ]]; then
+          echo "✅ Hub ingress CA extracted"
+        else
+          echo "⚠️  Could not extract hub ingress CA — LokiStack may fail TLS to S3 route"
+        fi
 
         # =============================================
         # Step 2: Switch to hosted cluster kubeconfig
@@ -178,6 +201,17 @@ spec:
         # Also ensure openshift-operators-redhat namespace for Loki Operator
         echo "📂 Ensuring openshift-operators-redhat namespace exists..."
         oc create namespace openshift-operators-redhat --dry-run=client -o yaml | oc apply -f -
+
+        # Create CA ConfigMap for S3 route TLS trust (if we extracted the hub CA)
+        LOKI_CA_NAME=""
+        if [[ -s "${HUB_CA_CERT}" ]]; then
+          echo "🔐 Creating CA ConfigMap for S3 storage TLS trust..."
+          oc create configmap loki-s3-ca \
+            --from-file=service-ca.crt="${HUB_CA_CERT}" \
+            -n openshift-logging --dry-run=client -o yaml | oc apply -f -
+          LOKI_CA_NAME="loki-s3-ca"
+          echo "✅ CA ConfigMap 'loki-s3-ca' created in openshift-logging"
+        fi
 
         # =============================================
         # Step 4: Install Loki Operator
@@ -332,7 +366,8 @@ spec:
           echo "   Auto-detected StorageClass: ${STORAGE_CLASS}"
         fi
 
-        oc apply -f - <<EOF
+        # Build LokiStack manifest with optional TLS CA reference
+        LOKISTACK_YAML=$(cat <<EOYAML
         apiVersion: loki.grafana.com/v1
         kind: LokiStack
         metadata:
@@ -347,10 +382,21 @@ spec:
             secret:
               name: logging-loki-s3
               type: s3
+        EOYAML
+        )
+
+        if [[ -n "${LOKI_CA_NAME}" ]]; then
+          LOKISTACK_YAML+="
+            tls:
+              caName: ${LOKI_CA_NAME}"
+        fi
+
+        LOKISTACK_YAML+="
           storageClassName: ${STORAGE_CLASS}
           tenants:
-            mode: openshift-logging
-        EOF
+            mode: openshift-logging"
+
+        echo "${LOKISTACK_YAML}" | oc apply -f -
 
         echo "⏳ Waiting for LokiStack pods to be running..."
         for i in $(seq 1 90); do
