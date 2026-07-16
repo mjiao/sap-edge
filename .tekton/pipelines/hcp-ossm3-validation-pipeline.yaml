@@ -114,6 +114,12 @@ spec:
       description: "Jira issue key to update with deployment results"
       default: ""
 
+    # --- Logging parameters ---
+    - name: lokiSize
+      type: string
+      description: "LokiStack size (1x.extra-small for test/validation, 1x.small for production)"
+      default: "1x.extra-small"
+
     # --- Pipeline control ---
     - name: skipTeardown
       type: string
@@ -364,9 +370,26 @@ spec:
         - name: source
           workspace: source
 
-    # Step 12: Get all credentials and display them
+    # Step 12a: Deploy LokiStack logging on hosted cluster (parallel with DB deployment)
+    - name: deploy-logging
+      runAfter: [generate-sa-based-kubeconfig]
+      taskRef: { name: hcp-deploy-logging }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubClusterName)-kubeconfig
+        - name: lokiSize
+          value: $(params.lokiSize)
+      workspaces:
+        - name: source
+          workspace: source
+
+    # Step 13: Get all credentials and display them
     - name: get-all-accesses
-      runAfter: [deploy-postgres, deploy-redis, deploy-valkey]
+      runAfter: [deploy-postgres, deploy-redis, deploy-valkey, deploy-logging]
       taskRef: { name: hcp-get-all-accesses }
       params:
         - name: hostedClusterName
