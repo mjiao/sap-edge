@@ -354,7 +354,7 @@ spec:
 
         echo "⏳ Waiting for LokiStack pods to be running..."
         for i in $(seq 1 90); do
-          READY_PODS=$(oc get pods -n openshift-logging -l app.kubernetes.io/instance=logging-loki --no-headers 2>/dev/null | grep -c "Running" || echo "0")
+          READY_PODS=$(oc get pods -n openshift-logging -l app.kubernetes.io/instance=logging-loki --no-headers 2>/dev/null | grep -c "Running" || true)
           TOTAL_PODS=$(oc get pods -n openshift-logging -l app.kubernetes.io/instance=logging-loki --no-headers 2>/dev/null | wc -l | tr -d ' ')
           if [[ "${TOTAL_PODS}" -gt 0 && "${READY_PODS}" -eq "${TOTAL_PODS}" ]]; then
             echo "✅ All LokiStack pods are running (${READY_PODS}/${TOTAL_PODS})"
@@ -442,8 +442,12 @@ spec:
         echo ""
         echo "🖥️  Enabling console log viewer (UIPlugin)..."
 
-        oc apply -f - <<EOF
-        apiVersion: observability.openshift.io/v1alpha1
+        # Auto-detect UIPlugin API version (v1alpha1 in older, v1 in newer OCP)
+        UIPLUGIN_APPLIED=false
+        for API_VERSION in "observability.openshift.io/v1alpha1" "observability.openshift.io/v1"; do
+          if oc api-resources --api-group=observability.openshift.io 2>/dev/null | grep -q "UIPlugin"; then
+            if oc apply -f - <<EOF 2>/dev/null
+        apiVersion: ${API_VERSION}
         kind: UIPlugin
         metadata:
           name: logging
@@ -453,8 +457,18 @@ spec:
             lokiStack:
               name: logging-loki
         EOF
+            then
+              UIPLUGIN_APPLIED=true
+              echo "✅ UIPlugin created (${API_VERSION}) — Observe → Logs will be available after console refresh"
+              break
+            fi
+          fi
+        done
 
-        echo "✅ UIPlugin created — Observe → Logs will be available after console refresh"
+        if [[ "${UIPLUGIN_APPLIED}" != "true" ]]; then
+          echo "⚠️  UIPlugin CRD not available on this cluster — skipping console log viewer"
+          echo "   Logs can still be queried via the Loki API directly"
+        fi
 
         # =============================================
         # Step 11: Verification
