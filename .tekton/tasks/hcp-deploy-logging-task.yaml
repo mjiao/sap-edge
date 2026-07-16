@@ -185,6 +185,16 @@ spec:
         echo ""
         echo "📦 Installing Loki Operator..."
 
+        # Auto-detect the default channel from the PackageManifest
+        LOKI_CHANNEL=$(oc get packagemanifest loki-operator -o jsonpath='{.status.defaultChannel}' 2>/dev/null || echo "")
+        if [[ -z "${LOKI_CHANNEL}" ]]; then
+          echo "❌ Could not detect Loki Operator channel from PackageManifest"
+          echo "   Available packagemanifests:"
+          oc get packagemanifest 2>/dev/null | grep -i loki || echo "   None found"
+          exit 1
+        fi
+        echo "   Using channel: ${LOKI_CHANNEL}"
+
         # Create OperatorGroup for openshift-operators-redhat if needed
         if ! oc get operatorgroup -n openshift-operators-redhat --no-headers 2>/dev/null | grep -q .; then
           oc apply -f - <<EOF
@@ -204,7 +214,7 @@ spec:
           name: loki-operator
           namespace: openshift-operators-redhat
         spec:
-          channel: stable-6.2
+          channel: ${LOKI_CHANNEL}
           installPlanApproval: Automatic
           name: loki-operator
           source: redhat-operators
@@ -232,6 +242,16 @@ spec:
         echo ""
         echo "📦 Installing Red Hat OpenShift Logging Operator..."
 
+        # Auto-detect the default channel from the PackageManifest
+        LOGGING_CHANNEL=$(oc get packagemanifest cluster-logging -o jsonpath='{.status.defaultChannel}' 2>/dev/null || echo "")
+        if [[ -z "${LOGGING_CHANNEL}" ]]; then
+          echo "❌ Could not detect Logging Operator channel from PackageManifest"
+          echo "   Available packagemanifests:"
+          oc get packagemanifest 2>/dev/null | grep -i logging || echo "   None found"
+          exit 1
+        fi
+        echo "   Using channel: ${LOGGING_CHANNEL}"
+
         # Create OperatorGroup for openshift-logging if needed
         if ! oc get operatorgroup -n openshift-logging --no-headers 2>/dev/null | grep -q .; then
           oc apply -f - <<EOF
@@ -253,7 +273,7 @@ spec:
           name: cluster-logging
           namespace: openshift-logging
         spec:
-          channel: stable-6.2
+          channel: ${LOGGING_CHANNEL}
           installPlanApproval: Automatic
           name: cluster-logging
           source: redhat-operators
