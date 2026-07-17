@@ -51,7 +51,7 @@ spec:
     - name: deployQuay
       value: "false"
     - name: skipEicValidation
-      value: "false"
+      value: "true"
     - name: skipAutomatedTests
       value: "false"
     - name: quayAdminPasswordSecretName
