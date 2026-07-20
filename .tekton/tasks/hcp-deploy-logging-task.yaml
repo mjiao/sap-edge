@@ -483,16 +483,57 @@ spec:
         echo "✅ ClusterLogForwarder deployed"
 
         # =============================================
-        # Step 10: Enable Console Log Viewer (KBA Step 5)
+        # Step 10: Install Cluster Observability Operator (for UIPlugin CRD)
         # =============================================
         echo ""
-        echo "🖥️  Enabling console log viewer (UIPlugin)..."
+        echo "📦 Installing Cluster Observability Operator..."
 
-        # Auto-detect UIPlugin API version (v1alpha1 in older, v1 in newer OCP)
-        UIPLUGIN_APPLIED=false
-        for API_VERSION in "observability.openshift.io/v1alpha1" "observability.openshift.io/v1"; do
-          if oc api-resources --api-group=observability.openshift.io 2>/dev/null | grep -q "UIPlugin"; then
-            if oc apply -f - <<EOF 2>/dev/null
+        COO_CHANNEL=$(oc get packagemanifest cluster-observability-operator -o jsonpath='{.status.defaultChannel}' 2>/dev/null || echo "")
+        if [[ -z "${COO_CHANNEL}" ]]; then
+          echo "⚠️  Cluster Observability Operator not available in catalog — skipping UIPlugin"
+        else
+          echo "   Using channel: ${COO_CHANNEL}"
+
+          oc apply -f - <<EOF
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: cluster-observability-operator
+          namespace: openshift-operators
+        spec:
+          channel: ${COO_CHANNEL}
+          installPlanApproval: Automatic
+          name: cluster-observability-operator
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+        EOF
+
+          echo "⏳ Waiting for Cluster Observability Operator CSV to succeed..."
+          for i in $(seq 1 60); do
+            COO_CSV=$(oc get csv -n openshift-operators -l operators.coreos.com/cluster-observability-operator.openshift-operators -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+            if [[ "${COO_CSV}" == "Succeeded" ]]; then
+              echo "✅ Cluster Observability Operator installed successfully"
+              break
+            fi
+            if [[ ${i} -eq 60 ]]; then
+              echo "⚠️  Timeout waiting for Cluster Observability Operator — skipping UIPlugin"
+              break
+            fi
+            echo "   [${i}/60] COO CSV phase: ${COO_CSV:-Pending}"
+            sleep 10
+          done
+
+          # =============================================
+          # Step 11: Enable Console Log Viewer (KBA Step 5)
+          # =============================================
+          if [[ "${COO_CSV}" == "Succeeded" ]]; then
+            echo ""
+            echo "🖥️  Enabling console log viewer (UIPlugin)..."
+
+            UIPLUGIN_APPLIED=false
+            for API_VERSION in "observability.openshift.io/v1alpha1" "observability.openshift.io/v1"; do
+              if oc api-resources --api-group=observability.openshift.io 2>/dev/null | grep -q "UIPlugin"; then
+                if oc apply -f - <<EOF 2>/dev/null
         apiVersion: ${API_VERSION}
         kind: UIPlugin
         metadata:
@@ -503,17 +544,19 @@ spec:
             lokiStack:
               name: logging-loki
         EOF
-            then
-              UIPLUGIN_APPLIED=true
-              echo "✅ UIPlugin created (${API_VERSION}) — Observe → Logs will be available after console refresh"
-              break
+                then
+                  UIPLUGIN_APPLIED=true
+                  echo "✅ UIPlugin created (${API_VERSION}) — Observe → Logs will be available after console refresh"
+                  break
+                fi
+              fi
+            done
+
+            if [[ "${UIPLUGIN_APPLIED}" != "true" ]]; then
+              echo "⚠️  UIPlugin CRD not available — skipping console log viewer"
+              echo "   Logs can still be queried via the Loki API directly"
             fi
           fi
-        done
-
-        if [[ "${UIPLUGIN_APPLIED}" != "true" ]]; then
-          echo "⚠️  UIPlugin CRD not available on this cluster — skipping console log viewer"
-          echo "   Logs can still be queried via the Loki API directly"
         fi
 
         # =============================================
