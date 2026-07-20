@@ -236,6 +236,13 @@ spec:
         oc delete objectbucketclaim "${OBC_NAME}" -n openshift-storage --ignore-not-found=true \
           && echo "   Deleted OBC: ${OBC_NAME}" || true
 
+        # Clean up Tempo OBC on hub cluster
+        echo ""
+        echo "🧹 Cleaning up Tempo OBC..."
+        OBC_NAME="tempo-${CLUSTER_NAME}"
+        oc delete objectbucketclaim "${OBC_NAME}" -n openshift-storage --ignore-not-found=true \
+          && echo "   Deleted OBC: ${OBC_NAME}" || true
+
         # Optionally cleanup namespace
         if [[ "${CLEANUP_NAMESPACE}" == "true" ]]; then
           echo ""
