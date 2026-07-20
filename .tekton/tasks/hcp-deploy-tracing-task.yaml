@@ -565,7 +565,28 @@ spec:
         done
 
         # =============================================
-        # Step 10: Patch Istio CR with tracing provider (KBA Step 3)
+        # Step 10: Disable mTLS for OTel collector (no sidecar)
+        # =============================================
+        echo ""
+        echo "🔒 Creating DestinationRule to disable mTLS for OTel collector..."
+
+        oc apply -f - <<EOF
+        apiVersion: networking.istio.io/v1
+        kind: DestinationRule
+        metadata:
+          name: otel-collector-disable-mtls
+          namespace: ${ISTIO_NS}
+        spec:
+          host: otel-collector.${ISTIO_NS}.svc.cluster.local
+          trafficPolicy:
+            tls:
+              mode: DISABLE
+        EOF
+
+        echo "✅ DestinationRule created — mesh sidecars will use plaintext gRPC to OTel collector"
+
+        # =============================================
+        # Step 11: Patch Istio CR with tracing provider (KBA Step 3)
         # =============================================
         echo ""
         echo "🔧 Patching Istio CR '${ISTIO_CR_NAME}' with tracing extension provider..."
@@ -601,7 +622,7 @@ spec:
         echo "✅ Telemetry resource created (100% sampling)"
 
         # =============================================
-        # Step 11: Deploy Kiali (KBA Step 4)
+        # Step 12: Deploy Kiali (KBA Step 4)
         # =============================================
         echo ""
         echo "🔐 Creating Kiali monitoring RBAC..."
@@ -625,6 +646,8 @@ spec:
 
         echo ""
         echo "📦 Deploying Kiali CR..."
+
+        TEMPO_ROUTE_HOST=$(oc get route tempo-sample-gateway -n tempo -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 
         oc apply -f - <<EOF
         apiVersion: kiali.io/v1alpha1
@@ -657,6 +680,19 @@ spec:
                 url_format: jaeger
         EOF
 
+        if [[ -n "${TEMPO_ROUTE_HOST}" ]]; then
+          echo "🔗 Setting Tempo external URL for 'View in Tracing' link..."
+          oc patch kiali kiali -n "${ISTIO_NS}" --type merge -p "
+        spec:
+          external_services:
+            tracing:
+              url: https://${TEMPO_ROUTE_HOST}/api/traces/v1/dev
+        "
+          echo "✅ Tempo external URL: https://${TEMPO_ROUTE_HOST}/api/traces/v1/dev"
+        else
+          echo "⚠️  Tempo gateway route not found — 'View in Tracing' link will not work"
+        fi
+
         echo "⏳ Waiting for Kiali pod to be running..."
         for i in $(seq 1 60); do
           KIALI_PODS=$(oc get pods -n "${ISTIO_NS}" -l app.kubernetes.io/name=kiali --no-headers 2>/dev/null | grep -c "Running" || true)
@@ -673,7 +709,7 @@ spec:
         done
 
         # =============================================
-        # Step 12: Deploy OSSMC Plugin (KBA Step 5)
+        # Step 13: Deploy OSSMC Plugin (KBA Step 5)
         # =============================================
         echo ""
         echo "🖥️  Deploying OpenShift Service Mesh Console plugin..."
@@ -706,7 +742,7 @@ spec:
         done
 
         # =============================================
-        # Step 13: Verification
+        # Step 14: Verification
         # =============================================
         echo ""
         echo "🔍 Verifying tracing stack deployment..."
