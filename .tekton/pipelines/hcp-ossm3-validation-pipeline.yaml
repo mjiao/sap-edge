@@ -416,9 +416,24 @@ spec:
         - name: source
           workspace: source
 
+    # Step 12c: Deploy Perses dashboards on hosted cluster (parallel with DB deployment)
+    - name: deploy-dashboards
+      runAfter: [generate-sa-based-kubeconfig]
+      taskRef: { name: hcp-deploy-dashboards }
+      params:
+        - name: hostedClusterName
+          value: $(params.hostedClusterName)
+        - name: hostedClusterNamespace
+          value: $(params.hostedClusterNamespace)
+        - name: hubKubeconfigSecretName
+          value: $(params.hubClusterName)-kubeconfig
+      workspaces:
+        - name: source
+          workspace: source
+
     # Step 13: Get all credentials and display them
     - name: get-all-accesses
-      runAfter: [deploy-postgres, deploy-redis, deploy-valkey, deploy-logging, deploy-tracing]
+      runAfter: [deploy-postgres, deploy-redis, deploy-valkey, deploy-logging, deploy-tracing, deploy-dashboards]
       taskRef: { name: hcp-get-all-accesses }
       params:
         - name: hostedClusterName
