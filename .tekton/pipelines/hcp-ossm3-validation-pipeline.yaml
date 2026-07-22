@@ -553,7 +553,7 @@ spec:
         - name: source
           workspace: source
 
-    # Step 18: Endpoint Tests (run in parallel after EndpointSlice fix and Route creation)
+    # Step 18: Endpoint Tests (sequential to avoid MetalLB flakiness on bare-metal KubeVirt)
     # NOTE: httpbinipfilter has an IP filter policy. The hub and managed cluster
     # pod CIDRs must be whitelisted in the iFlow's IP filter settings.
     - name: test-httpbinipfilter
@@ -573,7 +573,7 @@ spec:
           workspace: source
 
     - name: test-http-test1
-      runAfter: [fix-endpointslice, create-eic-route]
+      runAfter: [test-httpbinipfilter]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -589,7 +589,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster
-      runAfter: [fix-endpointslice, create-eic-route]
+      runAfter: [test-http-test1]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -605,7 +605,7 @@ spec:
           workspace: source
 
     - name: test-slvredis
-      runAfter: [fix-endpointslice, create-eic-route]
+      runAfter: [test-http-testelster]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -638,12 +638,7 @@ spec:
 
     # Step 19: Manual approval before second round of tests
     - name: approval-second-test-round
-      runAfter:
-        - test-httpbinipfilter
-        - test-http-test1
-        - test-http-testelster
-        - test-slvredis
-        - test-ratelimit-slvredis
+      runAfter: [test-ratelimit-slvredis]
       taskRef:
         apiVersion: openshift-pipelines.org/v1alpha1
         kind: ApprovalTask
@@ -687,7 +682,7 @@ spec:
           workspace: source
 
     - name: test-http-test1-round2
-      runAfter: [approval-second-test-round]
+      runAfter: [test-httpbinipfilter-round2]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -703,7 +698,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster-round2
-      runAfter: [approval-second-test-round]
+      runAfter: [test-http-test1-round2]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -719,7 +714,7 @@ spec:
           workspace: source
 
     - name: test-slvredis-round2
-      runAfter: [approval-second-test-round]
+      runAfter: [test-http-testelster-round2]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -752,12 +747,7 @@ spec:
 
     # Step 21: Manual approval before Route-based tests (round 3)
     - name: approval-route-test-round
-      runAfter:
-        - test-httpbinipfilter-round2
-        - test-http-test1-round2
-        - test-http-testelster-round2
-        - test-slvredis-round2
-        - test-ratelimit-slvredis-round2
+      runAfter: [test-ratelimit-slvredis-round2]
       taskRef:
         apiVersion: openshift-pipelines.org/v1alpha1
         kind: ApprovalTask
@@ -807,7 +797,7 @@ spec:
           workspace: source
 
     - name: test-http-test1-route
-      runAfter: [approval-route-test-round]
+      runAfter: [test-httpbinipfilter-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -823,7 +813,7 @@ spec:
           workspace: source
 
     - name: test-http-testelster-route
-      runAfter: [approval-route-test-round]
+      runAfter: [test-http-test1-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -839,7 +829,7 @@ spec:
           workspace: source
 
     - name: test-slvredis-route
-      runAfter: [approval-route-test-round]
+      runAfter: [test-http-testelster-route]
       taskRef: { name: endpoint-tests }
       params:
         - name: endpointPath
@@ -872,12 +862,7 @@ spec:
 
     # Step 23: Update Jira with test results
     - name: update-jira-test-results
-      runAfter:
-        - test-httpbinipfilter-route
-        - test-http-test1-route
-        - test-http-testelster-route
-        - test-slvredis-route
-        - test-ratelimit-slvredis-route
+      runAfter: [test-ratelimit-slvredis-route]
       when:
         - input: "$(params.jiraIssueKey)"
           operator: notin
