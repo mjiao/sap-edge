@@ -225,7 +225,7 @@ spec:
         echo "   defaultChannel: '${LOKI_CHANNEL}', available: '${AVAILABLE_CHANNELS}'"
 
         # Prefer the latest stable-* channel; fall back to defaultChannel if none exist
-        STABLE_CHANNEL=$(echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep '^stable-' | sort -rV | head -1)
+        STABLE_CHANNEL=$(echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep '^stable-' | sort -rV | head -1 || true)
         if [[ -n "${STABLE_CHANNEL}" ]]; then
           LOKI_CHANNEL="${STABLE_CHANNEL}"
         elif [[ -z "${LOKI_CHANNEL}" ]]; then
