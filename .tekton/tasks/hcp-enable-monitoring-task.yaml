@@ -142,7 +142,7 @@ spec:
 
         for NS in "${NAMESPACES[@]}"; do
           if oc get namespace "${NS}" &>/dev/null; then
-            echo "📦 Creating NetworkPolicy in ${NS}..."
+            echo "📦 Creating NetworkPolicies in ${NS}..."
             cat <<EONP | oc apply -f -
         apiVersion: networking.k8s.io/v1
         kind: NetworkPolicy
@@ -156,10 +156,21 @@ spec:
             - namespaceSelector:
                 matchLabels:
                   kubernetes.io/metadata.name: openshift-user-workload-monitoring
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: allow-same-namespace
+          namespace: ${NS}
+        spec:
+          podSelector: {}
+          ingress:
+          - from:
+            - podSelector: {}
         EONP
-            echo "✅ NetworkPolicy created in ${NS}"
+            echo "✅ NetworkPolicies created in ${NS}"
           else
-            echo "ℹ️  Namespace ${NS} does not exist, skipping NetworkPolicy"
+            echo "ℹ️  Namespace ${NS} does not exist, skipping NetworkPolicies"
           fi
         done
 
