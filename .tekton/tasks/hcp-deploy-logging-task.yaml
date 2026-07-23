@@ -221,20 +221,15 @@ spec:
 
         # Auto-detect the default channel from the PackageManifest
         LOKI_CHANNEL=$(oc get packagemanifest loki-operator -o jsonpath='{.status.defaultChannel}' 2>/dev/null || echo "")
-        if [[ -z "${LOKI_CHANNEL}" ]]; then
-          echo "❌ Could not detect Loki Operator channel from PackageManifest"
-          echo "   Available packagemanifests:"
-          oc get packagemanifest 2>/dev/null | grep -i loki || echo "   None found"
-          exit 1
-        fi
-
-        # Validate the detected channel actually exists in the catalog; fall back to stable-* if not
         AVAILABLE_CHANNELS=$(oc get packagemanifest loki-operator -o jsonpath='{.status.channels[*].name}' 2>/dev/null || echo "")
-        if ! echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep -qx "${LOKI_CHANNEL}"; then
-          echo "⚠️  Default channel '${LOKI_CHANNEL}' not found in catalog (available: ${AVAILABLE_CHANNELS})"
+        echo "   defaultChannel: '${LOKI_CHANNEL}', available: '${AVAILABLE_CHANNELS}'"
+
+        # Trust defaultChannel if it looks like a stable-* channel; otherwise pick the best stable-* from available
+        if [[ "${LOKI_CHANNEL}" != stable-* ]]; then
+          echo "⚠️  defaultChannel '${LOKI_CHANNEL}' is not a stable-* channel — scanning available channels..."
           LOKI_CHANNEL=$(echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep '^stable-' | sort -rV | head -1)
           if [[ -z "${LOKI_CHANNEL}" ]]; then
-            echo "❌ No stable-* channel found for loki-operator"
+            echo "❌ No stable-* channel found for loki-operator (available: ${AVAILABLE_CHANNELS})"
             exit 1
           fi
           echo "   Falling back to channel: ${LOKI_CHANNEL}"
