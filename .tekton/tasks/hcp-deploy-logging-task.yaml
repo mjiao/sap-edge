@@ -227,6 +227,18 @@ spec:
           oc get packagemanifest 2>/dev/null | grep -i loki || echo "   None found"
           exit 1
         fi
+
+        # Validate the detected channel actually exists in the catalog; fall back to stable-* if not
+        AVAILABLE_CHANNELS=$(oc get packagemanifest loki-operator -o jsonpath='{.status.channels[*].name}' 2>/dev/null || echo "")
+        if ! echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep -qx "${LOKI_CHANNEL}"; then
+          echo "⚠️  Default channel '${LOKI_CHANNEL}' not found in catalog (available: ${AVAILABLE_CHANNELS})"
+          LOKI_CHANNEL=$(echo "${AVAILABLE_CHANNELS}" | tr ' ' '\n' | grep '^stable-' | sort -rV | head -1)
+          if [[ -z "${LOKI_CHANNEL}" ]]; then
+            echo "❌ No stable-* channel found for loki-operator"
+            exit 1
+          fi
+          echo "   Falling back to channel: ${LOKI_CHANNEL}"
+        fi
         echo "   Using channel: ${LOKI_CHANNEL}"
 
         # Create OperatorGroup for openshift-operators-redhat if needed
