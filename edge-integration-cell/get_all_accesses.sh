@@ -24,7 +24,7 @@ echo "=====================================Postgres=============================
 
 # Set namespace and secret name
 namespace="sap-eic-external-postgres"
-secret_name="eic-pguser-eic"
+secret_name="edgedb-pguser-edgedb"
 
 # Get dbhostname from the secret
 dbhostname=$($KUBE_CLI get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.host}" | base64 --decode)

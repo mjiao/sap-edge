@@ -86,12 +86,12 @@ output "postgres_admin_password" {
 
 output "postgres_connection_string" {
   description = "PostgreSQL connection string (password not included for display)"
-  value       = var.deploy_postgres ? try("postgresql://${var.postgres_admin_username}:[PASSWORD]@${aws_db_instance.postgres[0].endpoint}/eic?sslmode=require", "") : ""
+  value       = var.deploy_postgres ? try("postgresql://${var.postgres_admin_username}:[PASSWORD]@${aws_db_instance.postgres[0].endpoint}/edgedb?sslmode=require", "") : ""
 }
 
 output "postgres_connection_string_full" {
   description = "PostgreSQL full connection string with password"
-  value       = var.deploy_postgres ? try("postgresql://${var.postgres_admin_username}:${var.postgres_admin_password}@${aws_db_instance.postgres[0].endpoint}/eic?sslmode=require", "") : ""
+  value       = var.deploy_postgres ? try("postgresql://${var.postgres_admin_username}:${var.postgres_admin_password}@${aws_db_instance.postgres[0].endpoint}/edgedb?sslmode=require", "") : ""
   sensitive   = true
 }
 

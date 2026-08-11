@@ -153,7 +153,7 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-pr
 
 // PostgreSQL Database
 resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-06-01-preview' = if (deployPostgres) {
-  name: 'eic'
+  name: 'edgedb'
   parent: postgresServer
   properties: {
     charset: 'utf8'
@@ -294,7 +294,7 @@ resource quayBlobContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
 output postgresServerName string = deployPostgres ? postgresServer!.name : ''
 output postgresServerFqdn string = deployPostgres ? postgresServer!.properties.fullyQualifiedDomainName : ''
 output postgresAdminUsername string = deployPostgres ? postgresAdminUsername : ''
-output postgresDatabaseName string = deployPostgres ? 'eic' : ''
+output postgresDatabaseName string = deployPostgres ? 'edgedb' : ''
 
 output redisCacheName string = deployRedis ? redisCache!.name : ''
 output redisHostName string = deployRedis ? redisCache!.properties.hostName : ''
@@ -308,5 +308,5 @@ output quayStorageAccountKey string = deployQuay ? quayStorageAccount!.listKeys(
 output quayContainerName string = deployQuay ? 'quay-registry' : ''
 
 // Connection strings (without passwords - get from Azure portal)
-output postgresConnectionString string = deployPostgres ? 'postgresql://${postgresAdminUsername}:[PASSWORD]@${postgresServerNameFinal}.postgres.database.azure.com:5432/eic?sslmode=require' : ''
+output postgresConnectionString string = deployPostgres ? 'postgresql://${postgresAdminUsername}:[PASSWORD]@${postgresServerNameFinal}.postgres.database.azure.com:5432/edgedb?sslmode=require' : ''
 output redisConnectionString string = deployRedis ? 'redis://${redisCacheNameFinal}.redis.cache.windows.net:6379' : '' 

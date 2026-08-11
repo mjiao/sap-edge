@@ -176,7 +176,7 @@ spec:
         POSTGRES_SERVER_NAME=""
         POSTGRES_SERVER_FQDN=""
         POSTGRES_ADMIN_USERNAME="eicadmin"
-        POSTGRES_DATABASE_NAME="eic"
+        POSTGRES_DATABASE_NAME="edgedb"
         POSTGRES_CONNECTION_STRING=""
         POSTGRES_TLS_CERT_FILE=""
         

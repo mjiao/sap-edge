@@ -8,7 +8,7 @@
 apiVersion: postgres-operator.crunchydata.com/v1beta1
 kind: PostgresCluster
 metadata:
-  name: eic
+  name: edgedb
   namespace: sap-eic-external-postgres
   annotations:
     argocd.argoproj.io/sync-wave: "1"
@@ -23,9 +23,9 @@ spec:
           requests:
             storage: 50Gi
   users:
-    - name: eic
+    - name: edgedb
       databases:
-        - eic
+        - edgedb
       options: 'SUPERUSER'
   backups:
     pgbackrest:

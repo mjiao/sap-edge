@@ -22,7 +22,7 @@ fi
 
 # Default values
 NAMESPACE="sap-eic-external-postgres"
-SECRET_NAME="eic-pguser-eic"
+SECRET_NAME="edgedb-pguser-edgedb"
 
 # Usage function
 usage() {
