@@ -57,6 +57,7 @@ bruhl
 subshell
 configmap
 Burstable
+edgedb
 eicadmin
 pipelinerun
 pipelineruns
