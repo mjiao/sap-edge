@@ -22,7 +22,7 @@ fi
 
 # Default values
 NAMESPACE="sap-eic-external-postgres"
-CLUSTER_NAME="eic"
+CLUSTER_NAME="edgedb"
 
 # Usage function
 usage() {

@@ -8,7 +8,7 @@
 apiVersion: postgres-operator.crunchydata.com/v1beta1
 kind: PostgresCluster
 metadata:
-  name: eic
+  name: edgedb
   namespace: sap-eic-external-postgres
   annotations:
     argocd.argoproj.io/sync-wave: "1"
@@ -31,11 +31,11 @@ spec:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
                   matchLabels:
-                    postgres-operator.crunchydata.com/cluster: eic
+                    postgres-operator.crunchydata.com/cluster: edgedb
   users:
-    - name: eic
+    - name: edgedb
       databases:
-        - eic
+        - edgedb
       options: 'SUPERUSER'
   backups:
     pgbackrest:

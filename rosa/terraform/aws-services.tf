@@ -132,7 +132,7 @@ resource "aws_db_instance" "postgres" {
   allocated_storage       = var.postgres_allocated_storage
   storage_type            = "gp3"
   storage_encrypted       = true  # Fix HIGH: Enable encryption
-  db_name                 = "eic"
+  db_name                 = "edgedb"
   username                = var.postgres_admin_username
   password                = var.postgres_admin_password
   db_subnet_group_name    = aws_db_subnet_group.postgres[0].name

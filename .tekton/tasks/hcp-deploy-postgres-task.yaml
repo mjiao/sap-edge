@@ -169,12 +169,12 @@ spec:
 
         # Get the primary service
         PG_SERVICE=$(oc get svc -n "${PG_NAMESPACE}" \
-          -l postgres-operator.crunchydata.com/cluster=eic,postgres-operator.crunchydata.com/role=primary \
-          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "eic-primary")
+          -l postgres-operator.crunchydata.com/cluster=edgedb,postgres-operator.crunchydata.com/role=primary \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "edgedb-primary")
 
         PG_HOST="${PG_SERVICE}.${PG_NAMESPACE}.svc.cluster.local"
         PG_PORT="5432"
-        PG_DATABASE="eic"
+        PG_DATABASE="edgedb"
 
         # Write results
         echo "${PG_HOST}" > $(results.postgres-host.path)

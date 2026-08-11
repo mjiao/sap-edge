@@ -125,7 +125,7 @@ spec:
           echo "=====================================Postgres========================================="
 
           PG_NAMESPACE="sap-eic-external-postgres"
-          PG_SECRET="eic-pguser-eic"
+          PG_SECRET="edgedb-pguser-edgedb"
 
           if oc get secret "${PG_SECRET}" -n "${PG_NAMESPACE}" &>/dev/null; then
             PG_HOST=$(oc get secret "${PG_SECRET}" -n "${PG_NAMESPACE}" -o jsonpath="{.data.host}" | base64 --decode)
